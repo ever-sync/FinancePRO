@@ -24,6 +24,15 @@ export type BankConnectionProfile = {
   updatedAt?: string | Date;
 };
 
+export type BankProviderReadiness = {
+  provider: BankConnectionProvider;
+  label: string;
+  configured: boolean;
+  supportsApiSync: boolean;
+  status: "ready" | "setup_required" | "manual_only";
+  message: string;
+};
+
 export function getBankConnectionProviderLabel(provider: BankConnectionProvider) {
   const labels: Record<BankConnectionProvider, string> = {
     open_finance: "Open Finance",

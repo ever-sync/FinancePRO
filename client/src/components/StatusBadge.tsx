@@ -58,6 +58,11 @@ const statusMap: Record<string, { label: string; className: string }> = {
   SCHEDULED: { label: "Agendada", className: "bg-amber-50 text-amber-600 border-amber-100" },
   AUTHORIZED: { label: "Autorizada", className: "bg-emerald-50 text-emerald-600 border-emerald-100" },
   ERROR: { label: "Erro", className: "bg-rose-50 text-rose-600 border-rose-100" },
+  ready: { label: "Pronto", className: "bg-emerald-50 text-emerald-600 border-emerald-100" },
+  setup_required: { label: "Setup pendente", className: "bg-amber-50 text-amber-700 border-amber-100" },
+  manual_only: { label: "Manual", className: "bg-zinc-100 text-zinc-600 border-zinc-200" },
+  provider_ready: { label: "Provider pronto", className: "bg-emerald-50 text-emerald-600 border-emerald-100" },
+  provider_setup_required: { label: "Provider pendente", className: "bg-amber-50 text-amber-700 border-amber-100" },
 };
 
 export function StatusBadge({ status }: StatusBadgeProps) {

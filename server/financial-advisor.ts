@@ -37,6 +37,24 @@ export type AsaasChargeCreationTarget = {
   billingType: "PIX" | "BOLETO";
 };
 
+export type RevenueReceiptTarget = {
+  revenueId: number;
+  description: string;
+  clientName?: string | null;
+  dueDate: string;
+  value: number;
+};
+
+export type DebtRenegotiationTarget = {
+  debtId: number;
+  creditor: string;
+  description: string;
+  currentBalance: number;
+  monthlyPayment: number;
+  priority: "alta" | "media" | "baixa";
+  status: string;
+};
+
 export type PaymentPrioritySourceType =
   | "company_fixed_cost"
   | "company_variable_cost"
@@ -64,6 +82,8 @@ export type FinancialRecommendation = {
     | "freeze_discretionary"
     | "charge_follow_up"
     | "create_asaas_charge"
+    | "register_revenue_receipt"
+    | "renegotiate_debt"
     | "transfer_company_reserve"
     | "transfer_personal_reserve"
     | "protect_tax_provision"
@@ -588,18 +608,118 @@ function pickChargeCreationTarget(revenues: AnyRecord[]) {
     })[0] ?? null;
 }
 
+function normalizeRevenueReceiptTarget(value?: AnyRecord | null): RevenueReceiptTarget | null {
+  if (!value || typeof value !== "object") return null;
+  const revenueId = Number(value.revenueId);
+  if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
+
+  const dueDate = String(value.dueDate ?? "").trim();
+  if (!dueDate) return null;
+
+  return {
+    revenueId,
+    description: String(value.description ?? "Receita pendente"),
+    clientName: value.clientName ? String(value.clientName) : null,
+    dueDate,
+    value: clampCurrency(toNumber(value.value ?? 0)),
+  };
+}
+
+function pickRevenueReceiptTarget(revenues: AnyRecord[], referenceDate: string) {
+  return revenues
+    .map<RevenueReceiptTarget | null>(revenue => {
+      const revenueId = Number(revenue.id);
+      const status = String(revenue.status ?? "").toLowerCase();
+      const dueDate = String(revenue.dueDate ?? "").trim();
+      if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
+      if (!dueDate) return null;
+      if (status === "recebido" || status === "cancelado") return null;
+      if (String(revenue.receivedDate ?? "").trim()) return null;
+
+      return {
+        revenueId,
+        description: String(revenue.description ?? "Receita pendente"),
+        clientName: revenue.client ? String(revenue.client) : null,
+        dueDate,
+        value: clampCurrency(toNumber(revenue.netAmount ?? revenue.grossAmount ?? 0)),
+      };
+    })
+    .filter((item): item is RevenueReceiptTarget => Boolean(item))
+    .filter(item => item.value > 0 && item.dueDate <= referenceDate)
+    .sort((left, right) => {
+      if (left.dueDate !== right.dueDate) return left.dueDate.localeCompare(right.dueDate);
+      return right.value - left.value;
+    })[0] ?? null;
+}
+
+function normalizeDebtRenegotiationTarget(value?: AnyRecord | null): DebtRenegotiationTarget | null {
+  if (!value || typeof value !== "object") return null;
+  const debtId = Number(value.debtId);
+  if (!Number.isFinite(debtId) || debtId <= 0) return null;
+
+  const priority =
+    value.priority === "alta" || value.priority === "baixa" ? value.priority : "media";
+
+  return {
+    debtId,
+    creditor: String(value.creditor ?? ""),
+    description: String(value.description ?? "Divida pressionada"),
+    currentBalance: clampCurrency(toNumber(value.currentBalance ?? 0)),
+    monthlyPayment: clampCurrency(toNumber(value.monthlyPayment ?? 0)),
+    priority,
+    status: String(value.status ?? "ativa"),
+  };
+}
+
+function pickDebtRenegotiationTarget(debts: AnyRecord[]) {
+  return debts
+    .map<DebtRenegotiationTarget | null>(debt => {
+      const debtId = Number(debt.id);
+      if (!Number.isFinite(debtId) || debtId <= 0) return null;
+      const status = String(debt.status ?? "ativa");
+      if (status === "quitada" || status === "renegociada") return null;
+
+      return {
+        debtId,
+        creditor: String(debt.creditor ?? ""),
+        description: String(debt.description ?? debt.creditor ?? "Divida pressionada"),
+        currentBalance: clampCurrency(toNumber(debt.currentBalance ?? 0)),
+        monthlyPayment: clampCurrency(toNumber(debt.monthlyPayment ?? 0)),
+        priority: debt.priority === "alta" || debt.priority === "baixa" ? debt.priority : "media",
+        status,
+      };
+    })
+    .filter((item): item is DebtRenegotiationTarget => Boolean(item))
+    .filter(item => item.currentBalance > 0)
+    .sort((left, right) => {
+      const priorityWeight = (value: DebtRenegotiationTarget["priority"]) =>
+        value === "alta" ? 0 : value === "media" ? 1 : 2;
+      const statusWeight = (value: string) => (value === "atrasada" ? 0 : 1);
+      if (statusWeight(left.status) !== statusWeight(right.status)) {
+        return statusWeight(left.status) - statusWeight(right.status);
+      }
+      if (priorityWeight(left.priority) !== priorityWeight(right.priority)) {
+        return priorityWeight(left.priority) - priorityWeight(right.priority);
+      }
+      return right.currentBalance - left.currentBalance;
+    })[0] ?? null;
+}
+
 function buildTopRecommendations(args: {
   snapshotBase: Omit<FinancialGovernanceSnapshot, "summary">;
   companyVariableRatio: number;
   personalVariableRatio: number;
   asaasCharges: AnyRecord[];
   companyRevenues: AnyRecord[];
+  debts: AnyRecord[];
 }) {
-  const { snapshotBase, companyVariableRatio, personalVariableRatio, asaasCharges, companyRevenues } = args;
+  const { snapshotBase, companyVariableRatio, personalVariableRatio, asaasCharges, companyRevenues, debts } = args;
   const recommendations: FinancialRecommendation[] = [];
   const actionablePriority = findFirstActionablePaymentPriorityItem(snapshotBase.paymentPriority);
   const chargeTarget = pickChargeFollowUpTarget(asaasCharges);
   const chargeCreationTarget = pickChargeCreationTarget(companyRevenues);
+  const revenueReceiptTarget = pickRevenueReceiptTarget(companyRevenues, snapshotBase.referenceDate);
+  const debtRenegotiationTarget = pickDebtRenegotiationTarget(debts);
 
   if (snapshotBase.counts.overdueItems > 0) {
     recommendations.push({
@@ -644,6 +764,28 @@ function buildTopRecommendations(args: {
       description: `A receita ${chargeCreationTarget.description} de ${chargeCreationTarget.clientName} ainda nao virou cobranca automatizada.`,
       metadata: {
         targetRevenue: chargeCreationTarget,
+      },
+    });
+  }
+
+  if (revenueReceiptTarget) {
+    recommendations.push({
+      kind: "register_revenue_receipt",
+      title: "Registrar recebimento pendente",
+      description: `A receita ${revenueReceiptTarget.description} ja pode virar caixa recebido no sistema.`,
+      metadata: {
+        targetRevenue: revenueReceiptTarget,
+      },
+    });
+  }
+
+  if (debtRenegotiationTarget) {
+    recommendations.push({
+      kind: "renegotiate_debt",
+      title: "Renegociar divida pressionada",
+      description: `A divida ${debtRenegotiationTarget.description} ainda pressiona o caixa e merece renegociacao formal no sistema.`,
+      metadata: {
+        targetDebt: debtRenegotiationTarget,
       },
     });
   }
@@ -1308,6 +1450,7 @@ export function calculateFinancialGovernanceSnapshot(
       personalAvailableIncome > 0 ? personalVariableCosts / Math.max(personalAvailableIncome, 1) : 0,
     asaasCharges: context.asaasCharges,
     companyRevenues: Array.isArray(context.company?.revenue?.items) ? context.company.revenue.items : [],
+    debts: context.debts,
   });
 
   const completed = { ...snapshotBase, topRecommendations };
@@ -1780,13 +1923,15 @@ export function personalizeFinancialRecommendations(
   const orderWeight: Record<FinancialRecommendation["kind"], number> = lowExecution
     ? {
         pay_priority_items: 0,
-        charge_follow_up: 1,
-        create_asaas_charge: 2,
-        freeze_discretionary: 3,
-        protect_tax_provision: 4,
-        transfer_company_reserve: 5,
-        transfer_personal_reserve: 6,
-        review_variable_costs: 7,
+        register_revenue_receipt: 1,
+        charge_follow_up: 2,
+        renegotiate_debt: 3,
+        create_asaas_charge: 4,
+        freeze_discretionary: 5,
+        protect_tax_provision: 6,
+        transfer_company_reserve: 7,
+        transfer_personal_reserve: 8,
+        review_variable_costs: 9,
       }
     : strategicMoment
       ? {
@@ -1794,20 +1939,24 @@ export function personalizeFinancialRecommendations(
           transfer_personal_reserve: 1,
           review_variable_costs: 2,
           protect_tax_provision: 3,
-          pay_priority_items: 4,
-          charge_follow_up: 5,
-          create_asaas_charge: 6,
-          freeze_discretionary: 7,
+          register_revenue_receipt: 4,
+          pay_priority_items: 5,
+          charge_follow_up: 6,
+          renegotiate_debt: 7,
+          create_asaas_charge: 8,
+          freeze_discretionary: 9,
         }
       : {
           pay_priority_items: 0,
-          charge_follow_up: 1,
-          create_asaas_charge: 2,
-          transfer_company_reserve: 3,
-          transfer_personal_reserve: 4,
-          review_variable_costs: 5,
-          protect_tax_provision: 6,
-          freeze_discretionary: 7,
+          register_revenue_receipt: 1,
+          charge_follow_up: 2,
+          renegotiate_debt: 3,
+          create_asaas_charge: 4,
+          transfer_company_reserve: 5,
+          transfer_personal_reserve: 6,
+          review_variable_costs: 7,
+          protect_tax_provision: 8,
+          freeze_discretionary: 9,
         };
 
   return snapshot.topRecommendations
@@ -1816,7 +1965,9 @@ export function personalizeFinancialRecommendations(
         const lowExecutionMessage =
           recommendation.kind === "pay_priority_items" ||
           recommendation.kind === "charge_follow_up" ||
-          recommendation.kind === "create_asaas_charge"
+          recommendation.kind === "create_asaas_charge" ||
+          recommendation.kind === "register_revenue_receipt" ||
+          recommendation.kind === "renegotiate_debt"
             ? "Foque em executar esta unica frente antes de abrir novas decisoes."
             : "O mentor simplificou a orientacao para aumentar a chance de execucao real.";
         return {
@@ -2387,6 +2538,34 @@ async function resolveChargeCreationTarget(userId: number, metadata: AnyRecord) 
   return pickChargeCreationTarget(revenues);
 }
 
+async function resolveRevenueReceiptTarget(userId: number, metadata: AnyRecord, referenceDate: string) {
+  const fromMetadata = normalizeRevenueReceiptTarget(
+    metadata.targetRevenue && typeof metadata.targetRevenue === "object" ? metadata.targetRevenue : null
+  );
+  if (fromMetadata) return fromMetadata;
+
+  const revenues =
+    (await db
+      .getRevenues(userId, undefined, undefined, {
+        page: 1,
+        limit: 200,
+        sortBy: "dueDate",
+        sortOrder: "asc",
+      })
+      .catch(() => null))?.data ?? [];
+  return pickRevenueReceiptTarget(revenues, referenceDate);
+}
+
+async function resolveDebtRenegotiationTarget(userId: number, metadata: AnyRecord) {
+  const fromMetadata = normalizeDebtRenegotiationTarget(
+    metadata.targetDebt && typeof metadata.targetDebt === "object" ? metadata.targetDebt : null
+  );
+  if (fromMetadata) return fromMetadata;
+
+  const debts = await db.getDebts(userId).catch(() => []);
+  return pickDebtRenegotiationTarget(debts);
+}
+
 export async function confirmFinancialAdvisorAction(userId: number, actionId: number) {
   const action = await whatsappDb.getFinancialPlanActionById(userId, actionId);
   if (!action) {
@@ -2585,6 +2764,121 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
       billingType,
       dueDate,
       value,
+    };
+  }
+
+  if (action.actionType === "register_revenue_receipt") {
+    const executedDate = getPartsInTimeZone(executedAt, DEFAULT_TIMEZONE).iso;
+    const targetRevenue = await resolveRevenueReceiptTarget(userId, metadata, executedDate);
+    if (!targetRevenue) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei uma receita elegivel para registrar recebimento agora.",
+      });
+    }
+
+    const revenue = await asaasDb.getRevenueById(userId, targetRevenue.revenueId);
+    if (!revenue) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "A receita selecionada nao existe mais.",
+      });
+    }
+    if (String(revenue.status ?? "").toLowerCase() === "recebido") {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Essa receita ja esta marcada como recebida.",
+      });
+    }
+
+    await db.updateRevenue(revenue.id, userId, {
+      status: "recebido",
+      receivedDate: executedDate,
+    });
+
+    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+      status: "concluida",
+      metadata: buildExecutedActionMetadata(metadata, {
+        kind: "register_revenue_receipt",
+        targetRevenue: {
+          revenueId: revenue.id,
+          description: revenue.description,
+          clientName: revenue.client ?? null,
+          dueDate: revenue.dueDate,
+          value: clampCurrency(toNumber(revenue.netAmount ?? revenue.grossAmount)),
+        },
+        receivedDate: executedDate,
+        executedAt: executedAt.toISOString(),
+      }),
+    });
+
+    return {
+      success: true,
+      message: `Recebimento registrado para ${revenue.description} em ${executedDate}. O caixa do mes agora reflete essa entrada como recebida.`,
+      executionKind: "register_revenue_receipt" as const,
+      revenueId: revenue.id,
+      receivedDate: executedDate,
+      value: clampCurrency(toNumber(revenue.netAmount ?? revenue.grossAmount)),
+    };
+  }
+
+  if (action.actionType === "renegotiate_debt") {
+    const targetDebt = await resolveDebtRenegotiationTarget(userId, metadata);
+    if (!targetDebt) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei uma divida elegivel para renegociar agora.",
+      });
+    }
+
+    const debts = await db.getDebts(userId);
+    const debt = debts.find(current => current.id === targetDebt.debtId);
+    if (!debt) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "A divida selecionada nao existe mais.",
+      });
+    }
+    if (String(debt.status ?? "").toLowerCase() === "quitada") {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Essa divida ja esta quitada e nao precisa de renegociacao.",
+      });
+    }
+
+    const renegotiationNote = `Renegociacao iniciada pelo mentor em ${executedAt.toISOString()}. Rever prazo, parcela e condicoes com ${debt.creditor}.`;
+    const nextNotes = [String(debt.notes ?? "").trim(), renegotiationNote].filter(Boolean).join(" | ");
+
+    await db.updateDebt(debt.id, userId, {
+      status: "renegociada",
+      notes: nextNotes,
+    });
+
+    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+      status: "concluida",
+      metadata: buildExecutedActionMetadata(metadata, {
+        kind: "renegotiate_debt",
+        targetDebt: {
+          debtId: debt.id,
+          creditor: debt.creditor,
+          description: debt.description,
+          currentBalance: clampCurrency(toNumber(debt.currentBalance)),
+          monthlyPayment: clampCurrency(toNumber(debt.monthlyPayment)),
+          priority:
+            debt.priority === "alta" || debt.priority === "baixa" ? debt.priority : "media",
+          status: "renegociada",
+        },
+        executedAt: executedAt.toISOString(),
+      }),
+    });
+
+    return {
+      success: true,
+      message: `A divida ${debt.description} foi marcada como renegociada e ganhou trilha de acompanhamento no sistema.`,
+      executionKind: "renegotiate_debt" as const,
+      debtId: debt.id,
+      currentBalance: clampCurrency(toNumber(debt.currentBalance)),
+      monthlyPayment: clampCurrency(toNumber(debt.monthlyPayment)),
     };
   }
 

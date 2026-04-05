@@ -4,6 +4,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { z } from "zod";
 import * as db from "./db";
 import * as asaas from "./asaas";
+import * as bankSync from "./bank-sync";
 import * as whatsapp from "./whatsapp";
 import * as financialAdvisor from "./financial-advisor";
 import * as financialImport from "./financial-import";
@@ -49,6 +50,7 @@ export const appRouter = router({
 
   bankConnections: router({
     list: protectedProcedure.query(({ ctx }) => db.listBankConnections(ctx.user.id)),
+    providers: protectedProcedure.query(() => bankSync.listBankProviderReadiness()),
     upsert: protectedProcedure
       .input(
         z.object({
@@ -72,15 +74,7 @@ export const appRouter = router({
       .mutation(({ ctx, input }) => db.markBankConnectionImported(ctx.user.id, input.connectionId)),
     requestSync: protectedProcedure
       .input(z.object({ connectionId: z.number() }))
-      .mutation(async ({ ctx, input }) => {
-        const connection = await db.requestBankConnectionSync(ctx.user.id, input.connectionId);
-        return {
-          success: true,
-          connection,
-          message:
-            "Sincronizacao registrada no backend. Falta apenas conectar um provedor real para buscar as transacoes automaticamente.",
-        };
-      }),
+      .mutation(({ ctx, input }) => bankSync.requestBankConnectionSync(ctx.user.id, input.connectionId)),
   }),
 
   financialImports: router({
@@ -921,6 +915,10 @@ export const appRouter = router({
 
   assistantAutomation: router({
     list: protectedProcedure.query(({ ctx }) => whatsapp.listNotificationEvents(ctx.user.id)),
+    summary: protectedProcedure.query(({ ctx }) => whatsapp.getAssistantOperationsSummary(ctx.user.id)),
+    runDaily: protectedProcedure.mutation(() => whatsapp.runFinancialDailyCron()),
+    runMonthStart: protectedProcedure.mutation(() => whatsapp.runFinancialMonthStartCron()),
+    runMonthEnd: protectedProcedure.mutation(() => whatsapp.runFinancialMonthEndCron()),
     dismissEvent: protectedProcedure
       .input(z.object({ eventId: z.number() }))
       .mutation(({ ctx, input }) => whatsapp.dismissNotificationEvent(ctx.user.id, input.eventId)),

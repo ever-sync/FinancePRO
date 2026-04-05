@@ -5,6 +5,7 @@ const {
   updateFinancialPlanAction,
   updateCompanyFixedCost,
   updateCompanyVariableCost,
+  updateRevenue,
   updatePersonalFixedCost,
   updatePersonalVariableCost,
   updateDebt,
@@ -19,6 +20,7 @@ const {
   updateFinancialPlanAction: vi.fn(),
   updateCompanyFixedCost: vi.fn(),
   updateCompanyVariableCost: vi.fn(),
+  updateRevenue: vi.fn(),
   updatePersonalFixedCost: vi.fn(),
   updatePersonalVariableCost: vi.fn(),
   updateDebt: vi.fn(),
@@ -33,6 +35,7 @@ const {
 vi.mock("./db", () => ({
   updateCompanyFixedCost,
   updateCompanyVariableCost,
+  updateRevenue,
   updatePersonalFixedCost,
   updatePersonalVariableCost,
   updateDebt,
@@ -281,6 +284,109 @@ describe("financial advisor plan action execution", () => {
       dueDate: "2026-04-20",
       value: 1900,
       message: expect.stringContaining("ACME LTDA"),
+    });
+  });
+
+  it("registers a pending revenue as received", async () => {
+    getFinancialPlanActionById.mockResolvedValue({
+      id: 14,
+      status: "pendente",
+      actionType: "register_revenue_receipt",
+      title: "Registrar recebimento pendente",
+      metadata: JSON.stringify({
+        targetRevenue: {
+          revenueId: 77,
+          description: "Projeto Site Abril",
+          clientName: "Studio Norte",
+          dueDate: "2026-04-03",
+          value: 2400,
+        },
+      }),
+    });
+    getRevenueById.mockResolvedValue({
+      id: 77,
+      description: "Projeto Site Abril",
+      client: "Studio Norte",
+      dueDate: "2026-04-03",
+      netAmount: "2400.00",
+      status: "pendente",
+      receivedDate: null,
+    });
+
+    const result = await confirmFinancialAdvisorAction(7, 14);
+
+    expect(updateRevenue).toHaveBeenCalledWith(77, 7, {
+      status: "recebido",
+      receivedDate: expect.stringMatching(/^20\d{2}-\d{2}-\d{2}$/),
+    });
+    const actionUpdate = updateFinancialPlanAction.mock.calls[0]?.[2];
+    const parsedMetadata = JSON.parse(String(actionUpdate?.metadata || "{}"));
+    expect(parsedMetadata.execution).toMatchObject({
+      kind: "register_revenue_receipt",
+      receivedDate: expect.stringMatching(/^20\d{2}-\d{2}-\d{2}$/),
+    });
+    expect(result).toMatchObject({
+      success: true,
+      executionKind: "register_revenue_receipt",
+      revenueId: 77,
+      value: 2400,
+      message: expect.stringContaining("Projeto Site Abril"),
+    });
+  });
+
+  it("marks the most pressured debt as renegotiated with an audit trail", async () => {
+    getFinancialPlanActionById.mockResolvedValue({
+      id: 15,
+      status: "pendente",
+      actionType: "renegotiate_debt",
+      title: "Renegociar divida pressionada",
+      metadata: JSON.stringify({
+        targetDebt: {
+          debtId: 22,
+          creditor: "Banco Atlas",
+          description: "Capital de giro",
+          currentBalance: 8200,
+          monthlyPayment: 980,
+          priority: "alta",
+          status: "atrasada",
+        },
+      }),
+    });
+    getDebts.mockResolvedValue([
+      {
+        id: 22,
+        creditor: "Banco Atlas",
+        description: "Capital de giro",
+        currentBalance: "8200.00",
+        monthlyPayment: "980.00",
+        priority: "alta",
+        status: "atrasada",
+        notes: "Contato inicial feito",
+      },
+    ]);
+
+    const result = await confirmFinancialAdvisorAction(7, 15);
+
+    expect(updateDebt).toHaveBeenCalledWith(
+      22,
+      7,
+      expect.objectContaining({
+        status: "renegociada",
+        notes: expect.stringContaining("Renegociacao iniciada pelo mentor"),
+      })
+    );
+    const actionUpdate = updateFinancialPlanAction.mock.calls[0]?.[2];
+    const parsedMetadata = JSON.parse(String(actionUpdate?.metadata || "{}"));
+    expect(parsedMetadata.execution).toMatchObject({
+      kind: "renegotiate_debt",
+    });
+    expect(result).toMatchObject({
+      success: true,
+      executionKind: "renegotiate_debt",
+      debtId: 22,
+      currentBalance: 8200,
+      monthlyPayment: 980,
+      message: expect.stringContaining("Capital de giro"),
     });
   });
 });

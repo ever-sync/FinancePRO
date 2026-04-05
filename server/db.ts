@@ -380,6 +380,30 @@ export async function requestBankConnectionSync(userId: number, connectionId: nu
   return getBankConnectionById(userId, connectionId);
 }
 
+export async function updateBankConnectionSyncState(
+  userId: number,
+  connectionId: number,
+  data: {
+    status?: string;
+    lastSyncStatus?: string | null;
+    lastSyncError?: string | null;
+    lastSyncRequestedAt?: Date | null;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(bankConnections)
+    .set({
+      status: data.status ?? undefined,
+      lastSyncStatus: data.lastSyncStatus ?? undefined,
+      lastSyncError: data.lastSyncError ?? undefined,
+      lastSyncRequestedAt: data.lastSyncRequestedAt ?? undefined,
+    })
+    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+  return getBankConnectionById(userId, connectionId);
+}
+
 // ==================== REVENUES ====================
 export async function getRevenues(
   userId: number,

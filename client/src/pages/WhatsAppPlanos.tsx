@@ -188,6 +188,12 @@ function getPlanActionCtaLabel(
   if (actionType === "create_asaas_charge") {
     return mentorMode === "execution_short" ? "Gerar cobranca agora" : "Criar cobranca Asaas";
   }
+  if (actionType === "register_revenue_receipt") {
+    return mentorMode === "execution_short" ? "Dar baixa agora" : "Registrar recebimento";
+  }
+  if (actionType === "renegotiate_debt") {
+    return mentorMode === "execution_short" ? "Renegociar agora" : "Marcar renegociacao";
+  }
   return mentorMode === "execution_short" ? "Fazer agora" : "Concluir agora";
 }
 
@@ -219,6 +225,16 @@ function getPlanActionExecutionNote(
     return mentorMode === "execution_short"
       ? "O mentor encurtou o caminho: transforme primeiro essa receita pendente em cobranca real no Asaas."
       : "Quando executada, esta acao cria uma cobranca real no Asaas para a receita escolhida e vincula os links ao financeiro local.";
+  }
+  if (actionType === "register_revenue_receipt") {
+    return mentorMode === "execution_short"
+      ? "O mentor esta pedindo fechamento rapido de caixa: marque primeiro esta entrada como recebida."
+      : "Quando executada, esta acao registra o recebimento real da receita e atualiza o caixa do mes.";
+  }
+  if (actionType === "renegotiate_debt") {
+    return mentorMode === "execution_short"
+      ? "O mentor quer reduzir pressao rapido: leve primeiro essa divida para trilha de renegociacao."
+      : "Quando executada, esta acao marca a divida como renegociada e registra a trilha operacional no sistema.";
   }
   return null;
 }

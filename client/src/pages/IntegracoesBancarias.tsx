@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { CreditCard, Landmark, Link2, PlugZap, Upload } from "lucide-react";
 import {
   type BankConnectionProfile,
+  type BankProviderReadiness,
   type BankConnectionProvider,
   type BankConnectionSyncMode,
   getBankConnectionProviderLabel,
@@ -68,9 +69,17 @@ export default function IntegracoesBancarias() {
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
   const { data: rawProfiles = [], isLoading } = trpc.bankConnections.list.useQuery();
+  const { data: providerReadiness = [] } = trpc.bankConnections.providers.useQuery();
   const profiles = useMemo(
     () => rawProfiles.map(profile => normalizeBankConnectionProfile(profile)),
     [rawProfiles]
+  );
+  const providerReadinessMap = useMemo(
+    () =>
+      new Map(
+        providerReadiness.map((item: BankProviderReadiness) => [item.provider, item])
+      ),
+    [providerReadiness]
   );
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ConnectionForm>(DEFAULT_FORM);
@@ -170,6 +179,7 @@ export default function IntegracoesBancarias() {
   const bankCount = profiles.filter(profile => profile.sourceKind === "bank_account").length;
   const cardCount = profiles.filter(profile => profile.sourceKind === "credit_card").length;
   const readyCount = profiles.filter(profile => profile.status === "pronta").length;
+  const selectedProviderReadiness = providerReadinessMap.get(form.provider);
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground">Carregando integracoes bancarias...</div>;
@@ -359,9 +369,21 @@ export default function IntegracoesBancarias() {
             </div>
 
             <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 text-sm text-zinc-600">
-              {form.syncMode === "api"
-                ? "Esse perfil fica preparado para uma futura conexao real via Open Finance ou agregador. Ate la, voce ainda pode usar o mesmo contexto no importador."
-                : "Esse perfil usa conciliacao por arquivo e ja funciona hoje com CSV, OFX e fatura."}
+              {form.syncMode === "api" ? (
+                <>
+                  <p>
+                    Esse perfil usa contrato de provider no backend. O estado real depende da configuracao do provider escolhido.
+                  </p>
+                  {selectedProviderReadiness ? (
+                    <div className="mt-3 flex items-center gap-2">
+                      <StatusBadge status={selectedProviderReadiness.status} />
+                      <span>{selectedProviderReadiness.message}</span>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                "Esse perfil usa conciliacao por arquivo e ja funciona hoje com CSV, OFX e fatura."
+              )}
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -422,6 +444,13 @@ export default function IntegracoesBancarias() {
                         <p className="text-xs text-zinc-500">
                           Ultima importacao: {formatDateTime(profile.lastImportedAt)}
                         </p>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                          <span>Ultimo sync: {profile.lastSyncStatus ? "" : "Nunca solicitado"}</span>
+                          {profile.lastSyncStatus ? <StatusBadge status={profile.lastSyncStatus} /> : null}
+                        </div>
+                        {profile.lastSyncError ? (
+                          <p className="text-xs text-amber-700">{profile.lastSyncError}</p>
+                        ) : null}
                         {profile.notes ? (
                           <p className="text-sm leading-6 text-zinc-600">{profile.notes}</p>
                         ) : null}
@@ -464,6 +493,22 @@ export default function IntegracoesBancarias() {
                 Os perfis ja deixam o produto pronto para Open Finance, Pluggy ou Belvo. Quando a
                 integracao real entrar no backend, esse cadastro vira a base da conexao automatica.
               </p>
+              {providerReadiness.length ? (
+                <div className="mt-4 grid gap-2">
+                  {providerReadiness.map((provider: BankProviderReadiness) => (
+                    <div
+                      key={provider.provider}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-orange-200 bg-white/80 px-3 py-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{provider.label}</span>
+                        <StatusBadge status={provider.status} />
+                      </div>
+                      <span className="text-xs">{provider.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </CardContent>
         </Card>

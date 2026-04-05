@@ -1075,6 +1075,81 @@ export async function listAssistantRuns(userId: number) {
   return whatsappDb.listAssistantRuns(userId);
 }
 
+export async function getAssistantOperationsSummary(userId: number) {
+  const [integration, events, runs] = await Promise.all([
+    whatsappDb.getWhatsAppIntegration(userId),
+    whatsappDb.listNotificationEvents(userId),
+    whatsappDb.listAssistantRuns(userId),
+  ]);
+
+  const failedEvents = events.filter(
+    event => event.status === "falhou" || String(event.lastError ?? "").trim().length > 0
+  );
+  const failedRuns = runs.filter(
+    run => run.status === "falhou" || String(run.errorMessage ?? "").trim().length > 0
+  );
+  const pendingRuns = runs.filter(
+    run => run.status === "aguardando_confirmacao" || run.status === "recebido" || run.status === "analisado"
+  );
+
+  const findLatestEvent = (type: string) => events.find(event => event.type === type) ?? null;
+  const latestDaily = findLatestEvent("daily_digest");
+  const latestMonthStart = findLatestEvent("month_start");
+  const latestMonthEnd = findLatestEvent("month_end");
+
+  const operationalStatus =
+    !integration || !integration.enabled
+      ? "attention"
+      : integration.lastConnectionStatus === "erro" ||
+          failedEvents.length > 0 ||
+          failedRuns.length > 0
+        ? "critical"
+        : integration.lastConnectionStatus === "sincronizado"
+          ? "healthy"
+          : "attention";
+
+  const criticalAlerts = [
+    integration?.lastConnectionStatus === "erro"
+      ? integration.lastConnectionMessage || "Conexao do WhatsApp com erro."
+      : null,
+    failedEvents[0]?.lastError || null,
+    failedRuns[0]?.errorMessage || null,
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    operationalStatus,
+    integration: integration
+      ? {
+          enabled: integration.enabled,
+          lastConnectionStatus: integration.lastConnectionStatus,
+          lastConnectionMessage: integration.lastConnectionMessage,
+          lastConnectionCheckedAt: integration.lastConnectionCheckedAt,
+          lastWebhookReceivedAt: integration.lastWebhookReceivedAt,
+          lastMessageReceivedAt: integration.lastMessageReceivedAt,
+          lastMessageSentAt: integration.lastMessageSentAt,
+          automationHour: integration.automationHour,
+          timezone: integration.timezone,
+        }
+      : null,
+    counts: {
+      totalRuns: runs.length,
+      failedRuns: failedRuns.length,
+      pendingRuns: pendingRuns.length,
+      totalEvents: events.length,
+      failedEvents: failedEvents.length,
+    },
+    latest: {
+      dailyDigest: latestDaily,
+      monthStart: latestMonthStart,
+      monthEnd: latestMonthEnd,
+      lastRun: runs[0] ?? null,
+      lastFailedRun: failedRuns[0] ?? null,
+      lastFailedEvent: failedEvents[0] ?? null,
+    },
+    criticalAlerts,
+  };
+}
+
 export async function confirmAssistantRunFromApp(userId: number, runId: number) {
   const pendingRun = await whatsappDb.getAssistantRunById(userId, runId);
   if (!pendingRun) {

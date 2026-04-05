@@ -8,4 +8,10 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  openFinanceApiUrl: process.env.OPEN_FINANCE_API_URL ?? "",
+  openFinanceApiKey: process.env.OPEN_FINANCE_API_KEY ?? "",
+  pluggyClientId: process.env.PLUGGY_CLIENT_ID ?? "",
+  pluggyClientSecret: process.env.PLUGGY_CLIENT_SECRET ?? "",
+  belvoSecretId: process.env.BELVO_SECRET_ID ?? "",
+  belvoSecretPassword: process.env.BELVO_SECRET_PASSWORD ?? "",
 };

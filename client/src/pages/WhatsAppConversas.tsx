@@ -160,6 +160,8 @@ function getHoursSince(value?: string | Date | null) {
 function getPlanActionLabel(actionType?: string | null) {
   if (actionType === "charge_follow_up") return "Executar cobranca";
   if (actionType === "create_asaas_charge") return "Criar cobranca Asaas";
+  if (actionType === "register_revenue_receipt") return "Registrar recebimento";
+  if (actionType === "renegotiate_debt") return "Marcar renegociacao";
   if (actionType === "pay_priority_items") return "Regularizar prioridade";
   if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
     return "Executar aporte";
@@ -171,6 +173,8 @@ function formatPlanActionType(actionType?: string | null) {
   const labels: Record<string, string> = {
     charge_follow_up: "cobranca Asaas",
     create_asaas_charge: "nova cobranca Asaas",
+    register_revenue_receipt: "recebimento confirmado",
+    renegotiate_debt: "renegociacao de divida",
     pay_priority_items: "prioridade financeira",
     transfer_company_reserve: "aporte na reserva da empresa",
     transfer_personal_reserve: "aporte na reserva pessoal",
@@ -258,6 +262,14 @@ function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
       baseScore = 90;
       urgency = "alta";
       impact = "alto";
+    } else if (item.actionType === "register_revenue_receipt") {
+      baseScore = 88;
+      urgency = "alta";
+      impact = "alto";
+    } else if (item.actionType === "renegotiate_debt") {
+      baseScore = 82;
+      urgency = "alta";
+      impact = "alto";
     } else if (item.actionType === "create_asaas_charge") {
       baseScore = 84;
       urgency = "alta";
@@ -341,6 +353,12 @@ function getAttackPlanReason(item: PrioritizedInboxItem, index: number) {
     }
     if (item.actionType === "create_asaas_charge") {
       return "Transforma uma receita pendente em cobranca real no Asaas para acelerar recebimento e previsibilidade.";
+    }
+    if (item.actionType === "register_revenue_receipt") {
+      return "Fecha uma entrada pendente como recebida e melhora imediatamente a leitura real de caixa.";
+    }
+    if (item.actionType === "renegotiate_debt") {
+      return "Leva a divida mais pressionada para trilha de renegociacao e reduz risco de desgaste no caixa.";
     }
     if (item.actionType === "pay_priority_items") {
       return "Regulariza o item financeiro mais pressionado do plano com execucao real no backend.";
@@ -426,6 +444,12 @@ function getOperationalActionLead(item: PrioritizedInboxItem) {
     }
     if (item.actionType === "create_asaas_charge") {
       return "O mentor encontrou uma receita elegivel; falta so transformar isso em cobranca real no Asaas.";
+    }
+    if (item.actionType === "register_revenue_receipt") {
+      return "O mentor encontrou uma entrada elegivel; falta so confirmar esse recebimento no financeiro.";
+    }
+    if (item.actionType === "renegotiate_debt") {
+      return "O mentor encontrou uma divida pressionada; falta so registrar a renegociacao no sistema.";
     }
     if (item.actionType === "pay_priority_items") {
       return "Existe uma prioridade pronta para regularizacao no plano atual.";
