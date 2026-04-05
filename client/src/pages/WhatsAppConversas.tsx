@@ -9,11 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, BellRing, MessageCircle, Sparkles } from "lucide-react";
 
 type InboxFilter = "todos" | "pendencias" | "alertas" | "mensagens";
-type SourceFilter = "todas" | "whatsapp" | "painel" | "automacao" | "previa";
+type SourceFilter = "todas" | "whatsapp" | "painel" | "automacao" | "previa" | "plano";
 
 type InboxItem = {
   id: string;
-  kind: "pendencia" | "alerta" | "mensagem";
+  kind: "pendencia" | "alerta" | "mensagem" | "plano";
   title: string;
   description: string;
   status: string;
@@ -25,6 +25,8 @@ type InboxItem = {
   eventId?: number | null;
   eventType?: string | null;
   eventScope?: string | null;
+  actionId?: number | null;
+  actionType?: string | null;
   intentLabel?: string | null;
   metaLabel?: string | null;
 };
@@ -155,6 +157,30 @@ function getHoursSince(value?: string | Date | null) {
   return Math.max(0, (Date.now() - date.getTime()) / (1000 * 60 * 60));
 }
 
+function getPlanActionLabel(actionType?: string | null) {
+  if (actionType === "charge_follow_up") return "Executar cobranca";
+  if (actionType === "pay_priority_items") return "Regularizar prioridade";
+  if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
+    return "Executar aporte";
+  }
+  return "Executar acao";
+}
+
+function formatPlanActionType(actionType?: string | null) {
+  const labels: Record<string, string> = {
+    charge_follow_up: "cobranca Asaas",
+    pay_priority_items: "prioridade financeira",
+    transfer_company_reserve: "aporte na reserva da empresa",
+    transfer_personal_reserve: "aporte na reserva pessoal",
+    freeze_discretionary: "congelar gastos discricionarios",
+    protect_tax_provision: "protecao de imposto",
+    review_variable_costs: "revisao de custos variaveis",
+  };
+
+  if (!actionType) return null;
+  return labels[actionType] || actionType;
+}
+
 function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
   let baseScore = 20;
   let urgency: PrioritizedInboxItem["urgency"] = "baixa";
@@ -220,6 +246,30 @@ function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
     }
   }
 
+  if (item.kind === "plano") {
+    baseScore = 68;
+    urgency = "media";
+    impact = "medio";
+    actionLabel = getPlanActionLabel(item.actionType);
+
+    if (item.actionType === "charge_follow_up") {
+      baseScore = 90;
+      urgency = "alta";
+      impact = "alto";
+    } else if (item.actionType === "pay_priority_items") {
+      baseScore = 94;
+      urgency = "alta";
+      impact = "alto";
+    } else if (
+      item.actionType === "transfer_company_reserve" ||
+      item.actionType === "transfer_personal_reserve"
+    ) {
+      baseScore = 76;
+      urgency = "media";
+      impact = "medio";
+    }
+  }
+
   if (item.status === "falhou" || item.status === "erro") {
     baseScore += 14;
     urgency = "alta";
@@ -279,6 +329,16 @@ function getAttackPlanReason(item: PrioritizedInboxItem, index: number) {
       : "Reabre um contexto recente para nao perder continuidade na orientacao.";
   }
 
+  if (item.kind === "plano") {
+    if (item.actionType === "charge_follow_up") {
+      return "Ativa a cobranca mais urgente do plano e reduz atraso de recebimento sem sair da inbox.";
+    }
+    if (item.actionType === "pay_priority_items") {
+      return "Regulariza o item financeiro mais pressionado do plano com execucao real no backend.";
+    }
+    return "Transforma recomendacao do plano em execucao pratica sem depender de outra tela.";
+  }
+
   return "Mantem o foco no que gera mais controle financeiro agora.";
 }
 
@@ -303,6 +363,33 @@ function getAttackPlanLead(topItems: PrioritizedInboxItem[]) {
   return "O foco agora e manter contexto, continuidade e disciplina operacional na conversa com o mentor.";
 }
 
+function getMentorModeLabel(memory?: {
+  executionScore: number;
+  trendDirection: "improving" | "stable" | "worsening";
+}) {
+  if (!memory) return "modo operacional";
+  if (memory.executionScore <= 42) return "modo execucao curta";
+  if (memory.executionScore >= 72 && memory.trendDirection === "improving") {
+    return "modo estrategico";
+  }
+  return "modo calibracao";
+}
+
+function getMentorModeDescription(memory?: {
+  executionScore: number;
+  trendDirection: "improving" | "stable" | "worsening";
+  summary?: string;
+}) {
+  if (!memory) return "A inbox organiza as proximas acoes com base no contexto atual do mentor.";
+  if (memory.executionScore <= 42) {
+    return "O mentor encurtou a execucao: menos frentes abertas e mais foco em acoes simples que saem do papel hoje.";
+  }
+  if (memory.executionScore >= 72 && memory.trendDirection === "improving") {
+    return "O mentor entrou em modo estrategico: a inbox pode puxar reserva, margem e protecao com mais ambicao.";
+  }
+  return memory.summary || "O mentor esta calibrando ritmo e prioridade com base no seu padrao recente.";
+}
+
 function getOperationalActionLead(item: PrioritizedInboxItem) {
   if (item.kind === "pendencia") {
     return "O mentor quer destravar esta confirmacao antes de qualquer outra coisa.";
@@ -324,6 +411,16 @@ function getOperationalActionLead(item: PrioritizedInboxItem) {
     return "O melhor uso do tempo agora e tratar este alerta e reduzir ruido operacional.";
   }
 
+  if (item.kind === "plano") {
+    if (item.actionType === "charge_follow_up") {
+      return "O mentor ja encontrou a cobranca certa; falta so executar o follow-up.";
+    }
+    if (item.actionType === "pay_priority_items") {
+      return "Existe uma prioridade pronta para regularizacao no plano atual.";
+    }
+    return "A melhor proxima acao agora e executar uma recomendacao que ja foi priorizada no plano.";
+  }
+
   return item.source === "painel"
     ? "A conversa iniciada no app pede continuidade antes de perder contexto."
     : "Vale retomar esta conversa para manter a linha de orientacao do mentor.";
@@ -335,6 +432,9 @@ function getOperationalActionSupport(item: PrioritizedInboxItem) {
   }
   if (item.kind === "alerta") {
     return "Se o principal ja estiver encaminhado, este e o proximo alerta que mais vale atacar.";
+  }
+  if (item.kind === "plano") {
+    return "Boa acao de apoio para transformar o plano em resultado pratico ainda hoje.";
   }
   return "Se o principal ja estiver coberto, use esta conversa para manter continuidade operacional.";
 }
@@ -349,6 +449,8 @@ export default function WhatsAppConversas() {
 
   const { data: inbox, isLoading } = trpc.assistantInbox.list.useQuery();
   const { data: events } = trpc.assistantAutomation.list.useQuery();
+  const { data: currentPlan } = trpc.assistantPlans.getCurrent.useQuery();
+  const { data: mentorMemory } = trpc.financialAdvisor.getMemory.useQuery();
 
   const confirmPendingRunMut = trpc.assistantInbox.confirmRun.useMutation({
     onSuccess: async () => {
@@ -357,6 +459,7 @@ export default function WhatsAppConversas() {
         utils.assistantAutomation.list.invalidate(),
         utils.assistantPlans.getCurrent.invalidate(),
         utils.assistantPlans.list.invalidate(),
+        utils.financialAdvisor.getMemory.invalidate(),
         utils.financialAdvisor.getSnapshot.invalidate(),
         utils.financialAdvisor.getDailyDigest.invalidate(),
         utils.financialAdvisor.getMonthClose.invalidate(),
@@ -372,6 +475,7 @@ export default function WhatsAppConversas() {
         utils.assistantAutomation.list.invalidate(),
         utils.assistantPlans.getCurrent.invalidate(),
         utils.assistantPlans.list.invalidate(),
+        utils.financialAdvisor.getMemory.invalidate(),
       ]);
       toast.success("Confirmacao adiada no painel.");
     },
@@ -395,6 +499,7 @@ export default function WhatsAppConversas() {
     onSuccess: async () => {
       await Promise.all([
         utils.financialAdvisor.getSnapshot.invalidate(),
+        utils.financialAdvisor.getMemory.invalidate(),
         utils.financialAdvisor.getDailyDigest.invalidate(),
         utils.financialAdvisor.getMonthClose.invalidate(),
         utils.assistantAutomation.list.invalidate(),
@@ -409,12 +514,29 @@ export default function WhatsAppConversas() {
       await Promise.all([
         utils.assistantPlans.getCurrent.invalidate(),
         utils.assistantPlans.list.invalidate(),
+        utils.financialAdvisor.getMemory.invalidate(),
         utils.financialAdvisor.getSnapshot.invalidate(),
         utils.financialAdvisor.getDailyDigest.invalidate(),
         utils.financialAdvisor.getMonthClose.invalidate(),
         utils.assistantAutomation.list.invalidate(),
       ]);
       toast.success("Plano mensal gerado a partir da inbox.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const confirmPlanActionMut = trpc.assistantPlans.confirmAction.useMutation({
+    onSuccess: async data => {
+      await Promise.all([
+        utils.assistantPlans.getCurrent.invalidate(),
+        utils.assistantPlans.list.invalidate(),
+        utils.financialAdvisor.getSnapshot.invalidate(),
+        utils.financialAdvisor.getMemory.invalidate(),
+        utils.financialAdvisor.getDailyDigest.invalidate(),
+        utils.financialAdvisor.getMonthClose.invalidate(),
+        utils.assistantInbox.list.invalidate(),
+        utils.assistantAutomation.list.invalidate(),
+      ]);
+      toast.success(data.message || "Acao do plano executada.");
     },
     onError: error => toast.error(error.message),
   });
@@ -484,6 +606,22 @@ export default function WhatsAppConversas() {
     metaLabel: `${event.type} · ${event.scope}`,
   }));
 
+  const planActionItems: InboxItem[] = (currentPlan?.actions ?? [])
+    .filter(action => action.status !== "concluida")
+    .map(action => ({
+      id: `plan-action-${action.id}`,
+      kind: "plano",
+      title: action.title,
+      description: action.description,
+      status: action.status,
+      source: "plano",
+      sourceLabel: "Plano",
+      createdAt: action.createdAt,
+      actionId: action.id,
+      actionType: action.actionType,
+      metaLabel: formatPlanActionType(action.actionType) || action.actionType || "acao do plano",
+    }));
+
   const messageItems: InboxItem[] = (inbox?.messages ?? []).slice(0, 40).map(message => {
     const source = getMentorMessageSource(message.rawPayload);
     return {
@@ -500,7 +638,7 @@ export default function WhatsAppConversas() {
     };
   });
 
-  const inboxItems = [...pendingRunItems, ...alertItems, ...messageItems]
+  const inboxItems = [...pendingRunItems, ...planActionItems, ...alertItems, ...messageItems]
     .map(prioritizeInboxItem)
     .sort((a, b) => {
       if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
@@ -547,6 +685,7 @@ export default function WhatsAppConversas() {
     generatePlanMut.isPending ||
     sendAdvisorPreviewMut.isPending;
   const runActionBusy = confirmPendingRunMut.isPending || snoozePendingRunMut.isPending;
+  const planActionBusy = confirmPlanActionMut.isPending;
 
   const buildInboxItemActions = (item: PrioritizedInboxItem): InboxActionSpec[] => {
     const actions: InboxActionSpec[] = [];
@@ -649,6 +788,17 @@ export default function WhatsAppConversas() {
       return actions;
     }
 
+    if (item.kind === "plano" && item.actionId != null) {
+      actions.push({
+        key: `execute-plan-${item.id}`,
+        label: getPlanActionLabel(item.actionType),
+        pendingLabel: "Executando...",
+        disabled: planActionBusy,
+        onClick: () => confirmPlanActionMut.mutate({ actionId: item.actionId! }),
+      });
+      return actions;
+    }
+
     if (openContextAction) {
       actions.push({
         ...openContextAction,
@@ -711,11 +861,49 @@ export default function WhatsAppConversas() {
         </Card>
       </div>
 
+      {mentorMemory ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>Modo atual do mentor</CardTitle>
+                <CardDescription>{getMentorModeDescription(mentorMemory)}</CardDescription>
+              </div>
+              <StatusBadge status={mentorMemory.recurringRiskLevel} />
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border bg-zinc-50/70 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Modo</p>
+              <p className="mt-1 text-base font-semibold text-zinc-900">
+                {getMentorModeLabel(mentorMemory)}
+              </p>
+            </div>
+            <div className="rounded-2xl border bg-zinc-50/70 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Execucao</p>
+              <p className="mt-1 text-base font-semibold text-zinc-900">
+                {mentorMemory.executionScore}%
+              </p>
+            </div>
+            <div className="rounded-2xl border bg-zinc-50/70 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Tendencia</p>
+              <p className="mt-1 text-base font-semibold text-zinc-900">
+                {mentorMemory.trendDirection === "improving"
+                  ? "melhora"
+                  : mentorMemory.trendDirection === "worsening"
+                    ? "piora"
+                    : "estavel"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Foco do dia</CardTitle>
           <CardDescription>
-            Priorizacao inteligente da inbox considerando tipo, risco e recencia.
+            Priorizacao inteligente da inbox considerando tipo, risco, recencia e o modo atual do mentor.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -804,6 +992,11 @@ export default function WhatsAppConversas() {
             <>
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 text-sm text-zinc-700">
                 {attackPlanLead}
+                {mentorMemory ? (
+                  <span className="block pt-2 text-xs uppercase tracking-[0.16em] text-zinc-500">
+                    {getMentorModeLabel(mentorMemory)} · {getMentorModeDescription(mentorMemory)}
+                  </span>
+                ) : null}
               </div>
 
               <div className="space-y-3">
@@ -1018,6 +1211,7 @@ export default function WhatsAppConversas() {
                 <SelectItem value="painel">Painel</SelectItem>
                 <SelectItem value="automacao">Automacao</SelectItem>
                 <SelectItem value="previa">Previa</SelectItem>
+                <SelectItem value="plano">Plano</SelectItem>
               </SelectContent>
             </Select>
           </div>

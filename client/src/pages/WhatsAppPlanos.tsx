@@ -176,8 +176,8 @@ function getPlanActionCtaLabel(actionType?: string | null) {
   if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
     return "Executar aporte";
   }
-  if (actionType === "pay_priority_items") return "Concluir prioridade";
-  if (actionType === "charge_follow_up") return "Registrar acompanhamento";
+  if (actionType === "pay_priority_items") return "Regularizar prioridade";
+  if (actionType === "charge_follow_up") return "Executar follow-up";
   return "Concluir agora";
 }
 
@@ -187,6 +187,12 @@ function getPlanActionExecutionNote(actionType?: string | null) {
   }
   if (actionType === "transfer_personal_reserve") {
     return "Quando executada, esta acao registra um aporte real na reserva pessoal.";
+  }
+  if (actionType === "pay_priority_items") {
+    return "Quando executada, esta acao atualiza o item prioritario real no financeiro do mes.";
+  }
+  if (actionType === "charge_follow_up") {
+    return "Quando executada, esta acao reativa a cobranca mais urgente do Asaas e atualiza os links de pagamento.";
   }
   return null;
 }
@@ -1069,6 +1075,7 @@ export default function WhatsAppPlanos() {
   const deferredRecurringWithdrawalAmount = useDeferredValue(recurringWithdrawalAmount);
 
   const { data: snapshot } = trpc.financialAdvisor.getSnapshot.useQuery();
+  const { data: mentorMemory } = trpc.financialAdvisor.getMemory.useQuery();
   const { data: dailyDigest } = trpc.financialAdvisor.getDailyDigest.useQuery();
   const { data: monthClose } = trpc.financialAdvisor.getMonthClose.useQuery();
   const { data: whatsappIntegration } = trpc.whatsappIntegration.get.useQuery();
@@ -1098,6 +1105,7 @@ export default function WhatsAppPlanos() {
       utils.settings.get.invalidate(),
       utils.financialAdvisor.getOnboarding.invalidate(),
       utils.financialAdvisor.getSnapshot.invalidate(),
+      utils.financialAdvisor.getMemory.invalidate(),
       utils.financialAdvisor.getDailyDigest.invalidate(),
       utils.financialAdvisor.getMonthClose.invalidate(),
       utils.financialAdvisor.evaluateDecisionScenarios.invalidate(),
@@ -1550,6 +1558,46 @@ export default function WhatsAppPlanos() {
             </CardContent>
           </Card>
         </div>
+      ) : null}
+
+      {mentorMemory ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>{mentorMemory.headline}</CardTitle>
+                <CardDescription>{mentorMemory.summary}</CardDescription>
+              </div>
+              <StatusBadge status={mentorMemory.recurringRiskLevel} />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-2xl border bg-zinc-50/70 p-4">
+              <p className="text-sm font-medium text-zinc-900">{mentorMemory.profileLabel}</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Historico considerado: {mentorMemory.historyMonths} ciclo(s). Consistencia estimada em{" "}
+                {mentorMemory.consistencyScore}% e tendencia{" "}
+                {mentorMemory.trendDirection === "improving"
+                  ? "de melhora"
+                  : mentorMemory.trendDirection === "worsening"
+                    ? "de piora"
+                    : "estavel"}.
+              </p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {mentorMemory.signals.map(signal => (
+                <div key={signal.id} className="rounded-2xl border p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-zinc-900">{signal.label}</p>
+                    <StatusBadge status={signal.status} />
+                  </div>
+                  <p className="mt-3 text-xl font-semibold text-zinc-900">{signal.value}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
 
       <Card>

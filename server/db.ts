@@ -5,6 +5,7 @@ import postgres from "postgres";
 import {
   InsertUser, users,
   settings, InsertSettings,
+  bankConnections, InsertBankConnection,
   revenues, InsertRevenue,
   companyFixedCosts, InsertCompanyFixedCost,
   companyVariableCosts, InsertCompanyVariableCost,
@@ -263,6 +264,120 @@ export async function upsertSettings(data: InsertSettings) {
     await db.insert(settings).values(data);
     return data;
   }
+}
+
+// ==================== BANK CONNECTIONS ====================
+export async function listBankConnections(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(bankConnections)
+    .where(eq(bankConnections.userId, userId))
+    .orderBy(desc(bankConnections.updatedAt));
+}
+
+export async function getBankConnectionById(userId: number, connectionId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [record] = await db
+    .select()
+    .from(bankConnections)
+    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)))
+    .limit(1);
+  return record;
+}
+
+export async function upsertBankConnection(userId: number, data: Partial<InsertBankConnection> & {
+  id?: number;
+  label: string;
+  institution: string;
+  provider: string;
+  sourceKind: string;
+  scope: string;
+  syncMode: string;
+  status: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  if (data.id) {
+    await db
+      .update(bankConnections)
+      .set({
+        label: data.label,
+        institution: data.institution,
+        provider: data.provider,
+        sourceKind: data.sourceKind,
+        scope: data.scope,
+        syncMode: data.syncMode,
+        status: data.status,
+        notes: data.notes ?? null,
+        lastSyncStatus: data.lastSyncStatus ?? undefined,
+        lastSyncError: data.lastSyncError ?? undefined,
+      })
+      .where(and(eq(bankConnections.id, data.id), eq(bankConnections.userId, userId)));
+    return getBankConnectionById(userId, data.id);
+  }
+
+  const [created] = await db
+    .insert(bankConnections)
+    .values({
+      userId,
+      label: data.label,
+      institution: data.institution,
+      provider: data.provider,
+      sourceKind: data.sourceKind,
+      scope: data.scope,
+      syncMode: data.syncMode,
+      status: data.status,
+      notes: data.notes ?? null,
+      lastSyncStatus: data.lastSyncStatus ?? null,
+      lastSyncError: data.lastSyncError ?? null,
+    })
+    .returning();
+  return created;
+}
+
+export async function deleteBankConnection(userId: number, connectionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .delete(bankConnections)
+    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+}
+
+export async function markBankConnectionImported(
+  userId: number,
+  connectionId: number,
+  importedAt = new Date()
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(bankConnections)
+    .set({
+      lastImportedAt: importedAt,
+      status: "pronta",
+      lastSyncStatus: "imported",
+      lastSyncError: null,
+    })
+    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+  return getBankConnectionById(userId, connectionId);
+}
+
+export async function requestBankConnectionSync(userId: number, connectionId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(bankConnections)
+    .set({
+      lastSyncRequestedAt: new Date(),
+      lastSyncStatus: "pending_provider_setup",
+      lastSyncError: null,
+    })
+    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+  return getBankConnectionById(userId, connectionId);
 }
 
 // ==================== REVENUES ====================
@@ -1411,14 +1526,34 @@ export async function getCalendarData(userId: number, month: number, year: numbe
   const db = await getDb();
   if (!db) return [];
 
-  const items: Array<{ day: number; description: string; amount: string; type: string; status: string }> = [];
+  const items: Array<{
+    day: number;
+    description: string;
+    amount: string;
+    type: string;
+    status: string;
+    sourceId?: number;
+    sourceType?: string;
+    actionable?: boolean;
+  }> = [];
   const today = new Date().getDate();
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
   const isCurrentMonth = month === currentMonth && year === currentYear;
 
   const fixedCo = rowsFromResult(await getCompanyFixedCosts(userId, month, year));
-  fixedCo.forEach(c => items.push({ day: c.dueDay, description: `[EMP] ${c.description}`, amount: c.amount, type: "empresa-fixo", status: c.status }));
+  fixedCo.forEach(c =>
+    items.push({
+      day: c.dueDay,
+      description: `[EMP] ${c.description}`,
+      amount: c.amount,
+      type: "empresa-fixo",
+      status: c.status,
+      sourceId: c.id,
+      sourceType: "company_fixed_cost",
+      actionable: c.status !== "pago",
+    })
+  );
 
   const variableCo = rowsFromResult(await getCompanyVariableCosts(userId, month, year));
   variableCo.forEach(c => items.push({
@@ -1427,10 +1562,24 @@ export async function getCalendarData(userId: number, month: number, year: numbe
     amount: c.amount,
     type: "empresa-variavel",
     status: c.status,
+    sourceId: c.id,
+    sourceType: "company_variable_cost",
+    actionable: c.status !== "pago",
   }));
 
   const fixedPe = rowsFromResult(await getPersonalFixedCosts(userId, month, year));
-  fixedPe.forEach(c => items.push({ day: c.dueDay, description: `[PES] ${c.description}`, amount: c.amount, type: "pessoal-fixo", status: c.status }));
+  fixedPe.forEach(c =>
+    items.push({
+      day: c.dueDay,
+      description: `[PES] ${c.description}`,
+      amount: c.amount,
+      type: "pessoal-fixo",
+      status: c.status,
+      sourceId: c.id,
+      sourceType: "personal_fixed_cost",
+      actionable: c.status !== "pago",
+    })
+  );
 
   const variablePe = rowsFromResult(await getPersonalVariableCosts(userId, month, year));
   variablePe.forEach(c => items.push({
@@ -1439,6 +1588,9 @@ export async function getCalendarData(userId: number, month: number, year: numbe
     amount: c.amount,
     type: "pessoal-variavel",
     status: c.status,
+    sourceId: c.id,
+    sourceType: "personal_variable_cost",
+    actionable: c.status !== "pago",
   }));
 
   const employees = rowsFromResult(await getEmployees(userId));
@@ -1449,6 +1601,9 @@ export async function getCalendarData(userId: number, month: number, year: numbe
       amount: e.totalCost,
       type: "empresa-folha",
       status: isCurrentMonth && (e.paymentDay ?? 5) < today ? "atrasada" : "pendente",
+      sourceId: e.id,
+      sourceType: "employee_payroll",
+      actionable: false,
     })
   );
 
@@ -1460,6 +1615,9 @@ export async function getCalendarData(userId: number, month: number, year: numbe
       amount: d.monthlyPayment,
       type: "divida",
       status: d.status === "atrasada" || (isCurrentMonth && d.dueDay < today) ? "atrasada" : "pendente",
+      sourceId: d.id,
+      sourceType: "debt",
+      actionable: true,
     })
   );
 

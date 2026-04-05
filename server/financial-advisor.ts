@@ -7,11 +7,34 @@ import {
   type FinancialAssistantIntent,
 } from "./_core/financialAssistantIntent";
 import * as db from "./db";
+import * as asaas from "./asaas";
 import * as asaasDb from "./db/asaas";
 import * as advisorDb from "./db/financial-advisor";
 import * as whatsappDb from "./db/whatsapp";
 
 type AnyRecord = Record<string, any>;
+
+export type AsaasChargeFollowUpItem = {
+  id: number;
+  asaasChargeId: string;
+  description: string;
+  billingType: string;
+  status: string;
+  dueDate: string;
+  value: number;
+  invoiceUrl?: string | null;
+  bankSlipUrl?: string | null;
+  pixQrCodeUrl?: string | null;
+  pixCopyAndPaste?: string | null;
+};
+
+export type PaymentPrioritySourceType =
+  | "company_fixed_cost"
+  | "company_variable_cost"
+  | "personal_fixed_cost"
+  | "personal_variable_cost"
+  | "debt"
+  | "employee_payroll";
 
 export type PaymentPriorityItem = {
   id: string;
@@ -22,6 +45,9 @@ export type PaymentPriorityItem = {
   status: string;
   urgency: "overdue" | "before_next_income" | "due_soon" | "planned";
   recommendedAction: string;
+  sourceId?: number | null;
+  sourceType?: PaymentPrioritySourceType | null;
+  actionable?: boolean;
 };
 
 export type FinancialRecommendation = {
@@ -196,6 +222,30 @@ export type FinancialAdvisorOnboardingState = {
   };
 };
 
+export type FinancialAdvisorMemorySignal = {
+  id: string;
+  label: string;
+  status: "healthy" | "attention" | "critical";
+  value: string;
+};
+
+export type FinancialAdvisorMemoryState = {
+  headline: string;
+  summary: string;
+  profileLabel: string;
+  consistencyScore: number;
+  executionScore: number;
+  recurringRiskLevel: "healthy" | "attention" | "critical";
+  trendDirection: "improving" | "stable" | "worsening";
+  historyMonths: number;
+  signals: FinancialAdvisorMemorySignal[];
+};
+
+export type FinancialAdvisorMentorMode =
+  | "execution_short"
+  | "strategic"
+  | "calibration";
+
 type FinancialAdvisorContext = {
   generatedAt: string;
   referenceDate: string;
@@ -210,6 +260,9 @@ type FinancialAdvisorContext = {
     amount: string;
     type: string;
     status: string;
+    sourceId?: number;
+    sourceType?: string;
+    actionable?: boolean;
   }>;
   debts: AnyRecord[];
   investments: AnyRecord[];
@@ -230,6 +283,11 @@ function clampCurrency(value: number) {
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(Number.isFinite(value) ? value : 0)));
+}
+
+function average(values: number[]) {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function toIsoDate(date: Date) {
@@ -357,19 +415,134 @@ function buildExecutedActionMetadata(base: AnyRecord, extra: AnyRecord) {
   });
 }
 
+function isActionablePaymentPriorityItem(item?: Pick<
+  PaymentPriorityItem,
+  "sourceId" | "sourceType" | "actionable"
+> | null) {
+  return Boolean(
+    item &&
+      item.actionable !== false &&
+      typeof item.sourceId === "number" &&
+      item.sourceId > 0 &&
+      item.sourceType &&
+      item.sourceType !== "employee_payroll"
+  );
+}
+
+function normalizePaymentPriorityItem(value?: AnyRecord | null): PaymentPriorityItem | null {
+  if (!value || typeof value !== "object") return null;
+
+  const sourceId =
+    typeof value.sourceId === "number"
+      ? value.sourceId
+      : Number.isFinite(Number(value.sourceId))
+        ? Number(value.sourceId)
+        : null;
+  const sourceType =
+    typeof value.sourceType === "string" ? (value.sourceType as PaymentPrioritySourceType) : null;
+
+  return {
+    id: String(value.id ?? ""),
+    title: String(value.title ?? value.description ?? "Prioridade financeira"),
+    source:
+      value.source === "company" ||
+      value.source === "personal" ||
+      value.source === "debt" ||
+      value.source === "calendar"
+        ? value.source
+        : "calendar",
+    dueDate: String(value.dueDate ?? ""),
+    amount: clampCurrency(toNumber(value.amount ?? 0)),
+    status: String(value.status ?? ""),
+    urgency:
+      value.urgency === "overdue" ||
+      value.urgency === "before_next_income" ||
+      value.urgency === "due_soon" ||
+      value.urgency === "planned"
+        ? value.urgency
+        : "planned",
+    recommendedAction: String(value.recommendedAction ?? "Acompanhar no calendario do mes."),
+    sourceId,
+    sourceType,
+    actionable: value.actionable !== false && Boolean(sourceId && sourceType && sourceType !== "employee_payroll"),
+  };
+}
+
+function findFirstActionablePaymentPriorityItem(paymentPriority: PaymentPriorityItem[]) {
+  return paymentPriority.find(item => isActionablePaymentPriorityItem(item)) ?? null;
+}
+
+function normalizeAsaasChargeFollowUpItem(value?: AnyRecord | null): AsaasChargeFollowUpItem | null {
+  if (!value || typeof value !== "object") return null;
+  const id = Number(value.id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+
+  return {
+    id,
+    asaasChargeId: String(value.asaasChargeId ?? ""),
+    description: String(value.description ?? "Cobranca Asaas"),
+    billingType: String(value.billingType ?? "PIX"),
+    status: String(value.status ?? "PENDING"),
+    dueDate: String(value.dueDate ?? ""),
+    value: clampCurrency(toNumber(value.value ?? 0)),
+    invoiceUrl: value.invoiceUrl ? String(value.invoiceUrl) : null,
+    bankSlipUrl: value.bankSlipUrl ? String(value.bankSlipUrl) : null,
+    pixQrCodeUrl: value.pixQrCodeUrl ? String(value.pixQrCodeUrl) : null,
+    pixCopyAndPaste: value.pixCopyAndPaste ? String(value.pixCopyAndPaste) : null,
+  };
+}
+
+function pickChargeFollowUpTarget(charges: AnyRecord[]) {
+  return charges
+    .map(charge => normalizeAsaasChargeFollowUpItem(charge))
+    .filter((charge): charge is AsaasChargeFollowUpItem => Boolean(charge))
+    .filter(charge => {
+      const status = charge.status.toUpperCase();
+      return status === "OVERDUE" || status === "PENDING" || status === "CONFIRMED";
+    })
+    .sort((left, right) => {
+      const priority = (status: string) => {
+        const normalized = status.toUpperCase();
+        if (normalized === "OVERDUE") return 0;
+        if (normalized === "PENDING") return 1;
+        if (normalized === "CONFIRMED") return 2;
+        return 3;
+      };
+
+      if (priority(left.status) !== priority(right.status)) {
+        return priority(left.status) - priority(right.status);
+      }
+
+      return String(left.dueDate || "").localeCompare(String(right.dueDate || ""));
+    })[0] ?? null;
+}
+
 function buildTopRecommendations(args: {
   snapshotBase: Omit<FinancialGovernanceSnapshot, "summary">;
   companyVariableRatio: number;
   personalVariableRatio: number;
+  asaasCharges: AnyRecord[];
 }) {
-  const { snapshotBase, companyVariableRatio, personalVariableRatio } = args;
+  const { snapshotBase, companyVariableRatio, personalVariableRatio, asaasCharges } = args;
   const recommendations: FinancialRecommendation[] = [];
+  const actionablePriority = findFirstActionablePaymentPriorityItem(snapshotBase.paymentPriority);
+  const chargeTarget = pickChargeFollowUpTarget(asaasCharges);
 
   if (snapshotBase.counts.overdueItems > 0) {
     recommendations.push({
       kind: "pay_priority_items",
       title: "Regularizar vencidos imediatamente",
       description: `Existem ${snapshotBase.counts.overdueItems} itens vencidos ou muito pressionados no fluxo atual.`,
+      metadata: actionablePriority
+        ? {
+            targetItem: actionablePriority,
+            overdueItems: snapshotBase.counts.overdueItems,
+            dueThisWeek: snapshotBase.counts.dueThisWeek,
+          }
+        : {
+            overdueItems: snapshotBase.counts.overdueItems,
+            dueThisWeek: snapshotBase.counts.dueThisWeek,
+          },
     });
   }
 
@@ -378,6 +551,16 @@ function buildTopRecommendations(args: {
       kind: "charge_follow_up",
       title: "Atuar nas cobranças abertas do Asaas",
       description: `Há ${snapshotBase.counts.pendingCharges} cobrança(s) pendente(s) e ${snapshotBase.counts.overdueCharges} em atraso pedindo acompanhamento.`,
+      metadata: chargeTarget
+        ? {
+            targetCharge: chargeTarget,
+            pendingCharges: snapshotBase.counts.pendingCharges,
+            overdueCharges: snapshotBase.counts.overdueCharges,
+          }
+        : {
+            pendingCharges: snapshotBase.counts.pendingCharges,
+            overdueCharges: snapshotBase.counts.overdueCharges,
+          },
     });
   }
 
@@ -900,6 +1083,16 @@ export function calculateFinancialGovernanceSnapshot(
         amount: clampCurrency(toNumber(item.amount)),
         status: item.status,
         urgency,
+        sourceId: Number.isFinite(Number(item.sourceId)) ? Number(item.sourceId) : null,
+        sourceType:
+          typeof item.sourceType === "string"
+            ? (item.sourceType as PaymentPrioritySourceType)
+            : null,
+        actionable:
+          item.actionable !== false &&
+          Number.isFinite(Number(item.sourceId)) &&
+          typeof item.sourceType === "string" &&
+          item.sourceType !== "employee_payroll",
         recommendedAction:
           urgency === "overdue"
             ? "Pagar ou renegociar imediatamente."
@@ -1029,6 +1222,7 @@ export function calculateFinancialGovernanceSnapshot(
     companyVariableRatio: companyNetRevenue > 0 ? companyVariableCosts / Math.max(companyNetRevenue, 1) : 0,
     personalVariableRatio:
       personalAvailableIncome > 0 ? personalVariableCosts / Math.max(personalAvailableIncome, 1) : 0,
+    asaasCharges: context.asaasCharges,
   });
 
   const completed = { ...snapshotBase, topRecommendations };
@@ -1304,6 +1498,290 @@ export function calculateFinancialAdvisorOnboarding(args: {
   };
 }
 
+function parseStoredSnapshotPayload(value?: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<FinancialGovernanceSnapshot>;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getRecurringRiskLevel(counts: {
+  critical: number;
+  attention: number;
+  healthy: number;
+}) {
+  if (counts.critical >= 2) return "critical" as const;
+  if (counts.critical >= 1 || counts.attention >= 2) return "attention" as const;
+  return "healthy" as const;
+}
+
+export async function getFinancialAdvisorMemory(
+  userId: number,
+  options?: { currentSnapshot?: FinancialGovernanceSnapshot | null }
+): Promise<FinancialAdvisorMemoryState> {
+  const currentSnapshot = options?.currentSnapshot ?? null;
+  const [storedSnapshots, assistantRuns, planActions] = await Promise.all([
+    advisorDb.listFinancialAdvisorSnapshots(userId, "daily"),
+    whatsappDb.listAssistantRuns(userId),
+    whatsappDb.listFinancialPlanActions(userId),
+  ]);
+  const history = storedSnapshots
+    .map(item => parseStoredSnapshotPayload(item.snapshotPayload))
+    .filter((item): item is FinancialGovernanceSnapshot => Boolean(item))
+    .slice(0, 6);
+
+  const snapshots = currentSnapshot ? [currentSnapshot, ...history] : history;
+  const uniqueMonths = new Set(snapshots.map(item => `${item.year}-${item.month}`));
+  const riskCounts = snapshots.reduce(
+    (acc, item) => {
+      acc[item.cashRiskLevel] += 1;
+      return acc;
+    },
+    { healthy: 0, attention: 0, critical: 0 }
+  );
+  const averageSafeToSpend = average(snapshots.map(item => item.safeToSpendMonth));
+  const averageOverdue = average(snapshots.map(item => item.counts.overdueItems));
+  const averageChargePressure = average(
+    snapshots.map(item => item.counts.overdueCharges + item.counts.pendingCharges)
+  );
+  const averageReserveCoverage = average(
+    snapshots.map(item => {
+      const totalRecommendation =
+        item.companyReserveRecommendation + item.personalReserveRecommendation;
+      return totalRecommendation <= 0 ? 1 : 0;
+    })
+  );
+  const newest = snapshots[0] ?? null;
+  const oldest = snapshots[snapshots.length - 1] ?? null;
+  const safeToSpendDelta =
+    newest && oldest ? clampCurrency(newest.safeToSpendMonth - oldest.safeToSpendMonth) : 0;
+  const trendDirection =
+    safeToSpendDelta > 250
+      ? ("improving" as const)
+      : safeToSpendDelta < -250
+        ? ("worsening" as const)
+        : ("stable" as const);
+  const recurringRiskLevel = getRecurringRiskLevel(riskCounts);
+  const consistencyScore = clampPercent(
+    Math.max(
+      0,
+      100 -
+        riskCounts.critical * 26 -
+        riskCounts.attention * 12 -
+        Math.min(averageOverdue * 8, 24) -
+        Math.min(averageChargePressure * 4, 18) +
+        averageReserveCoverage * 18
+    )
+  );
+
+  const confirmationRuns = assistantRuns.filter(run => run.requiresConfirmation);
+  const executedRuns = assistantRuns.filter(run => run.status === "executado");
+  const snoozedRuns = assistantRuns.filter(run => {
+    const payload = String(run.executedActions ?? "");
+    return payload.includes("snoozed");
+  });
+  const executedPlanActions = planActions.filter(action => action.status === "concluida");
+  const snoozedPlanActions = planActions.filter(action => action.status === "adiada");
+  const totalBehaviorSignals = Math.max(
+    confirmationRuns.length + planActions.length,
+    1
+  );
+  const executionScore = clampPercent(
+    Math.max(
+      0,
+      Math.min(
+        100,
+        ((executedRuns.length + executedPlanActions.length * 1.2) / totalBehaviorSignals) * 100 -
+          ((snoozedRuns.length + snoozedPlanActions.length) / totalBehaviorSignals) * 28
+      )
+    )
+  );
+
+  const profileLabel =
+    executionScore >= 72 && trendDirection === "improving"
+      ? "mentor vendo disciplina de execucao crescer"
+      : recurringRiskLevel === "critical"
+      ? "mentor em modo recuperacao"
+      : trendDirection === "improving" && consistencyScore >= 72
+        ? "mentor vendo consistencia crescente"
+        : executionScore <= 42
+          ? "mentor vendo boas intencoes, mas pouca execucao"
+        : averageChargePressure >= 2
+          ? "mentor atento a cobrancas e previsibilidade"
+          : "mentor com rotina financeira em construcao";
+
+  const headline =
+    uniqueMonths.size >= 3
+      ? "Memoria recente do mentor"
+      : "Memoria inicial do mentor";
+  const summary =
+    uniqueMonths.size >= 3
+      ? recurringRiskLevel === "critical"
+        ? "O historico recente mostra repeticao de meses apertados. O mentor deve agir de forma mais conservadora ate a previsibilidade melhorar."
+        : executionScore <= 42
+          ? "Os dados mostram contexto suficiente, mas a execucao ainda fica para depois. O mentor deve insistir em proximas acoes mais simples e diretas."
+        : trendDirection === "improving"
+          ? "Os ultimos ciclos mostram melhora de folga e mais consistencia. O mentor pode subir o nivel de refinamento sem perder prudencia."
+          : "Ja existe historico suficiente para o mentor reconhecer padroes, mas o comportamento ainda oscila entre meses."
+      : "O mentor comecou a formar memoria. Quanto mais ciclos e snapshots, mais personalizadas ficam as orientacoes.";
+
+  const signals: FinancialAdvisorMemorySignal[] = [
+    {
+      id: "discipline",
+      label: "Consistencia do mes",
+      status: consistencyScore >= 72 ? "healthy" : consistencyScore >= 48 ? "attention" : "critical",
+      value: `${consistencyScore}%`,
+    },
+    {
+      id: "execution",
+      label: "Execucao das acoes",
+      status: executionScore >= 72 ? "healthy" : executionScore >= 48 ? "attention" : "critical",
+      value: `${executionScore}%`,
+    },
+    {
+      id: "trend",
+      label: "Tendencia da folga",
+      status:
+        trendDirection === "improving"
+          ? "healthy"
+          : trendDirection === "stable"
+            ? "attention"
+            : "critical",
+      value:
+        trendDirection === "improving"
+          ? "melhora"
+          : trendDirection === "stable"
+            ? "estavel"
+            : "piora",
+    },
+    {
+      id: "overdue-pattern",
+      label: "Media de vencidos",
+      status: averageOverdue <= 0.5 ? "healthy" : averageOverdue <= 2 ? "attention" : "critical",
+      value: averageOverdue.toFixed(1),
+    },
+    {
+      id: "charge-pressure",
+      label: "Pressao de cobrancas",
+      status:
+        averageChargePressure <= 1 ? "healthy" : averageChargePressure <= 3 ? "attention" : "critical",
+      value: averageChargePressure.toFixed(1),
+    },
+  ];
+
+  return {
+    headline,
+    summary,
+    profileLabel,
+    consistencyScore,
+    executionScore,
+    recurringRiskLevel,
+    trendDirection,
+    historyMonths: uniqueMonths.size,
+    signals,
+  };
+}
+
+export function personalizeFinancialRecommendations(
+  snapshot: FinancialGovernanceSnapshot,
+  memory: FinancialAdvisorMemoryState
+) {
+  const lowExecution = memory.executionScore <= 42;
+  const highExecution = memory.executionScore >= 72;
+  const strategicMoment = highExecution && memory.trendDirection === "improving";
+  const orderWeight: Record<FinancialRecommendation["kind"], number> = lowExecution
+    ? {
+        pay_priority_items: 0,
+        charge_follow_up: 1,
+        freeze_discretionary: 2,
+        protect_tax_provision: 3,
+        transfer_company_reserve: 4,
+        transfer_personal_reserve: 5,
+        review_variable_costs: 6,
+      }
+    : strategicMoment
+      ? {
+          transfer_company_reserve: 0,
+          transfer_personal_reserve: 1,
+          review_variable_costs: 2,
+          protect_tax_provision: 3,
+          pay_priority_items: 4,
+          charge_follow_up: 5,
+          freeze_discretionary: 6,
+        }
+      : {
+          pay_priority_items: 0,
+          charge_follow_up: 1,
+          transfer_company_reserve: 2,
+          transfer_personal_reserve: 3,
+          review_variable_costs: 4,
+          protect_tax_provision: 5,
+          freeze_discretionary: 6,
+        };
+
+  return snapshot.topRecommendations
+    .map(recommendation => {
+      if (lowExecution) {
+        const lowExecutionMessage =
+          recommendation.kind === "pay_priority_items" || recommendation.kind === "charge_follow_up"
+            ? "Foque em executar esta unica frente antes de abrir novas decisoes."
+            : "O mentor simplificou a orientacao para aumentar a chance de execucao real.";
+        return {
+          ...recommendation,
+          description: `${recommendation.description} ${lowExecutionMessage}`.trim(),
+        };
+      }
+
+      if (strategicMoment) {
+        const strategicMessage =
+          recommendation.kind === "transfer_company_reserve" ||
+          recommendation.kind === "transfer_personal_reserve"
+            ? "Sua memoria recente permite subir o nivel e transformar folga em protecao de longo prazo."
+            : "Como a execucao esta mais consistente, o mentor pode ampliar a ambicao desta recomendacao.";
+        return {
+          ...recommendation,
+          description: `${recommendation.description} ${strategicMessage}`.trim(),
+        };
+      }
+
+      return recommendation;
+    })
+    .sort((left, right) => {
+      const leftWeight = orderWeight[left.kind] ?? 99;
+      const rightWeight = orderWeight[right.kind] ?? 99;
+      return leftWeight - rightWeight;
+    });
+}
+
+export function personalizeFinancialAdvisorSummary(
+  snapshot: FinancialGovernanceSnapshot,
+  memory: FinancialAdvisorMemoryState
+) {
+  if (memory.executionScore <= 42) {
+    return `${snapshot.summary} O mentor vai priorizar passos menores e mais executaveis ate a disciplina de execucao subir.`;
+  }
+
+  if (memory.executionScore >= 72 && memory.trendDirection === "improving") {
+    return `${snapshot.summary} Como sua execucao recente esta consistente, o mentor pode subir o foco para protecao, margem e reserva.`;
+  }
+
+  return `${snapshot.summary} O mentor esta calibrando as proximas recomendacoes com base no seu padrao recente de execucao.`;
+}
+
+export function getFinancialAdvisorMentorMode(memory: Pick<
+  FinancialAdvisorMemoryState,
+  "executionScore" | "trendDirection"
+>): FinancialAdvisorMentorMode {
+  if (memory.executionScore <= 42) return "execution_short";
+  if (memory.executionScore >= 72 && memory.trendDirection === "improving") {
+    return "strategic";
+  }
+  return "calibration";
+}
+
 async function buildNarrative(params: {
   kind: "snapshot" | "daily" | "monthly_plan" | "month_close";
   snapshot: FinancialGovernanceSnapshot;
@@ -1400,7 +1878,13 @@ export async function getFinancialAdvisorSnapshot(
       pendingPlanActions: planActions.filter(action => action.status === "pendente").length,
     },
   };
-  const finalized = { ...enriched, summary: buildSummary(enriched) };
+  const baseFinalized = { ...enriched, summary: buildSummary(enriched) };
+  const memory = await getFinancialAdvisorMemory(userId, { currentSnapshot: baseFinalized });
+  const finalized = {
+    ...baseFinalized,
+    topRecommendations: personalizeFinancialRecommendations(baseFinalized, memory),
+    summary: personalizeFinancialAdvisorSummary(baseFinalized, memory),
+  };
 
   if (options?.persist !== false) {
     await persistSnapshot({
@@ -1665,6 +2149,139 @@ export async function getFinancialAdvisorMonthClose(params: {
   return { snapshot, targetBalance, deviation, focusNextMonth, excessSignals, message };
 }
 
+async function resolvePriorityItemForExecution(userId: number, metadata: AnyRecord) {
+  const fromMetadata = normalizePaymentPriorityItem(
+    metadata.targetItem && typeof metadata.targetItem === "object" ? metadata.targetItem : null
+  );
+  if (isActionablePaymentPriorityItem(fromMetadata)) return fromMetadata;
+
+  const snapshot = await getFinancialAdvisorSnapshot(userId, { persist: false });
+  return findFirstActionablePaymentPriorityItem(snapshot.paymentPriority);
+}
+
+async function executePaymentPriorityAction(params: {
+  userId: number;
+  item: PaymentPriorityItem;
+  executedAt: Date;
+}) {
+  const { userId, item, executedAt } = params;
+
+  if (!isActionablePaymentPriorityItem(item)) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Nao encontrei uma prioridade executavel para concluir no plano atual.",
+    });
+  }
+
+  const sourceId = item.sourceId;
+  if (typeof sourceId !== "number") {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Essa prioridade nao possui um registro financeiro vinculavel.",
+    });
+  }
+
+  if (item.sourceType === "company_fixed_cost") {
+    await db.updateCompanyFixedCost(sourceId, userId, { status: "pago" });
+    return {
+      executionKind: "payment_status_update" as const,
+      message: `${item.title} foi marcado como pago no financeiro da empresa.`,
+      targetItem: item,
+      updatedStatus: "pago",
+    };
+  }
+
+  if (item.sourceType === "company_variable_cost") {
+    await db.updateCompanyVariableCost(sourceId, userId, { status: "pago" });
+    return {
+      executionKind: "payment_status_update" as const,
+      message: `${item.title} foi marcado como pago nos custos variaveis da empresa.`,
+      targetItem: item,
+      updatedStatus: "pago",
+    };
+  }
+
+  if (item.sourceType === "personal_fixed_cost") {
+    await db.updatePersonalFixedCost(sourceId, userId, { status: "pago" });
+    return {
+      executionKind: "payment_status_update" as const,
+      message: `${item.title} foi marcado como pago nas contas pessoais.`,
+      targetItem: item,
+      updatedStatus: "pago",
+    };
+  }
+
+  if (item.sourceType === "personal_variable_cost") {
+    await db.updatePersonalVariableCost(sourceId, userId, { status: "pago" });
+    return {
+      executionKind: "payment_status_update" as const,
+      message: `${item.title} foi marcado como pago nos gastos pessoais.`,
+      targetItem: item,
+      updatedStatus: "pago",
+    };
+  }
+
+  if (item.sourceType === "debt") {
+    const debts = await db.getDebts(userId);
+    const debt = debts.find(current => current.id === sourceId);
+    if (!debt) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Nao encontrei a divida vinculada a essa prioridade.",
+      });
+    }
+
+    const currentBalance = clampCurrency(Math.max(toNumber(debt.currentBalance), 0));
+    const installmentAmount = clampCurrency(
+      Math.max(toNumber(debt.monthlyPayment), 0) || currentBalance
+    );
+    const nextBalance = clampCurrency(Math.max(currentBalance - installmentAmount, 0));
+    const nextPaidInstallments = Math.max(
+      0,
+      Math.min(
+        (Number(debt.paidInstallments ?? 0) || 0) + 1,
+        Math.max(Number(debt.totalInstallments ?? 1) || 1, 1)
+      )
+    );
+    const nextStatus =
+      nextBalance <= 0 ? ("quitada" as const) : ("ativa" as const);
+
+    await db.updateDebt(sourceId, userId, {
+      currentBalance: nextBalance.toFixed(2),
+      paidInstallments: nextPaidInstallments,
+      status: nextStatus,
+    });
+
+    return {
+      executionKind: "payment_status_update" as const,
+      message:
+        nextStatus === "quitada"
+          ? `${item.title} foi quitada. Saldo restante: R$ 0,00.`
+          : `${item.title} recebeu a parcela do periodo. Saldo restante: R$ ${nextBalance.toFixed(2)}.`,
+      targetItem: item,
+      updatedStatus: nextStatus,
+      nextBalance,
+      paidInstallments: nextPaidInstallments,
+      executedAt: executedAt.toISOString(),
+    };
+  }
+
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: "Essa prioridade ainda nao tem execucao automatica disponivel no painel.",
+  });
+}
+
+async function resolveChargeFollowUpTarget(userId: number, metadata: AnyRecord) {
+  const fromMetadata = normalizeAsaasChargeFollowUpItem(
+    metadata.targetCharge && typeof metadata.targetCharge === "object" ? metadata.targetCharge : null
+  );
+  if (fromMetadata) return fromMetadata;
+
+  const charges = await asaasDb.listAsaasCharges(userId);
+  return pickChargeFollowUpTarget(charges);
+}
+
 export async function confirmFinancialAdvisorAction(userId: number, actionId: number) {
   const action = await whatsappDb.getFinancialPlanActionById(userId, actionId);
   if (!action) {
@@ -1676,6 +2293,97 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
 
   const metadata = parseActionMetadata(action.metadata);
   const executedAt = new Date();
+
+  if (action.actionType === "pay_priority_items") {
+    const targetItem = await resolvePriorityItemForExecution(userId, metadata);
+    if (!targetItem) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei uma prioridade executavel para concluir agora.",
+      });
+    }
+
+    const execution = await executePaymentPriorityAction({
+      userId,
+      item: targetItem,
+      executedAt,
+    });
+
+    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+      status: "concluida",
+      metadata: buildExecutedActionMetadata(metadata, {
+        kind: execution.executionKind,
+        targetItem: targetItem,
+        updatedStatus: execution.updatedStatus,
+        nextBalance: "nextBalance" in execution ? execution.nextBalance : undefined,
+        paidInstallments:
+          "paidInstallments" in execution ? execution.paidInstallments : undefined,
+        executedAt: executedAt.toISOString(),
+      }),
+    });
+
+    return {
+      success: true,
+      message: execution.message,
+      executionKind: execution.executionKind,
+      targetItem,
+    };
+  }
+
+  if (action.actionType === "charge_follow_up") {
+    const targetCharge = await resolveChargeFollowUpTarget(userId, metadata);
+    if (!targetCharge) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei uma cobranca aberta do Asaas para acompanhar agora.",
+      });
+    }
+
+    const refreshedCharge = await asaas.resendAsaasCharge(userId, targetCharge.id);
+    const billingType = String(refreshedCharge.billingType || targetCharge.billingType || "PIX").toUpperCase();
+    const dueDate = String(refreshedCharge.dueDate || targetCharge.dueDate || "");
+    const value = clampCurrency(toNumber(refreshedCharge.value ?? targetCharge.value));
+
+    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+      status: "concluida",
+      metadata: buildExecutedActionMetadata(metadata, {
+        kind: "charge_follow_up",
+        targetCharge: {
+          id: refreshedCharge.id ?? targetCharge.id,
+          asaasChargeId: refreshedCharge.asaasChargeId ?? targetCharge.asaasChargeId,
+          description: refreshedCharge.description ?? targetCharge.description,
+          billingType,
+          status: refreshedCharge.status ?? targetCharge.status,
+          dueDate,
+          value,
+          invoiceUrl: refreshedCharge.invoiceUrl ?? targetCharge.invoiceUrl ?? null,
+          bankSlipUrl: refreshedCharge.bankSlipUrl ?? targetCharge.bankSlipUrl ?? null,
+          pixQrCodeUrl: refreshedCharge.pixQrCodeUrl ?? targetCharge.pixQrCodeUrl ?? null,
+          pixCopyAndPaste: refreshedCharge.pixCopyAndPaste ?? targetCharge.pixCopyAndPaste ?? null,
+        },
+        executedAt: executedAt.toISOString(),
+      }),
+    });
+
+    const accessHint =
+      billingType === "PIX"
+        ? refreshedCharge.pixCopyAndPaste || refreshedCharge.pixQrCodeUrl
+          ? "PIX atualizado e pronto para compartilhamento."
+          : "PIX reenviado e sincronizado."
+        : refreshedCharge.bankSlipUrl || refreshedCharge.invoiceUrl
+          ? "Link do boleto/fatura atualizado para novo follow-up."
+          : "Cobranca reenviada e sincronizada.";
+
+    return {
+      success: true,
+      message: `Follow-up executado para ${targetCharge.description} (${dueDate}) no valor de R$ ${value.toFixed(2)}. ${accessHint}`,
+      executionKind: "charge_follow_up" as const,
+      targetChargeId: refreshedCharge.id ?? targetCharge.id,
+      billingType,
+      dueDate,
+      value,
+    };
+  }
 
   if (
     action.actionType === "transfer_company_reserve" ||
@@ -1802,6 +2510,12 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     referenceDate: params.referenceDate,
     persist: false,
   });
+  const memory = await getFinancialAdvisorMemory(params.userId, { currentSnapshot: snapshot });
+  const mentorMode = getFinancialAdvisorMentorMode(memory);
+  const memoryAlert =
+    memory.historyMonths >= 2
+      ? `Memoria do mentor: ${memory.profileLabel}.`
+      : null;
 
   if (params.intent === "monthly_plan_request") {
     return {
@@ -1811,9 +2525,13 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       summary: snapshot.summary,
       alerts: snapshot.counts.overdueItems
         ? [`${snapshot.counts.overdueItems} item(ns) vencido(s) devem entrar na primeira linha do plano.`]
-        : [],
+        : memoryAlert
+          ? [memoryAlert]
+          : [],
       suggestedActions: snapshot.topRecommendations,
       requiresConfirmation: true,
+      mentorMode,
+      memory,
     };
   }
 
@@ -1822,11 +2540,16 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       snapshot,
       reply: `Hoje o limite seguro está em R$ ${snapshot.safeToSpendNow.toFixed(2)} e, no mês, ainda há até R$ ${snapshot.safeToSpendMonth.toFixed(2)} de espaço sem furar as proteções do caixa.`,
       summary: snapshot.summary,
-      alerts: snapshot.counts.overdueItems
-        ? ["Existem vencidos pressionando o orçamento antes de qualquer gasto novo."]
-        : [],
+      alerts: [
+        snapshot.counts.overdueItems
+          ? "Existem vencidos pressionando o orçamento antes de qualquer gasto novo."
+          : null,
+        memoryAlert,
+      ].filter(Boolean) as string[],
       suggestedActions: snapshot.topRecommendations,
       requiresConfirmation: false,
+      mentorMode,
+      memory,
     };
   }
 
@@ -1858,11 +2581,16 @@ export async function buildFinancialAdvisorAssistantReply(params: {
         snapshot,
         reply: prompt,
         summary: snapshot.summary,
-        alerts: snapshot.counts.overdueItems
-          ? ["Existem vencidos pressionando o caixa antes de assumir novas saídas."]
-          : [],
+        alerts: [
+          snapshot.counts.overdueItems
+            ? "Existem vencidos pressionando o caixa antes de assumir novas saídas."
+            : null,
+          memoryAlert,
+        ].filter(Boolean) as string[],
         suggestedActions: snapshot.topRecommendations,
         requiresConfirmation: false,
+        mentorMode,
+        memory,
       };
     }
 
@@ -1872,11 +2600,16 @@ export async function buildFinancialAdvisorAssistantReply(params: {
         reply:
           "Consigo avaliar essa compra parcelada, mas preciso da quantidade de parcelas. Exemplo: 'Posso comprar um notebook de R$ 12.000 em 12x?'",
         summary: snapshot.summary,
-        alerts: snapshot.counts.overdueItems
-          ? ["Existem vencidos pressionando o caixa antes de assumir novas saídas."]
-          : [],
+        alerts: [
+          snapshot.counts.overdueItems
+            ? "Existem vencidos pressionando o caixa antes de assumir novas saídas."
+            : null,
+          memoryAlert,
+        ].filter(Boolean) as string[],
         suggestedActions: snapshot.topRecommendations,
         requiresConfirmation: false,
+        mentorMode,
+        memory,
       };
     }
 
@@ -1925,6 +2658,7 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       snapshot.counts.overdueItems > 0
         ? "Existem vencidos pressionando o caixa antes de assumir novas saídas."
         : null,
+      memoryAlert,
     ].filter(Boolean) as string[];
 
     return {
@@ -1934,6 +2668,8 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       alerts,
       suggestedActions: snapshot.topRecommendations,
       requiresConfirmation: false,
+      mentorMode,
+      memory,
     };
   }
 
@@ -1942,11 +2678,13 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       snapshot,
       reply: `A recomendação atual é separar R$ ${snapshot.companyReserveRecommendation.toFixed(2)} para a reserva da empresa e R$ ${snapshot.personalReserveRecommendation.toFixed(2)} para a reserva pessoal, desde que você confirme essa alocação.`,
       summary: snapshot.summary,
-      alerts: [],
+      alerts: memoryAlert ? [memoryAlert] : [],
       suggestedActions: snapshot.topRecommendations.filter(action =>
         action.kind === "transfer_company_reserve" || action.kind === "transfer_personal_reserve"
       ),
       requiresConfirmation: true,
+      mentorMode,
+      memory,
     };
   }
 
@@ -1960,9 +2698,13 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       summary: snapshot.summary,
       alerts: snapshot.counts.overdueItems
         ? [`${snapshot.counts.overdueItems} item(ns) vencido(s) estão no topo da prioridade.`]
-        : [],
+        : memoryAlert
+          ? [memoryAlert]
+          : [],
       suggestedActions: snapshot.topRecommendations,
       requiresConfirmation: false,
+      mentorMode,
+      memory,
     };
   }
 
@@ -1977,11 +2719,16 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       snapshot,
       reply: `Sua saúde financeira consolidada está ${label}. Caixa protegido em R$ ${snapshot.protectedCash.toFixed(2)} e provisão tributária em R$ ${snapshot.taxProvision.toFixed(2)}.`,
       summary: snapshot.summary,
-      alerts: snapshot.counts.overdueCharges
-        ? [`${snapshot.counts.overdueCharges} cobrança(s) em atraso reduzem previsibilidade do caixa.`]
-        : [],
+      alerts: [
+        snapshot.counts.overdueCharges
+          ? `${snapshot.counts.overdueCharges} cobrança(s) em atraso reduzem previsibilidade do caixa.`
+          : null,
+        memoryAlert,
+      ].filter(Boolean) as string[],
       suggestedActions: snapshot.topRecommendations,
       requiresConfirmation: false,
+      mentorMode,
+      memory,
     };
   }
 
@@ -1990,9 +2737,11 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     reply:
       "Consigo te orientar sobre quanto pode gastar, quais contas pagar primeiro, quanto separar para reserva e como está a saúde financeira da empresa e do pessoal.",
     summary: snapshot.summary,
-    alerts: [],
+    alerts: memoryAlert ? [memoryAlert] : [],
     suggestedActions: snapshot.topRecommendations,
     requiresConfirmation: false,
+    mentorMode,
+    memory,
   };
 }
 

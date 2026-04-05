@@ -3,6 +3,8 @@ import {
   calculateFinancialAdvisorOnboarding,
   calculateFinancialGovernanceSnapshot,
   evaluateFinancialDecisionScenariosFromSnapshot,
+  personalizeFinancialAdvisorSummary,
+  personalizeFinancialRecommendations,
 } from "./financial-advisor";
 
 describe("financial advisor governance snapshot", () => {
@@ -110,6 +112,9 @@ describe("financial advisor governance snapshot", () => {
           amount: "1800",
           type: "empresa-fixo",
           status: "atrasada",
+          sourceId: 42,
+          sourceType: "company_fixed_cost",
+          actionable: true,
         },
       ],
       debts: [],
@@ -125,6 +130,16 @@ describe("financial advisor governance snapshot", () => {
     expect(snapshot.counts.overdueItems).toBeGreaterThan(0);
     expect(snapshot.counts.overdueCharges).toBeGreaterThan(0);
     expect(snapshot.paymentPriority[0]?.urgency).toBe("overdue");
+    expect(snapshot.topRecommendations[0]).toMatchObject({
+      kind: "pay_priority_items",
+      metadata: {
+        targetItem: {
+          sourceId: 42,
+          sourceType: "company_fixed_cost",
+          actionable: true,
+        },
+      },
+    });
   });
 
   it("evaluates a company withdrawal against the current operational headroom", () => {
@@ -496,5 +511,67 @@ describe("financial advisor governance snapshot", () => {
     expect(onboarding.recommendedStepKey).toBe("profile");
     expect(onboarding.steps[0]?.status).toBe("pending");
     expect(onboarding.progressPercent).toBeLessThan(30);
+  });
+
+  it("prioritizes smaller execution wins when behavioral memory shows low execution", () => {
+    const snapshot = {
+      topRecommendations: [
+        {
+          kind: "transfer_company_reserve",
+          title: "Separar valor para reserva da empresa",
+          description: "Reforce a reserva empresarial.",
+        },
+        {
+          kind: "charge_follow_up",
+          title: "Atuar nas cobrancas abertas do Asaas",
+          description: "Existem cobrancas em aberto.",
+        },
+        {
+          kind: "pay_priority_items",
+          title: "Regularizar vencidos imediatamente",
+          description: "Existem itens vencidos no fluxo.",
+        },
+      ],
+      summary: "Resumo base.",
+    } as any;
+
+    const memory = {
+      executionScore: 36,
+      trendDirection: "stable",
+    } as any;
+
+    const personalized = personalizeFinancialRecommendations(snapshot, memory);
+    expect(personalized[0]?.kind).toBe("pay_priority_items");
+    expect(personalized[1]?.kind).toBe("charge_follow_up");
+    expect(personalized[0]?.description).toContain("Foque em executar esta unica frente");
+    expect(personalizeFinancialAdvisorSummary(snapshot, memory)).toContain("passos menores");
+  });
+
+  it("raises the strategic level when memory shows consistent execution", () => {
+    const snapshot = {
+      topRecommendations: [
+        {
+          kind: "pay_priority_items",
+          title: "Regularizar vencidos imediatamente",
+          description: "Existem itens vencidos no fluxo.",
+        },
+        {
+          kind: "transfer_personal_reserve",
+          title: "Separar valor para reserva pessoal",
+          description: "Reforce a reserva pessoal.",
+        },
+      ],
+      summary: "Resumo base.",
+    } as any;
+
+    const memory = {
+      executionScore: 82,
+      trendDirection: "improving",
+    } as any;
+
+    const personalized = personalizeFinancialRecommendations(snapshot, memory);
+    expect(personalized[0]?.kind).toBe("transfer_personal_reserve");
+    expect(personalized[0]?.description).toContain("subir o nivel");
+    expect(personalizeFinancialAdvisorSummary(snapshot, memory)).toContain("subir o foco");
   });
 });

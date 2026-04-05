@@ -93,6 +93,29 @@ export const settings = pgTable("settings", {
 export type Settings = typeof settings.$inferSelect;
 export type InsertSettings = typeof settings.$inferInsert;
 
+// ==================== INTEGRACOES BANCARIAS ====================
+export const bankConnections = pgTable("bank_connections", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  label: varchar("label", { length: 255 }).notNull(),
+  institution: varchar("institution", { length: 255 }).notNull(),
+  provider: varchar("provider", { length: 40 }).default("open_finance").notNull(),
+  sourceKind: varchar("sourceKind", { length: 30 }).default("bank_account").notNull(),
+  scope: varchar("scope", { length: 20 }).default("misto").notNull(),
+  syncMode: varchar("syncMode", { length: 20 }).default("file").notNull(),
+  status: varchar("status", { length: 20 }).default("rascunho").notNull(),
+  notes: text("notes"),
+  lastImportedAt: timestamp("lastImportedAt"),
+  lastSyncRequestedAt: timestamp("lastSyncRequestedAt"),
+  lastSyncStatus: varchar("lastSyncStatus", { length: 40 }),
+  lastSyncError: text("lastSyncError"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+});
+
+export type BankConnection = typeof bankConnections.$inferSelect;
+export type InsertBankConnection = typeof bankConnections.$inferInsert;
+
 // ==================== RECEITAS (EMPRESA) ====================
 export const revenues = pgTable("revenues", {
   id: serial("id").primaryKey(),

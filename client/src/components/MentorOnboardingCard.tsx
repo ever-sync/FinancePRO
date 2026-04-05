@@ -6,6 +6,7 @@ import {
   Building2,
   CheckCircle2,
   Database,
+  Landmark,
   MessageCircle,
   ShieldCheck,
   Target,
@@ -612,6 +613,23 @@ export function MentorOnboardingCard() {
                 <Button variant="outline" onClick={() => setLocation("/calendario")}>
                   {isCalendarReady ? "Revisar calendario" : "Completar calendario"}
                 </Button>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border bg-zinc-50/70 p-4">
+              <div className="flex items-start gap-3">
+                <Landmark className="mt-0.5 size-4 text-zinc-500" />
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-zinc-900">Open Finance assistido</p>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    Se voce quer reduzir upload manual recorrente, cadastre suas contas e cartoes
+                    numa central de integracoes bancarias. O conciliador passa a abrir ja no
+                    contexto certo para empresa, pessoal ou cartao.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setLocation("/integracoes-bancarias")}>
+                    Abrir integracoes bancarias
+                  </Button>
+                </div>
               </div>
             </div>
 

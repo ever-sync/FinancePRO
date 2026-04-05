@@ -47,6 +47,42 @@ export const appRouter = router({
       .mutation(({ ctx, input }) => db.upsertSettings({ userId: ctx.user.id, ...input })),
   }),
 
+  bankConnections: router({
+    list: protectedProcedure.query(({ ctx }) => db.listBankConnections(ctx.user.id)),
+    upsert: protectedProcedure
+      .input(
+        z.object({
+          id: z.number().optional(),
+          label: z.string().min(1),
+          institution: z.string().min(1),
+          provider: z.enum(["open_finance", "pluggy", "belvo", "manual_upload"]),
+          sourceKind: z.enum(["bank_account", "credit_card"]),
+          scope: z.enum(["empresa", "pessoal", "misto"]),
+          syncMode: z.enum(["api", "file"]),
+          status: z.enum(["pronta", "atencao", "rascunho"]),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(({ ctx, input }) => db.upsertBankConnection(ctx.user.id, input)),
+    remove: protectedProcedure
+      .input(z.object({ connectionId: z.number() }))
+      .mutation(({ ctx, input }) => db.deleteBankConnection(ctx.user.id, input.connectionId)),
+    markImported: protectedProcedure
+      .input(z.object({ connectionId: z.number() }))
+      .mutation(({ ctx, input }) => db.markBankConnectionImported(ctx.user.id, input.connectionId)),
+    requestSync: protectedProcedure
+      .input(z.object({ connectionId: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        const connection = await db.requestBankConnectionSync(ctx.user.id, input.connectionId);
+        return {
+          success: true,
+          connection,
+          message:
+            "Sincronizacao registrada no backend. Falta apenas conectar um provedor real para buscar as transacoes automaticamente.",
+        };
+      }),
+  }),
+
   financialImports: router({
     importCsv: protectedProcedure
       .input(
@@ -888,6 +924,9 @@ export const appRouter = router({
   financialAdvisor: router({
     getSnapshot: protectedProcedure.query(({ ctx }) =>
       financialAdvisor.getFinancialAdvisorSnapshot(ctx.user.id)
+    ),
+    getMemory: protectedProcedure.query(({ ctx }) =>
+      financialAdvisor.getFinancialAdvisorMemory(ctx.user.id)
     ),
     getOnboarding: protectedProcedure.query(({ ctx }) =>
       financialAdvisor.getFinancialAdvisorOnboarding(ctx.user.id)

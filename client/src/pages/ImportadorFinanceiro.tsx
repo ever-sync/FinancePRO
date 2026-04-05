@@ -44,6 +44,9 @@ import {
   type FinancialImportReserveType,
   type FinancialImportTarget,
 } from "@shared/financial-import";
+import {
+  type BankConnectionProfile,
+} from "@/lib/bankConnections";
 import { trpc } from "@/lib/trpc";
 import { formatCurrency } from "@/lib/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -225,6 +228,17 @@ function buildStatementImportSuccessMessage(params: {
 
 function getStatementSourceKindLabel(sourceKind: FinancialStatementSourceKind) {
   return sourceKind === "credit_card" ? "Fatura de cartao" : "Extrato bancario";
+}
+
+function normalizeBankConnectionProfile(profile: any): BankConnectionProfile {
+  return {
+    ...profile,
+    provider: profile.provider as BankConnectionProfile["provider"],
+    sourceKind: profile.sourceKind as BankConnectionProfile["sourceKind"],
+    scope: profile.scope as BankConnectionProfile["scope"],
+    syncMode: profile.syncMode as BankConnectionProfile["syncMode"],
+    status: profile.status as BankConnectionProfile["status"],
+  };
 }
 
 function readStoredStatementProfiles() {
@@ -716,6 +730,8 @@ export default function ImportadorFinanceiro() {
   const [statementProfiles, setStatementProfiles] = useState<StatementProfile[]>([]);
   const [profileName, setProfileName] = useState("");
   const [profileBankName, setProfileBankName] = useState("");
+  const { data: rawBankConnections = [] } = trpc.bankConnections.list.useQuery();
+  const bankConnections = rawBankConnections.map(connection => normalizeBankConnectionProfile(connection));
 
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
@@ -724,6 +740,7 @@ export default function ImportadorFinanceiro() {
   const guidedMode = params.get("mode");
   const guidedScope = params.get("scope");
   const guidedSourceKind = params.get("sourceKind");
+  const guidedConnectionId = params.get("connectionId");
   const guidedMeta = resolveFinancialImportPreset(guidedPreset);
   const currentTabValue: FinancialImportPreset =
     target === "reserve_funds"
@@ -750,6 +767,8 @@ export default function ImportadorFinanceiro() {
   const visibleStatementProfiles = statementProfiles.filter(
     profile => profile.sourceKind === statementSourceKind
   );
+  const activeBankConnection =
+    bankConnections.find(connection => connection.id === Number(guidedConnectionId)) ?? null;
   const mappingFields = getFinancialImportMappingFields(target);
 
   useEffect(() => {
@@ -775,6 +794,22 @@ export default function ImportadorFinanceiro() {
       setStatementSourceKind(guidedSourceKind);
     }
   }, [guidedSourceKind]);
+
+  useEffect(() => {
+    if (!activeBankConnection) return;
+    setImportMode("statement_reconciliation");
+    setStatementSourceKind(activeBankConnection.sourceKind as FinancialStatementSourceKind);
+    setStatementScope(activeBankConnection.scope as FinancialStatementScope);
+    setSourceLabel(current =>
+      current.trim().length
+        ? current
+        : `${activeBankConnection.label} · ${activeBankConnection.institution}`
+    );
+    setProfileBankName(current =>
+      current.trim().length ? current : activeBankConnection.institution
+    );
+    setProfileName(current => (current.trim().length ? current : activeBankConnection.label));
+  }, [activeBankConnection]);
 
   useEffect(() => {
     if (!guidedPreset) return;
@@ -856,6 +891,7 @@ export default function ImportadorFinanceiro() {
     return acc;
   }, {});
 
+  const markConnectionImportedMut = trpc.bankConnections.markImported.useMutation();
   const importMut = trpc.financialImports.importCsv.useMutation({
     onSuccess: async data => {
       await Promise.all([
@@ -885,6 +921,10 @@ export default function ImportadorFinanceiro() {
           totalAmount: data.totalAmount,
         })
       );
+      if (guidedConnectionId) {
+        await markConnectionImportedMut.mutateAsync({ connectionId: Number(guidedConnectionId) });
+        await utils.bankConnections.list.invalidate();
+      }
     },
     onError: error => toast.error(error.message),
   });
@@ -911,6 +951,10 @@ export default function ImportadorFinanceiro() {
           totalAmount: data.totalAmount,
         })
       );
+      if (guidedConnectionId) {
+        await markConnectionImportedMut.mutateAsync({ connectionId: Number(guidedConnectionId) });
+        await utils.bankConnections.list.invalidate();
+      }
     },
     onError: error => toast.error(error.message),
   });
@@ -1260,7 +1304,7 @@ export default function ImportadorFinanceiro() {
         </div>
       </div>
 
-      {guidedSource ? (
+      {guidedSource && guidedSource !== "bank-connection" ? (
         <Card className="border-emerald-200 bg-emerald-50/70">
           <CardContent className="flex flex-wrap items-center justify-between gap-4 py-5">
             <div>
@@ -1277,6 +1321,33 @@ export default function ImportadorFinanceiro() {
                 Abrir inbox do mentor
               </Button>
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {activeBankConnection ? (
+        <Card className="border-orange-200 bg-orange-50/70">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 py-5">
+            <div>
+              <p className="text-sm font-medium text-orange-950">
+                Conexao bancaria ativa: {activeBankConnection.label}
+              </p>
+              <p className="mt-1 text-sm text-orange-900/80">
+                {activeBankConnection.institution} · escopo {activeBankConnection.scope} ·{" "}
+                {activeBankConnection.sourceKind === "credit_card" ? "cartao" : "conta"}.
+                {activeBankConnection.lastImportedAt
+                  ? ` Ultima importacao em ${new Intl.DateTimeFormat("pt-BR", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }).format(new Date(activeBankConnection.lastImportedAt))}.`
+                  : " Ainda sem importacao registrada."}
+              </p>
+            </div>
+            <Button variant="outline" onClick={() => setLocation("/integracoes-bancarias")}>
+              Abrir central bancaria
+            </Button>
           </CardContent>
         </Card>
       ) : null}
