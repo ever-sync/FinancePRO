@@ -21,6 +21,8 @@ export default function WhatsAppAutomacao() {
   const utils = trpc.useUtils();
   const { data: events, isLoading } = trpc.assistantAutomation.list.useQuery();
   const { data: opsSummary } = trpc.assistantAutomation.summary.useQuery();
+  const { data: diagnostics, refetch: refetchDiagnostics, isFetching: isFetchingDiagnostics } =
+    trpc.assistantAutomation.diagnostics.useQuery();
   const { data: dailyDigest } = trpc.financialAdvisor.getDailyDigest.useQuery();
   const { data: monthClose } = trpc.financialAdvisor.getMonthClose.useQuery();
 
@@ -28,6 +30,7 @@ export default function WhatsAppAutomacao() {
     await Promise.all([
       utils.assistantAutomation.list.invalidate(),
       utils.assistantAutomation.summary.invalidate(),
+      utils.assistantAutomation.diagnostics.invalidate(),
       utils.financialAdvisor.getDailyDigest.invalidate(),
       utils.financialAdvisor.getMonthClose.invalidate(),
       utils.assistantAudit.list.invalidate(),
@@ -37,7 +40,7 @@ export default function WhatsAppAutomacao() {
   const runDailyMut = trpc.assistantAutomation.runDaily.useMutation({
     onSuccess: async data => {
       await refreshAutomationViews();
-      toast.success(`Digest diario executado. ${data.processed} integracao(oes) processada(s).`);
+      toast.success(data.message || `Digest diario executado. ${data.processed} integracao(oes) processada(s).`);
     },
     onError: error => toast.error(error.message),
   });
@@ -45,7 +48,7 @@ export default function WhatsAppAutomacao() {
   const runMonthStartMut = trpc.assistantAutomation.runMonthStart.useMutation({
     onSuccess: async data => {
       await refreshAutomationViews();
-      toast.success(`Inicio do mes executado. ${data.processed} integracao(oes) processada(s).`);
+      toast.success(data.message || `Inicio do mes executado. ${data.processed} integracao(oes) processada(s).`);
     },
     onError: error => toast.error(error.message),
   });
@@ -53,7 +56,23 @@ export default function WhatsAppAutomacao() {
   const runMonthEndMut = trpc.assistantAutomation.runMonthEnd.useMutation({
     onSuccess: async data => {
       await refreshAutomationViews();
-      toast.success(`Fechamento do mes executado. ${data.processed} integracao(oes) processada(s).`);
+      toast.success(data.message || `Fechamento do mes executado. ${data.processed} integracao(oes) processada(s).`);
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const rerunLatestFailureMut = trpc.assistantAutomation.rerunLatestFailure.useMutation({
+    onSuccess: async data => {
+      await refreshAutomationViews();
+      toast.success(data.message || "Ultima falha reprocessada com sucesso.");
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const runEligibleNowMut = trpc.assistantAutomation.runEligibleNow.useMutation({
+    onSuccess: async data => {
+      await refreshAutomationViews();
+      toast.success(data.message || "Rotinas aptas executadas.");
     },
     onError: error => toast.error(error.message),
   });
@@ -145,6 +164,36 @@ export default function WhatsAppAutomacao() {
             >
               {runMonthEndMut.isPending ? "Rodando fechamento..." : "Rodar fechamento do mes"}
             </Button>
+            <Button
+              variant="ghost"
+              onClick={async () => {
+                await refetchDiagnostics();
+                toast.success("Diagnostico operacional atualizado.");
+              }}
+              disabled={isFetchingDiagnostics}
+            >
+              {isFetchingDiagnostics ? "Atualizando diagnostico..." : "Atualizar diagnostico"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => rerunLatestFailureMut.mutate()}
+              disabled={
+                rerunLatestFailureMut.isPending ||
+                ((opsSummary?.counts.failedRuns ?? 0) + (opsSummary?.counts.failedEvents ?? 0) === 0)
+              }
+            >
+              {rerunLatestFailureMut.isPending ? "Reprocessando falha..." : "Reprocessar ultima falha"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => runEligibleNowMut.mutate()}
+              disabled={
+                runEligibleNowMut.isPending ||
+                !diagnostics?.routines?.some(routine => routine.status === "ready")
+              }
+            >
+              {runEligibleNowMut.isPending ? "Executando rotinas..." : "Executar rotinas aptas agora"}
+            </Button>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -178,8 +227,53 @@ export default function WhatsAppAutomacao() {
               <p className="mt-2 text-sm text-muted-foreground">
                 {opsSummary?.latest?.lastFailedRun?.errorMessage || opsSummary?.latest?.lastFailedEvent?.messageBody || "Sem erro bloqueando a automacao agora."}
               </p>
+              {(opsSummary?.counts.failedRuns ?? 0) + (opsSummary?.counts.failedEvents ?? 0) > 0 ? (
+                <div className="mt-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => rerunLatestFailureMut.mutate()}
+                    disabled={rerunLatestFailureMut.isPending}
+                  >
+                    {rerunLatestFailureMut.isPending ? "Reprocessando..." : "Tentar novamente"}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
+
+          <div className="grid gap-3 xl:grid-cols-3">
+            {diagnostics?.routines?.map(routine => (
+              <div key={routine.key} className="rounded-2xl border p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{routine.label}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">{routine.summary}</p>
+                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-zinc-400">
+                      {routine.dedupeKey || "sem dedupe"}
+                    </p>
+                  </div>
+                  <StatusBadge status={routine.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {runEligibleNowMut.data?.executedRoutines?.length || runEligibleNowMut.data?.skippedRoutines?.length ? (
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-4">
+              <p className="text-sm font-medium text-sky-900">Ultima execucao em lote</p>
+              {runEligibleNowMut.data?.executedRoutines?.length ? (
+                <p className="mt-2 text-sm text-sky-800">
+                  Executadas: {runEligibleNowMut.data.executedRoutines.join(", ")}.
+                </p>
+              ) : null}
+              {runEligibleNowMut.data?.skippedRoutines?.length ? (
+                <p className="mt-2 text-sm text-sky-800">
+                  Puladas: {runEligibleNowMut.data.skippedRoutines.map(item => `${item.key} (${item.status})`).join(", ")}.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

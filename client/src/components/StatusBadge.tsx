@@ -63,6 +63,9 @@ const statusMap: Record<string, { label: string; className: string }> = {
   manual_only: { label: "Manual", className: "bg-zinc-100 text-zinc-600 border-zinc-200" },
   provider_ready: { label: "Provider pronto", className: "bg-emerald-50 text-emerald-600 border-emerald-100" },
   provider_setup_required: { label: "Provider pendente", className: "bg-amber-50 text-amber-700 border-amber-100" },
+  outside_window: { label: "Fora da janela", className: "bg-amber-50 text-amber-700 border-amber-100" },
+  already_sent: { label: "Ja enviado", className: "bg-sky-50 text-sky-700 border-sky-100" },
+  inactive: { label: "Inativa", className: "bg-zinc-100 text-zinc-500 border-zinc-200" },
 };
 
 export function StatusBadge({ status }: StatusBadgeProps) {

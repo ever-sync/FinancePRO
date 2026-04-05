@@ -1664,7 +1664,8 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
 }
 
 async function runDailyDigestForIntegration(
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>
+  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>,
+  options?: { notificationDedupeKey?: string }
 ) {
   const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
     integrationId: integration.id,
@@ -1720,13 +1721,14 @@ async function runDailyDigestForIntegration(
     scope: "automation",
     title: "Resumo diario enviado",
     messageBody: digest.message,
-    dedupeKey: `daily:${integration.userId}:${digest.snapshot.generatedAt}`,
+    dedupeKey: options?.notificationDedupeKey || `daily:${integration.userId}:${digest.snapshot.generatedAt}`,
     status: "enviado",
   });
 }
 
 async function runMonthStartForIntegration(
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>
+  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>,
+  options?: { notificationDedupeKey?: string }
 ) {
   const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
     integrationId: integration.id,
@@ -1778,13 +1780,16 @@ async function runMonthStartForIntegration(
     scope: "automation",
     title: "Plano mensal aguardando confirmacao",
     messageBody: preview.summary,
-    dedupeKey: `month-start:${integration.userId}:${preview.snapshot.year}-${preview.snapshot.month}`,
+    dedupeKey:
+      options?.notificationDedupeKey ||
+      `month-start:${integration.userId}:${preview.snapshot.year}-${preview.snapshot.month}`,
     status: "enviado",
   });
 }
 
 async function runMonthEndForIntegration(
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>
+  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>,
+  options?: { notificationDedupeKey?: string }
 ) {
   const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
     integrationId: integration.id,
@@ -1837,9 +1842,332 @@ async function runMonthEndForIntegration(
     scope: "automation",
     title: "Fechamento mensal enviado",
     messageBody: close.message,
-    dedupeKey: `month-end:${integration.userId}:${close.snapshot.year}-${close.snapshot.month}`,
+    dedupeKey:
+      options?.notificationDedupeKey ||
+      `month-end:${integration.userId}:${close.snapshot.year}-${close.snapshot.month}`,
     status: "enviado",
   });
+}
+
+type AssistantCronDiagnosticStatus =
+  | "ready"
+  | "attention"
+  | "inactive"
+  | "outside_window"
+  | "already_sent";
+
+function getRoutineStatusForConnection(params: {
+  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>;
+  routine: "daily_digest" | "month_start" | "month_end";
+  duplicateFound: boolean;
+}) {
+  const now = getPartsInTimeZone(new Date(), params.integration.timezone || DEFAULT_TIMEZONE);
+  const tomorrow = getPartsInTimeZone(
+    new Date(Date.now() + 24 * 60 * 60 * 1000),
+    params.integration.timezone || DEFAULT_TIMEZONE
+  );
+
+  if (!params.integration.enabled || !params.integration.authorizedPhone) {
+    return {
+      status: "inactive" as const,
+      summary: "A integracao precisa estar habilitada e com numero autorizado.",
+    };
+  }
+
+  if (params.duplicateFound) {
+    return {
+      status: "already_sent" as const,
+      summary: "Ja existe um envio registrado para esta rotina no ciclo atual.",
+    };
+  }
+
+  if (params.routine === "daily_digest") {
+    const currentHour = now.hour;
+    const configuredHour = params.integration.automationHour ?? 8;
+    if (currentHour !== configuredHour) {
+      return {
+        status: "outside_window" as const,
+        summary: `Fora da janela automatica. Agora sao ${currentHour}h e a rotina esta configurada para ${configuredHour}h.`,
+      };
+    }
+  }
+
+  if (params.routine === "month_start" && now.day !== 1) {
+    return {
+      status: "outside_window" as const,
+      summary: "A rotina automatica de inicio do mes so dispara no dia 1.",
+    };
+  }
+
+  if (params.routine === "month_end" && tomorrow.month === now.month) {
+    return {
+      status: "outside_window" as const,
+      summary: "A rotina automatica de fechamento so dispara no ultimo dia do mes.",
+    };
+  }
+
+  if (params.integration.lastConnectionStatus === "erro") {
+    return {
+      status: "attention" as const,
+      summary: params.integration.lastConnectionMessage || "A integracao esta com erro e merece revisao antes do envio.",
+    };
+  }
+
+  return {
+    status: "ready" as const,
+    summary: "A rotina esta apta para rodar agora.",
+  };
+}
+
+export async function getAssistantCronDiagnostics(userId: number) {
+  const integration = await whatsappDb.getWhatsAppIntegration(userId);
+  if (!integration) {
+    return {
+      checkedAt: new Date().toISOString(),
+      integration: null,
+      routines: [
+        {
+          key: "daily_digest",
+          label: "Digest diario",
+          dedupeKey: null,
+          status: "inactive" as AssistantCronDiagnosticStatus,
+          summary: "Configure a integracao do WhatsApp para liberar a rotina.",
+        },
+        {
+          key: "month_start",
+          label: "Inicio do mes",
+          dedupeKey: null,
+          status: "inactive" as AssistantCronDiagnosticStatus,
+          summary: "Configure a integracao do WhatsApp para liberar a rotina.",
+        },
+        {
+          key: "month_end",
+          label: "Fechamento do mes",
+          dedupeKey: null,
+          status: "inactive" as AssistantCronDiagnosticStatus,
+          summary: "Configure a integracao do WhatsApp para liberar a rotina.",
+        },
+      ],
+    };
+  }
+
+  const now = getPartsInTimeZone(new Date(), integration.timezone || DEFAULT_TIMEZONE);
+  const dailyKey = `daily:${integration.userId}:${now.iso}`;
+  const monthStartKey = `month-start:${integration.userId}:${now.year}-${now.month}`;
+  const monthEndKey = `month-end:${integration.userId}:${now.year}-${now.month}`;
+  const [dailyExisting, monthStartExisting, monthEndExisting] = await Promise.all([
+    whatsappDb.getNotificationEventByDedupeKey(integration.id, dailyKey),
+    whatsappDb.getNotificationEventByDedupeKey(integration.id, monthStartKey),
+    whatsappDb.getNotificationEventByDedupeKey(integration.id, monthEndKey),
+  ]);
+
+  const daily = getRoutineStatusForConnection({
+    integration,
+    routine: "daily_digest",
+    duplicateFound: Boolean(dailyExisting),
+  });
+  const monthStart = getRoutineStatusForConnection({
+    integration,
+    routine: "month_start",
+    duplicateFound: Boolean(monthStartExisting),
+  });
+  const monthEnd = getRoutineStatusForConnection({
+    integration,
+    routine: "month_end",
+    duplicateFound: Boolean(monthEndExisting),
+  });
+
+  return {
+    checkedAt: new Date().toISOString(),
+    integration: {
+      id: integration.id,
+      enabled: integration.enabled,
+      authorizedPhone: integration.authorizedPhone,
+      automationHour: integration.automationHour,
+      timezone: integration.timezone,
+      lastConnectionStatus: integration.lastConnectionStatus,
+      lastConnectionMessage: integration.lastConnectionMessage,
+    },
+    routines: [
+      { key: "daily_digest", label: "Digest diario", dedupeKey: dailyKey, ...daily },
+      { key: "month_start", label: "Inicio do mes", dedupeKey: monthStartKey, ...monthStart },
+      { key: "month_end", label: "Fechamento do mes", dedupeKey: monthEndKey, ...monthEnd },
+    ],
+  };
+}
+
+async function getManualAutomationIntegration(userId: number) {
+  const integration = await whatsappDb.getWhatsAppIntegration(userId);
+  if (!integration || !integration.enabled || !integration.authorizedPhone) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Configure uma integracao do WhatsApp habilitada com numero autorizado para rodar esta rotina.",
+    });
+  }
+  return integration;
+}
+
+export async function runFinancialDailyForUser(userId: number) {
+  const integration = await getManualAutomationIntegration(userId);
+  await runDailyDigestForIntegration(integration, {
+    notificationDedupeKey: `manual-daily:${integration.userId}:${Date.now()}`,
+  });
+  return { success: true, processed: 1, message: "Digest diario executado manualmente para esta integracao." };
+}
+
+export async function runFinancialMonthStartForUser(userId: number) {
+  const integration = await getManualAutomationIntegration(userId);
+  await runMonthStartForIntegration(integration, {
+    notificationDedupeKey: `manual-month-start:${integration.userId}:${Date.now()}`,
+  });
+  return { success: true, processed: 1, message: "Inicio do mes executado manualmente para esta integracao." };
+}
+
+export async function runFinancialMonthEndForUser(userId: number) {
+  const integration = await getManualAutomationIntegration(userId);
+  await runMonthEndForIntegration(integration, {
+    notificationDedupeKey: `manual-month-end:${integration.userId}:${Date.now()}`,
+  });
+  return { success: true, processed: 1, message: "Fechamento do mes executado manualmente para esta integracao." };
+}
+
+function getFailureTimestamp(entry: { updatedAt?: Date | null; createdAt?: Date | null }) {
+  return entry.updatedAt?.getTime() ?? entry.createdAt?.getTime() ?? 0;
+}
+
+function getRerunnableAutomationRoutineFromRun(
+  run: Awaited<ReturnType<typeof whatsappDb.listAssistantRuns>>[number] | null | undefined
+) {
+  if (!run) return null;
+  if (run.triggerType === "daily_digest") return "daily_digest" as const;
+  if (run.triggerType === "month_start") return "month_start" as const;
+  if (run.triggerType === "month_end") return "month_end" as const;
+  return null;
+}
+
+function getRerunnableAutomationRoutineFromEvent(
+  event: Awaited<ReturnType<typeof whatsappDb.listNotificationEvents>>[number] | null | undefined
+) {
+  if (!event) return null;
+  if (event.type === "daily_digest") return "daily_digest" as const;
+  if (event.type === "month_start") return "month_start" as const;
+  if (event.type === "month_end") return "month_end" as const;
+  return null;
+}
+
+async function rerunAutomationRoutineForUser(
+  userId: number,
+  routine: "daily_digest" | "month_start" | "month_end"
+) {
+  if (routine === "daily_digest") return runFinancialDailyForUser(userId);
+  if (routine === "month_start") return runFinancialMonthStartForUser(userId);
+  return runFinancialMonthEndForUser(userId);
+}
+
+export async function rerunLatestOperationalFailure(userId: number) {
+  const [events, runs] = await Promise.all([
+    whatsappDb.listNotificationEvents(userId),
+    whatsappDb.listAssistantRuns(userId),
+  ]);
+
+  const failedEvents = events.filter(
+    event => event.status === "falhou" || String(event.lastError ?? "").trim().length > 0
+  );
+  const failedRuns = runs.filter(
+    run => run.status === "falhou" || String(run.errorMessage ?? "").trim().length > 0
+  );
+
+  const latestFailedEvent = failedEvents[0] ?? null;
+  const latestFailedRun = failedRuns[0] ?? null;
+
+  if (!latestFailedEvent && !latestFailedRun) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Nao existe falha recente para reprocessar.",
+    });
+  }
+
+  const latestSource =
+    getFailureTimestamp(latestFailedRun ?? {}) >= getFailureTimestamp(latestFailedEvent ?? {})
+      ? { kind: "run" as const, value: latestFailedRun }
+      : { kind: "event" as const, value: latestFailedEvent };
+
+  const rerunnableRoutine =
+    latestSource.kind === "run"
+      ? getRerunnableAutomationRoutineFromRun(latestSource.value)
+      : getRerunnableAutomationRoutineFromEvent(latestSource.value);
+
+  if (!rerunnableRoutine) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "A ultima falha registrada nao pertence a uma rotina automatica reprocessavel pelo painel.",
+    });
+  }
+
+  const result = await rerunAutomationRoutineForUser(userId, rerunnableRoutine);
+  const label =
+    rerunnableRoutine === "daily_digest"
+      ? "digest diario"
+      : rerunnableRoutine === "month_start"
+        ? "inicio do mes"
+        : "fechamento do mes";
+
+  return {
+    ...result,
+    sourceType: latestSource.kind,
+    sourceId: latestSource.value?.id ?? null,
+    rerunType: rerunnableRoutine,
+    message: `Ultima falha reprocessada com sucesso via ${label}.`,
+  };
+}
+
+export async function runEligibleAssistantAutomationsForUser(userId: number) {
+  const diagnostics = await getAssistantCronDiagnostics(userId);
+  const readyRoutines = diagnostics.routines.filter(
+    (
+      routine
+    ): routine is typeof routine & {
+      key: "daily_digest" | "month_start" | "month_end";
+      status: "ready";
+    } => routine.status === "ready"
+  );
+
+  if (readyRoutines.length === 0) {
+    return {
+      success: true,
+      processed: 0,
+      executedRoutines: [] as string[],
+      skippedRoutines: diagnostics.routines.map(routine => ({
+        key: routine.key,
+        status: routine.status,
+        summary: routine.summary,
+      })),
+      message: "Nenhuma rotina esta apta para execucao imediata agora.",
+    };
+  }
+
+  const executedRoutines: string[] = [];
+  for (const routine of readyRoutines) {
+    await rerunAutomationRoutineForUser(userId, routine.key);
+    executedRoutines.push(routine.key);
+  }
+
+  return {
+    success: true,
+    processed: executedRoutines.length,
+    executedRoutines,
+    skippedRoutines: diagnostics.routines
+      .filter(routine => routine.status !== "ready")
+      .map(routine => ({
+        key: routine.key,
+        status: routine.status,
+        summary: routine.summary,
+      })),
+    message:
+      executedRoutines.length === 1
+        ? "1 rotina apta foi executada agora."
+        : `${executedRoutines.length} rotinas aptas foram executadas agora.`,
+  };
 }
 
 export async function runFinancialDailyCron() {

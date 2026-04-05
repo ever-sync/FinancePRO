@@ -916,9 +916,16 @@ export const appRouter = router({
   assistantAutomation: router({
     list: protectedProcedure.query(({ ctx }) => whatsapp.listNotificationEvents(ctx.user.id)),
     summary: protectedProcedure.query(({ ctx }) => whatsapp.getAssistantOperationsSummary(ctx.user.id)),
-    runDaily: protectedProcedure.mutation(() => whatsapp.runFinancialDailyCron()),
-    runMonthStart: protectedProcedure.mutation(() => whatsapp.runFinancialMonthStartCron()),
-    runMonthEnd: protectedProcedure.mutation(() => whatsapp.runFinancialMonthEndCron()),
+    diagnostics: protectedProcedure.query(({ ctx }) => whatsapp.getAssistantCronDiagnostics(ctx.user.id)),
+    runEligibleNow: protectedProcedure.mutation(({ ctx }) =>
+      whatsapp.runEligibleAssistantAutomationsForUser(ctx.user.id)
+    ),
+    rerunLatestFailure: protectedProcedure.mutation(({ ctx }) =>
+      whatsapp.rerunLatestOperationalFailure(ctx.user.id)
+    ),
+    runDaily: protectedProcedure.mutation(({ ctx }) => whatsapp.runFinancialDailyForUser(ctx.user.id)),
+    runMonthStart: protectedProcedure.mutation(({ ctx }) => whatsapp.runFinancialMonthStartForUser(ctx.user.id)),
+    runMonthEnd: protectedProcedure.mutation(({ ctx }) => whatsapp.runFinancialMonthEndForUser(ctx.user.id)),
     dismissEvent: protectedProcedure
       .input(z.object({ eventId: z.number() }))
       .mutation(({ ctx, input }) => whatsapp.dismissNotificationEvent(ctx.user.id, input.eventId)),
