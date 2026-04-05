@@ -9,7 +9,7 @@ import {
   investments,
   revenues,
 } from "../../../drizzle/schema";
-import { eq, and, sql, desc, sum } from "drizzle-orm";
+import { eq, and, sql, ne } from "drizzle-orm";
 import { invokeLLM, Message } from "../../_core/llm";
 import axios from "axios";
 
@@ -94,8 +94,8 @@ export async function analyzeFinancialData(
       .where(
         and(
           eq(companyVariableCosts.userId, userId),
-          eq(companyVariableCosts.month, currentMonth),
-          eq(companyVariableCosts.year, currentYear)
+          sql`EXTRACT(MONTH FROM ${companyVariableCosts.date}::date) = ${currentMonth}`,
+          sql`EXTRACT(YEAR FROM ${companyVariableCosts.date}::date) = ${currentYear}`
         )
       ),
     db
@@ -114,8 +114,8 @@ export async function analyzeFinancialData(
       .where(
         and(
           eq(personalVariableCosts.userId, userId),
-          eq(personalVariableCosts.month, currentMonth),
-          eq(personalVariableCosts.year, currentYear)
+          sql`EXTRACT(MONTH FROM ${personalVariableCosts.date}::date) = ${currentMonth}`,
+          sql`EXTRACT(YEAR FROM ${personalVariableCosts.date}::date) = ${currentYear}`
         )
       ),
     db
@@ -124,8 +124,7 @@ export async function analyzeFinancialData(
       .where(
         and(
           eq(debts.userId, userId),
-          sql`EXTRACT(MONTH FROM ${debts.dueDate}::date) = ${currentMonth}`,
-          sql`EXTRACT(YEAR FROM ${debts.dueDate}::date) = ${currentYear}`
+          ne(debts.status, "quitada")
         )
       ),
     db
@@ -134,8 +133,8 @@ export async function analyzeFinancialData(
       .where(
         and(
           eq(revenues.userId, userId),
-          sql`EXTRACT(MONTH FROM ${revenues.date}::date) = ${currentMonth}`,
-          sql`EXTRACT(YEAR FROM ${revenues.date}::date) = ${currentYear}`
+          sql`EXTRACT(MONTH FROM ${revenues.dueDate}::date) = ${currentMonth}`,
+          sql`EXTRACT(YEAR FROM ${revenues.dueDate}::date) = ${currentYear}`
         )
       ),
   ]);
@@ -161,8 +160,8 @@ export async function analyzeFinancialData(
     (sum, item) => sum + Number(item.amount),
     0
   );
-  const totalDebts = debtsData.reduce((sum, item) => sum + Number(item.amount), 0);
-  const totalRevenue = revenuesData.reduce((sum, item) => sum + Number(item.amount), 0);
+  const totalDebts = debtsData.reduce((sum, item) => sum + Number(item.monthlyPayment), 0);
+  const totalRevenue = revenuesData.reduce((sum, item) => sum + Number(item.netAmount), 0);
 
   const totalExpenses =
     totalSupplierPurchases +

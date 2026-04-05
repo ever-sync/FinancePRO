@@ -152,6 +152,50 @@ export type FinancialDecisionScenarioSet = {
   };
 };
 
+export type FinancialAdvisorOnboardingChecklistItem = {
+  id: string;
+  label: string;
+  completed: boolean;
+};
+
+export type FinancialAdvisorOnboardingStepKey =
+  | "profile"
+  | "guardrails"
+  | "data_foundation"
+  | "whatsapp_channel"
+  | "monthly_plan";
+
+export type FinancialAdvisorOnboardingStep = {
+  key: FinancialAdvisorOnboardingStepKey;
+  title: string;
+  description: string;
+  status: "complete" | "attention" | "pending";
+  progressPercent: number;
+  completedItems: number;
+  totalItems: number;
+  summary: string;
+  checklist: FinancialAdvisorOnboardingChecklistItem[];
+};
+
+export type FinancialAdvisorOnboardingState = {
+  status: "ready" | "attention" | "setup";
+  headline: string;
+  summary: string;
+  progressPercent: number;
+  completedSteps: number;
+  totalSteps: number;
+  recommendedStepKey: FinancialAdvisorOnboardingStepKey | null;
+  steps: FinancialAdvisorOnboardingStep[];
+  metrics: {
+    confidenceScore: number;
+    companyCoverageCount: number;
+    personalCoverageCount: number;
+    dataCoverageCount: number;
+    hasWhatsAppReady: boolean;
+    hasCurrentPlan: boolean;
+  };
+};
+
 type FinancialAdvisorContext = {
   generatedAt: string;
   referenceDate: string;
@@ -182,6 +226,10 @@ function toNumber(value: string | number | null | undefined) {
 
 function clampCurrency(value: number) {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(Number.isFinite(value) ? value : 0)));
 }
 
 function toIsoDate(date: Date) {
@@ -250,6 +298,63 @@ function buildSummary(snapshot: Omit<FinancialGovernanceSnapshot, "summary">) {
     return "Caixa em atenção: siga a ordem de pagamento, recomponha a reserva com moderação e evite ampliar gastos variáveis.";
   }
   return "Caixa saudável: mantenha a disciplina dos vencimentos, proteja a reserva e use o limite seguro como teto de gasto do período.";
+}
+
+function buildOnboardingStep(params: {
+  key: FinancialAdvisorOnboardingStepKey;
+  title: string;
+  description: string;
+  checklist: FinancialAdvisorOnboardingChecklistItem[];
+  emptySummary: string;
+  partialSummary: string;
+  completeSummary: string;
+}) {
+  const completedItems = params.checklist.filter(item => item.completed).length;
+  const totalItems = params.checklist.length;
+  const progressPercent = totalItems > 0 ? clampPercent((completedItems / totalItems) * 100) : 0;
+  const status =
+    completedItems === totalItems
+      ? ("complete" as const)
+      : completedItems > 0
+        ? ("attention" as const)
+        : ("pending" as const);
+
+  return {
+    key: params.key,
+    title: params.title,
+    description: params.description,
+    status,
+    progressPercent,
+    completedItems,
+    totalItems,
+    summary:
+      status === "complete"
+        ? params.completeSummary
+        : status === "attention"
+          ? params.partialSummary
+          : params.emptySummary,
+    checklist: params.checklist,
+  } satisfies FinancialAdvisorOnboardingStep;
+}
+
+function parseActionMetadata(value?: string | null) {
+  if (!value) return {} as AnyRecord;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? (parsed as AnyRecord) : ({} as AnyRecord);
+  } catch {
+    return {} as AnyRecord;
+  }
+}
+
+function buildExecutedActionMetadata(base: AnyRecord, extra: AnyRecord) {
+  return JSON.stringify({
+    ...base,
+    execution: {
+      ...(base.execution && typeof base.execution === "object" ? base.execution : {}),
+      ...extra,
+    },
+  });
 }
 
 function buildTopRecommendations(args: {
@@ -325,10 +430,6 @@ function buildTopRecommendations(args: {
   }
 
   return recommendations.slice(0, 6);
-}
-
-function clampPercent(value: number) {
-  return Math.max(0, Math.min(clampCurrency(value), 100));
 }
 
 function escalateDecisionTone(
@@ -681,9 +782,9 @@ export async function buildFinancialAdvisorContext(
     referenceDate: iso,
     month,
     year,
-    settings,
-    company,
-    personal,
+    settings: settings ?? null,
+    company: company ?? null,
+    personal: personal ?? null,
     calendarItems: Array.isArray(calendar) ? calendar : [],
     debts: Array.isArray(debts) ? debts : [],
     investments: Array.isArray(investments) ? investments : [],
@@ -786,13 +887,15 @@ export function calculateFinancialGovernanceSnapshot(
       return {
         id: `${item.type}:${dueDate}:${item.description}`,
         title: item.description,
-        source: item.type.startsWith("empresa")
-          ? "company"
-          : item.type.startsWith("pessoal")
-            ? "personal"
-            : item.type === "divida"
-              ? "debt"
-              : "calendar",
+        source: (
+          item.type.startsWith("empresa")
+            ? "company"
+            : item.type.startsWith("pessoal")
+              ? "personal"
+              : item.type === "divida"
+                ? "debt"
+                : "calendar"
+        ) as PaymentPriorityItem["source"],
         dueDate,
         amount: clampCurrency(toNumber(item.amount)),
         status: item.status,
@@ -932,6 +1035,275 @@ export function calculateFinancialGovernanceSnapshot(
   return { ...completed, summary: buildSummary(completed) };
 }
 
+export function calculateFinancialAdvisorOnboarding(args: {
+  context: FinancialAdvisorContext;
+  snapshot?: FinancialGovernanceSnapshot | null;
+  whatsappIntegration?: AnyRecord | null;
+  hasCurrentPlan?: boolean;
+}): FinancialAdvisorOnboardingState {
+  const { context } = args;
+  const snapshot = args.snapshot ?? calculateFinancialGovernanceSnapshot(context);
+  const settings = context.settings ?? {};
+  const whatsappIntegration = args.whatsappIntegration ?? null;
+  const hasCurrentPlan = Boolean(args.hasCurrentPlan);
+
+  const companyRevenueCoverage =
+    Number(context.company?.revenue?.count ?? 0) > 0 || context.asaasCharges.length > 0;
+  const companyCostCoverage =
+    Number(context.company?.fixedCosts?.count ?? 0) > 0 ||
+    Number(context.company?.variableCosts?.count ?? 0) > 0 ||
+    Number(context.company?.employees?.count ?? 0) > 0 ||
+    Number(context.company?.purchases?.count ?? 0) > 0;
+  const personalCommitmentsCoverage =
+    toNumber(context.personal?.fixedCosts?.total) > 0 ||
+    toNumber(context.personal?.variableCosts?.total) > 0 ||
+    toNumber(context.personal?.debts?.totalMonthly) > 0 ||
+    Number(context.personal?.debts?.count ?? 0) > 0;
+  const reserveCoverage =
+    context.reserveFunds.length > 0 ||
+    toNumber(context.personal?.reserve?.total) > 0 ||
+    toNumber(context.company?.reserve?.total) > 0 ||
+    context.investments.length > 0;
+  const calendarCoverage = context.calendarItems.length > 0;
+
+  const companyCoverageCount = [
+    companyRevenueCoverage,
+    companyCostCoverage,
+    Number(context.company?.employees?.count ?? 0) > 0,
+  ].filter(Boolean).length;
+  const personalCoverageCount = [
+    personalCommitmentsCoverage,
+    reserveCoverage,
+    toNumber(context.personal?.variableCosts?.total) > 0,
+  ].filter(Boolean).length;
+  const dataCoverageCount = [
+    companyRevenueCoverage,
+    companyCostCoverage,
+    personalCommitmentsCoverage,
+    reserveCoverage,
+    calendarCoverage,
+  ].filter(Boolean).length;
+
+  const profileStep = buildOnboardingStep({
+    key: "profile",
+    title: "Parametros do mentor",
+    description: "Define a base que o mentor usa para separar empresa, pro-labore e impostos.",
+    checklist: [
+      {
+        id: "company_name",
+        label: "Nome da empresa definido",
+        completed: String(settings.companyName ?? "").trim().length > 0,
+      },
+      {
+        id: "pro_labore",
+        label: "Pro-labore configurado",
+        completed: toNumber(settings.proLaboreGross ?? "0") > 0,
+      },
+      {
+        id: "tax_percent",
+        label: "Percentual de imposto configurado",
+        completed: toNumber(settings.taxPercent ?? "0") > 0,
+      },
+    ],
+    emptySummary: "Sem essa base, o mentor cai em valores padrao e perde contexto sobre sua operacao.",
+    partialSummary:
+      "A base ja existe, mas ainda faltam alguns parametros para o mentor decidir com mais seguranca.",
+    completeSummary: "Perfil financeiro principal configurado para o mentor operar com contexto real.",
+  });
+
+  const guardrailsStep = buildOnboardingStep({
+    key: "guardrails",
+    title: "Protecoes de caixa",
+    description: "Cria os limites que impedem o mentor de olhar apenas para saldo em conta.",
+    checklist: [
+      {
+        id: "company_reserve",
+        label: "Meta de reserva da empresa definida",
+        completed: toNumber(settings.companyReserveMonths ?? 0) >= 1,
+      },
+      {
+        id: "personal_reserve",
+        label: "Meta de reserva pessoal definida",
+        completed: toNumber(settings.personalReserveMonths ?? 0) >= 1,
+      },
+      {
+        id: "company_min_cash",
+        label: "Caixa minimo da empresa definido",
+        completed: toNumber(settings.companyMinCashMonths ?? 0) >= 0.5,
+      },
+      {
+        id: "personal_min_cash",
+        label: "Caixa minimo pessoal definido",
+        completed: toNumber(settings.personalMinCashMonths ?? 0) >= 0.5,
+      },
+    ],
+    emptySummary: "Ainda faltam as protecoes que transformam saldo bruto em limite seguro de gasto.",
+    partialSummary:
+      "As protecoes comecaram a ser configuradas, mas o mentor ainda pode operar com folga incompleta.",
+    completeSummary:
+      "Caixa minimo e metas de reserva prontos para orientar gasto seguro e recomendacoes.",
+  });
+
+  const dataFoundationStep = buildOnboardingStep({
+    key: "data_foundation",
+    title: "Base do mes",
+    description:
+      "Mede se a empresa e a vida pessoal ja deram insumo suficiente para o mentor trabalhar.",
+    checklist: [
+      {
+        id: "company_revenue",
+        label: "Receitas ou cobrancas da empresa registradas",
+        completed: companyRevenueCoverage,
+      },
+      {
+        id: "company_costs",
+        label: "Custos ou folha da empresa mapeados",
+        completed: companyCostCoverage,
+      },
+      {
+        id: "personal_commitments",
+        label: "Compromissos pessoais ou dividas informados",
+        completed: personalCommitmentsCoverage,
+      },
+      {
+        id: "reserves",
+        label: "Reserva ou investimentos registrados",
+        completed: reserveCoverage,
+      },
+      {
+        id: "calendar",
+        label: "Calendario financeiro com vencimentos ativos",
+        completed: calendarCoverage,
+      },
+    ],
+    emptySummary: "Ainda falta materia-prima para o mentor enxergar o mes com profundidade.",
+    partialSummary:
+      "Ja existe contexto financeiro, mas ainda vale completar o que falta para aumentar a confianca do mentor.",
+    completeSummary:
+      "A base do mes esta consistente para gerar prioridades, limites e alertas com mais qualidade.",
+  });
+
+  const whatsappReady =
+    Boolean(whatsappIntegration?.enabled) &&
+    String(whatsappIntegration?.instanceId ?? "").trim().length > 0 &&
+    String(whatsappIntegration?.apiBaseUrl ?? "").trim().length > 0 &&
+    String(whatsappIntegration?.authorizedPhone ?? "").trim().length > 0 &&
+    String(whatsappIntegration?.lastConnectionStatus ?? "") === "sincronizado";
+
+  const whatsappStep = buildOnboardingStep({
+    key: "whatsapp_channel",
+    title: "Canal no WhatsApp",
+    description: "Conecta o mentor ao seu numero principal para virar rotina, nao so painel.",
+    checklist: [
+      {
+        id: "instance",
+        label: "Instancia conectada",
+        completed: String(whatsappIntegration?.instanceId ?? "").trim().length > 0,
+      },
+      {
+        id: "authorized_phone",
+        label: "Numero autorizado definido",
+        completed: String(whatsappIntegration?.authorizedPhone ?? "").trim().length > 0,
+      },
+      {
+        id: "enabled",
+        label: "Assistente habilitado",
+        completed: Boolean(whatsappIntegration?.enabled),
+      },
+      {
+        id: "synced",
+        label: "Sessao sincronizada",
+        completed: String(whatsappIntegration?.lastConnectionStatus ?? "") === "sincronizado",
+      },
+    ],
+    emptySummary: "Sem o canal pronto, a mentoria ainda fica presa ao painel e perde rotina.",
+    partialSummary:
+      "O canal ja esta em preparacao, mas ainda falta fechar a sincronizacao para usar no dia a dia.",
+    completeSummary:
+      "WhatsApp pronto para receber alertas, resumos e orientacoes executivas do mentor.",
+  });
+
+  const monthlyPlanStep = buildOnboardingStep({
+    key: "monthly_plan",
+    title: "Primeiro plano do mes",
+    description: "Consolida limites, prioridades e acoes praticas para o ciclo atual.",
+    checklist: [
+      {
+        id: "confidence",
+        label: "Snapshot com confianca minima",
+        completed: snapshot.confidenceScore >= 0.55,
+      },
+      {
+        id: "current_plan",
+        label: "Plano do mes gerado",
+        completed: hasCurrentPlan,
+      },
+    ],
+    emptySummary: "Ainda falta transformar a base atual em um plano acionavel do mes.",
+    partialSummary:
+      "A leitura do mentor ja existe, mas ainda falta consolidar o plano do ciclo atual.",
+    completeSummary: "Plano do mes pronto para orientar prioridades, limites e execucao.",
+  });
+
+  const steps = [
+    profileStep,
+    guardrailsStep,
+    dataFoundationStep,
+    whatsappStep,
+    monthlyPlanStep,
+  ];
+  const totalChecklistItems = steps.reduce((sum, step) => sum + step.totalItems, 0);
+  const completedChecklistItems = steps.reduce((sum, step) => sum + step.completedItems, 0);
+  const completedSteps = steps.filter(step => step.status === "complete").length;
+  const progressPercent =
+    totalChecklistItems > 0
+      ? clampPercent((completedChecklistItems / totalChecklistItems) * 100)
+      : 0;
+
+  const status =
+    steps.every(step => step.status === "complete")
+      ? ("ready" as const)
+      : progressPercent >= 55
+        ? ("attention" as const)
+        : ("setup" as const);
+  const recommendedStepKey = steps.find(step => step.status !== "complete")?.key ?? null;
+  const recommendedStep = recommendedStepKey
+    ? steps.find(step => step.key === recommendedStepKey) ?? null
+    : null;
+
+  const headline =
+    status === "ready"
+      ? "Mentor pronto para operar seu mes"
+      : status === "attention"
+        ? "Mentor quase pronto para a rotina completa"
+        : "Vamos montar a base do mentor";
+  const summary =
+    status === "ready"
+      ? "Empresa, vida pessoal, protecoes, canal e plano do mes estao alinhados para a mentoria operar com contexto real."
+      : recommendedStep
+        ? `O proximo melhor passo e concluir "${recommendedStep.title.toLowerCase()}". Isso aumenta a qualidade das recomendacoes e reduz decisoes no escuro.`
+        : "Ainda faltam algumas etapas para a mentoria operar com profundidade.";
+
+  return {
+    status,
+    headline,
+    summary,
+    progressPercent,
+    completedSteps,
+    totalSteps: steps.length,
+    recommendedStepKey,
+    steps,
+    metrics: {
+      confidenceScore: snapshot.confidenceScore,
+      companyCoverageCount,
+      personalCoverageCount,
+      dataCoverageCount,
+      hasWhatsAppReady: whatsappReady,
+      hasCurrentPlan,
+    },
+  };
+}
+
 async function buildNarrative(params: {
   kind: "snapshot" | "daily" | "monthly_plan" | "month_close";
   snapshot: FinancialGovernanceSnapshot;
@@ -1041,6 +1413,35 @@ export async function getFinancialAdvisorSnapshot(
   }
 
   return finalized;
+}
+
+export async function getFinancialAdvisorOnboarding(
+  userId: number,
+  options?: {
+    timezone?: string;
+    referenceDate?: Date;
+  }
+) {
+  const context = await buildFinancialAdvisorContext(
+    userId,
+    options?.timezone || DEFAULT_TIMEZONE,
+    options?.referenceDate
+  );
+  const snapshot = calculateFinancialGovernanceSnapshot(context, {
+    timezone: options?.timezone || DEFAULT_TIMEZONE,
+    referenceDate: options?.referenceDate,
+  });
+  const [whatsappIntegration, currentPlan] = await Promise.all([
+    whatsappDb.getWhatsAppIntegration(userId),
+    whatsappDb.getFinancialPlanByPeriod(userId, snapshot.month, snapshot.year),
+  ]);
+
+  return calculateFinancialAdvisorOnboarding({
+    context,
+    snapshot,
+    whatsappIntegration,
+    hasCurrentPlan: Boolean(currentPlan),
+  });
 }
 
 export async function evaluateFinancialDecisionScenarios(params: {
@@ -1269,8 +1670,80 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
   if (!action) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Acao do plano nao encontrada." });
   }
-  await whatsappDb.updateFinancialPlanAction(actionId, userId, { status: "concluida" });
-  return { success: true };
+  if (action.status === "concluida") {
+    return { success: true, message: "Acao ja estava concluida.", executionKind: "noop" as const };
+  }
+
+  const metadata = parseActionMetadata(action.metadata);
+  const executedAt = new Date();
+
+  if (
+    action.actionType === "transfer_company_reserve" ||
+    action.actionType === "transfer_personal_reserve"
+  ) {
+    const target =
+      metadata.target === "pessoal" || action.actionType === "transfer_personal_reserve"
+        ? ("pessoal" as const)
+        : ("empresa" as const);
+    const amount = clampCurrency(Math.max(toNumber(metadata.amount ?? 0), 0));
+
+    if (amount <= 0) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei valor valido para executar o aporte de reserva.",
+      });
+    }
+
+    const referenceDate = getPartsInTimeZone(executedAt, DEFAULT_TIMEZONE).iso;
+    const reserveRecord = await db.createReserveFund({
+      userId,
+      type: target,
+      depositAmount: amount.toFixed(2),
+      date: referenceDate,
+      description:
+        target === "empresa"
+          ? "Aporte executado pelo mentor na reserva da empresa"
+          : "Aporte executado pelo mentor na reserva pessoal",
+      notes: `Origem: ${action.title}`,
+    });
+
+    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+      status: "concluida",
+      metadata: buildExecutedActionMetadata(metadata, {
+        kind: "reserve_transfer",
+        reserveFundId: reserveRecord.id,
+        target,
+        amount,
+        executedAt: executedAt.toISOString(),
+      }),
+    });
+
+    return {
+      success: true,
+      message:
+        target === "empresa"
+          ? `Aporte de R$ ${amount.toFixed(2)} registrado na reserva da empresa.`
+          : `Aporte de R$ ${amount.toFixed(2)} registrado na reserva pessoal.`,
+      executionKind: "reserve_transfer" as const,
+      amount,
+      target,
+      reserveFundId: reserveRecord.id,
+    };
+  }
+
+  await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+    status: "concluida",
+    metadata: buildExecutedActionMetadata(metadata, {
+      kind: "manual_completion",
+      executedAt: executedAt.toISOString(),
+    }),
+  });
+
+  return {
+    success: true,
+    message: "Acao marcada como concluida.",
+    executionKind: "manual_completion" as const,
+  };
 }
 
 export async function snoozeFinancialAdvisorAlert(userId: number, eventId: number, hours = 24) {

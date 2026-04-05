@@ -357,6 +357,26 @@ function buildFallbackReply(intent: AssistantIntent, context: FinancialContext):
       : "Não encontrei cobrança vencida agora, mas sigo monitorando qualquer risco de atraso.",
     consolidated_analysis:
       "Seu cenário consolidado pede disciplina de caixa: olhar empresa e pessoal juntos, proteger reserva e concentrar esforços nos recebimentos e vencimentos desta quinzena.",
+    spending_limit:
+      "Posso estimar um limite seguro de gasto para hoje olhando folga de caixa, vencimentos e reserva antes de qualquer novo consumo.",
+    company_withdrawal_decision:
+      "Consigo avaliar se tirar dinheiro da empresa agora pressiona o caixa do mês ou ainda mantém sua margem de segurança.",
+    recurring_withdrawal_decision:
+      "Também consigo simular uma retirada recorrente da empresa para te mostrar se ela cabe no mês sem comprometer o caixa.",
+    personal_spend_decision:
+      "Posso te dizer se esse gasto pessoal cabe no mês sem apertar sua reserva nem desorganizar o plano atual.",
+    monthly_cost_decision:
+      "Dá para simular esse novo custo mensal e medir quanto ele consome da folga do seu planejamento atual.",
+    hiring_decision:
+      "Posso estimar o impacto de uma contratação no mês e te dizer se o caixa comporta esse novo compromisso.",
+    installment_purchase_decision:
+      "Também consigo avaliar compras parceladas para mostrar o peso mensal e o risco no seu fluxo de caixa.",
+    reserve_transfer:
+      "Consigo sugerir um reforço de reserva e dizer se agora é um bom momento para proteger caixa sem travar a operação.",
+    payment_priority:
+      "Posso organizar a ordem de pagamento do mês para preservar caixa e reduzir risco operacional.",
+    financial_health:
+      "Consigo resumir a saúde financeira do momento, destacando riscos, folga de caixa e o foco mais importante do mês.",
     generic_chat:
       "Consigo te responder no WhatsApp sobre visão do mês, contas a vencer, saúde financeira, plano mensal e recomendações práticas para empresa e pessoal.",
   };
@@ -514,8 +534,13 @@ async function sendOutgoingMessage(params: {
 
   const client = getUazapiClient(integration);
   const response = await client.sendTextMessage(phoneNumber, text);
+  const responsePayload = response as AnyRecord | null;
   const providerMessageId = String(
-    response?.id || response?.messageId || response?.messageid || response?.response?.id || randomUUID()
+    responsePayload?.id ||
+      responsePayload?.messageId ||
+      responsePayload?.messageid ||
+      responsePayload?.response?.id ||
+      randomUUID()
   );
 
   const message = await whatsappDb.createWhatsAppMessage({
@@ -529,7 +554,7 @@ async function sendOutgoingMessage(params: {
     textContent: text,
     detectedIntent: detectedIntent ?? null,
     requiresConfirmation: requiresConfirmation ?? false,
-    rawPayload: JSON.stringify(metadata ?? response),
+    rawPayload: JSON.stringify(metadata ?? responsePayload),
   });
 
   await whatsappDb.touchWhatsAppOutbound(integration.id);
@@ -1227,12 +1252,7 @@ export async function getCurrentAssistantPlan(userId: number) {
 }
 
 export async function confirmAssistantPlanAction(userId: number, actionId: number) {
-  const action = await whatsappDb.getFinancialPlanActionById(userId, actionId);
-  if (!action) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Acao do plano nao encontrada." });
-  }
-  await whatsappDb.updateFinancialPlanAction(actionId, userId, { status: "concluida" });
-  return { success: true };
+  return financialAdvisor.confirmFinancialAdvisorAction(userId, actionId);
 }
 
 export async function snoozeNotificationAlert(userId: number, eventId: number, hours = 24) {

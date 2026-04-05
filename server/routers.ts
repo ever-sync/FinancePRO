@@ -270,7 +270,14 @@ export const appRouter = router({
         orderBy: z.string().optional().default("dueDate"),
         orderDirection: z.enum(["asc", "desc"]).optional().default("asc")
       }))
-      .query(({ ctx, input }) => db.getSupplierPurchases(ctx.user.id, input)),
+      .query(({ ctx, input }) =>
+        db.getSupplierPurchases(ctx.user.id, input.month, input.year, {
+          page: input.page,
+          limit: input.limit,
+          sortBy: input.orderBy,
+          sortOrder: input.orderDirection,
+        })
+      ),
     create: protectedProcedure
       .input(z.object({
         supplierId: z.number(),
@@ -781,6 +788,9 @@ export const appRouter = router({
   financialAdvisor: router({
     getSnapshot: protectedProcedure.query(({ ctx }) =>
       financialAdvisor.getFinancialAdvisorSnapshot(ctx.user.id)
+    ),
+    getOnboarding: protectedProcedure.query(({ ctx }) =>
+      financialAdvisor.getFinancialAdvisorOnboarding(ctx.user.id)
     ),
     ask: protectedProcedure
       .input(

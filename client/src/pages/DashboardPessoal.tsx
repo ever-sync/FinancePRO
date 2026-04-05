@@ -72,7 +72,9 @@ export default function DashboardPessoal() {
   const { data, isLoading } = trpc.dashboard.personal.useQuery({ month, year });
   const [activeTab, setActiveTab] = useState("Visao geral");
 
-  const userName = user?.name?.trim() || "Usuário";
+  const userName =
+    String(user?.user_metadata?.name || user?.email?.split("@")[0] || "")
+      .trim() || "Usuário";
   const userEmail = user?.email?.trim() || "";
 
   const proLaboreGross = parseFloat(data?.settings?.proLaboreGross || "0");
@@ -247,7 +249,7 @@ export default function DashboardPessoal() {
                     .split(" ")
                     .filter(Boolean)
                     .slice(0, 2)
-                    .map(part => part[0]?.toUpperCase())
+                    .map((part: string) => part[0]?.toUpperCase())
                     .join("") || "U"}
                 </AvatarFallback>
               </Avatar>

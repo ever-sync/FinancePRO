@@ -16,7 +16,7 @@ const types = ["CDB", "Tesouro Direto", "LCI/LCA", "Ações", "FII", "Poupança"
 export default function Investimentos() {
   const utils = trpc.useUtils();
   const { data: items, isLoading } = trpc.investments.list.useQuery();
-  const rows = Array.isArray(items) ? items : items?.data ?? [];
+  const rows = items ?? [];
   const createMut = trpc.investments.create.useMutation({ onSuccess: () => { utils.investments.list.invalidate(); toast.success("Investimento adicionado"); setOpen(false); } });
   const deleteMut = trpc.investments.delete.useMutation({ onSuccess: () => { utils.investments.list.invalidate(); toast.success("Removido"); } });
   const [open, setOpen] = useState(false);
@@ -35,9 +35,9 @@ export default function Investimentos() {
     });
   };
 
-  const totalDeposited = rows.reduce((s, i) => s + parseFloat(i.depositAmount), 0);
-  const totalBalance = rows.reduce((s, i) => s + parseFloat(i.currentBalance), 0);
-  const totalYield = rows.reduce((s, i) => s + parseFloat(i.yieldAmount), 0);
+  const totalDeposited = rows.reduce((sum, item) => sum + parseFloat(item.depositAmount), 0);
+  const totalBalance = rows.reduce((sum, item) => sum + parseFloat(item.currentBalance), 0);
+  const totalYield = rows.reduce((sum, item) => sum + parseFloat(item.yieldAmount), 0);
 
   return (
     <div className="space-y-6">

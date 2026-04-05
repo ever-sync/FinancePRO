@@ -560,7 +560,9 @@ export default function WhatsAppConversas() {
         }
       : null;
 
-    if (item.kind === "pendencia" && item.runId) {
+    if (item.kind === "pendencia" && item.runId != null) {
+      const runId = item.runId;
+
       actions.push({
         key: `confirm-${item.id}`,
         label: "Confirmar",
@@ -568,7 +570,7 @@ export default function WhatsAppConversas() {
         disabled: runActionBusy,
         onClick: () => {
           if (item.threadId) setSelectedThreadId(item.threadId);
-          confirmPendingRunMut.mutate({ runId: item.runId });
+          confirmPendingRunMut.mutate({ runId });
         },
       });
       actions.push({
@@ -579,7 +581,7 @@ export default function WhatsAppConversas() {
         disabled: runActionBusy,
         onClick: () => {
           if (item.threadId) setSelectedThreadId(item.threadId);
-          snoozePendingRunMut.mutate({ runId: item.runId });
+          snoozePendingRunMut.mutate({ runId });
         },
       });
       if (openContextAction) actions.push(openContextAction);

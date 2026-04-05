@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/StatusBadge";
+import { MentorOnboardingCard } from "@/components/MentorOnboardingCard";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import {
   AlertCircle,
@@ -118,6 +119,7 @@ type GuidedPlanAction = {
   id: number;
   title: string;
   description: string;
+  actionType?: string | null;
   priority?: string | null;
   status?: string | null;
 };
@@ -168,6 +170,25 @@ function buildDecisionFallback(
     consumptionPercent: 0,
     metrics: [],
   };
+}
+
+function getPlanActionCtaLabel(actionType?: string | null) {
+  if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
+    return "Executar aporte";
+  }
+  if (actionType === "pay_priority_items") return "Concluir prioridade";
+  if (actionType === "charge_follow_up") return "Registrar acompanhamento";
+  return "Concluir agora";
+}
+
+function getPlanActionExecutionNote(actionType?: string | null) {
+  if (actionType === "transfer_company_reserve") {
+    return "Quando executada, esta acao registra um aporte real na reserva da empresa.";
+  }
+  if (actionType === "transfer_personal_reserve") {
+    return "Quando executada, esta acao registra um aporte real na reserva pessoal.";
+  }
+  return null;
 }
 
 function buildGuidedPromptSections(args: {
@@ -740,7 +761,7 @@ function buildNextExecutableActionSection(args: {
           id: `complete-action-${firstPendingAction.id}`,
           title: firstPendingAction.title,
           description: firstPendingAction.description,
-          ctaLabel: "Concluir prioridade",
+          ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType),
           kind: "complete_plan_action",
           actionId: firstPendingAction.id,
         },
@@ -791,7 +812,7 @@ function buildNextExecutableActionSection(args: {
             id: `complete-action-support-${firstPendingAction.id}`,
             title: firstPendingAction.title,
             description: "Se preferir, execute antes a prioridade operacional do plano.",
-            ctaLabel: "Concluir prioridade",
+            ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType),
             kind: "complete_plan_action",
             actionId: firstPendingAction.id,
           }
@@ -815,7 +836,7 @@ function buildNextExecutableActionSection(args: {
         id: `complete-action-default-${firstPendingAction.id}`,
         title: firstPendingAction.title,
         description: firstPendingAction.description,
-        ctaLabel: "Concluir agora",
+        ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType),
         kind: "complete_plan_action",
         actionId: firstPendingAction.id,
       },
@@ -1074,6 +1095,8 @@ export default function WhatsAppPlanos() {
 
   async function refreshMentorData() {
     await Promise.all([
+      utils.settings.get.invalidate(),
+      utils.financialAdvisor.getOnboarding.invalidate(),
       utils.financialAdvisor.getSnapshot.invalidate(),
       utils.financialAdvisor.getDailyDigest.invalidate(),
       utils.financialAdvisor.getMonthClose.invalidate(),
@@ -1104,9 +1127,9 @@ export default function WhatsAppPlanos() {
     onError: error => toast.error(error.message),
   });
   const confirmMut = trpc.financialAdvisor.confirmAction.useMutation({
-    onSuccess: async () => {
+    onSuccess: async data => {
       await refreshMentorData();
-      toast.success("Acao marcada como concluida.");
+      toast.success(data.message || "Acao marcada como concluida.");
     },
     onError: error => toast.error(error.message),
   });
@@ -1228,10 +1251,6 @@ export default function WhatsAppPlanos() {
     askMentorMut.mutate({ message: content });
   }
 
-  if (isLoading) {
-    return <div className="text-sm text-muted-foreground">Carregando central de mentoria...</div>;
-  }
-
   const totalActions = currentPlan?.actions.length ?? 0;
   const completedActions =
     currentPlan?.actions.filter(action => action.status === "concluida").length ?? 0;
@@ -1292,6 +1311,10 @@ export default function WhatsAppPlanos() {
       setMentorMessages([]);
     }
   }, [channelConversation, mentorMessages]);
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Carregando central de mentoria...</div>;
+  }
 
   const fallbackCompanyHeadroom = snapshot
     ? Math.max(snapshot.guardrails.company.projectedCash - snapshot.guardrails.company.reserveRecommendation, 0)
@@ -1476,6 +1499,8 @@ export default function WhatsAppPlanos() {
           </div>
         </CardContent>
       </Card>
+
+      <MentorOnboardingCard />
 
       {snapshot ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -2087,6 +2112,11 @@ export default function WhatsAppPlanos() {
                         <StatusBadge status={action.priority} />
                       </div>
                       <p className="text-sm text-muted-foreground">{action.description}</p>
+                      {getPlanActionExecutionNote(action.actionType) ? (
+                        <p className="text-xs text-zinc-500">
+                          {getPlanActionExecutionNote(action.actionType)}
+                        </p>
+                      ) : null}
                     </div>
 
                     {action.status !== "concluida" ? (
@@ -2097,7 +2127,7 @@ export default function WhatsAppPlanos() {
                         disabled={confirmMut.isPending}
                       >
                         <CheckCircle2 className="size-4" />
-                        Concluir
+                        {getPlanActionCtaLabel(action.actionType)}
                       </Button>
                     ) : (
                       <StatusBadge status={action.status} />
@@ -2230,6 +2260,11 @@ export default function WhatsAppPlanos() {
                           <StatusBadge status={action.priority} />
                         </div>
                         <p className="text-sm text-muted-foreground">{action.description}</p>
+                        {getPlanActionExecutionNote(action.actionType) ? (
+                          <p className="text-xs text-zinc-500">
+                            {getPlanActionExecutionNote(action.actionType)}
+                          </p>
+                        ) : null}
                       </div>
                       <StatusBadge status={action.status} />
                     </div>
@@ -2244,7 +2279,7 @@ export default function WhatsAppPlanos() {
                           onClick={() => confirmMut.mutate({ actionId: action.id })}
                           disabled={confirmMut.isPending}
                         >
-                          Concluir acao
+                          {getPlanActionCtaLabel(action.actionType)}
                         </Button>
                       ) : null}
                     </div>

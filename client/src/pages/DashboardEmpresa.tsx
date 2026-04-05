@@ -115,7 +115,9 @@ export default function DashboardEmpresa() {
   const [activeTab, setActiveTab] = useState("Visão geral");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const userName = user?.name?.trim() || "Usuário";
+  const userName =
+    String(user?.user_metadata?.name || user?.email?.split("@")[0] || "")
+      .trim() || "Usuário";
   const userEmail = user?.email?.trim() || "";
 
   const currentSummary = data?.summary?.current;
@@ -225,7 +227,7 @@ export default function DashboardEmpresa() {
                         .split(" ")
                         .filter(Boolean)
                         .slice(0, 2)
-                        .map(part => part[0]?.toUpperCase())
+                        .map((part: string) => part[0]?.toUpperCase())
                         .join("") || "U"}
                     </AvatarFallback>
                   </Avatar>
