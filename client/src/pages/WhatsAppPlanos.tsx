@@ -172,27 +172,53 @@ function buildDecisionFallback(
   };
 }
 
-function getPlanActionCtaLabel(actionType?: string | null) {
+function getPlanActionCtaLabel(
+  actionType?: string | null,
+  mentorMode?: "execution_short" | "strategic" | "calibration"
+) {
   if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
-    return "Executar aporte";
-  }
-  if (actionType === "pay_priority_items") return "Regularizar prioridade";
-  if (actionType === "charge_follow_up") return "Executar follow-up";
-  return "Concluir agora";
-}
-
-function getPlanActionExecutionNote(actionType?: string | null) {
-  if (actionType === "transfer_company_reserve") {
-    return "Quando executada, esta acao registra um aporte real na reserva da empresa.";
-  }
-  if (actionType === "transfer_personal_reserve") {
-    return "Quando executada, esta acao registra um aporte real na reserva pessoal.";
+    return mentorMode === "strategic" ? "Proteger reserva agora" : "Executar aporte";
   }
   if (actionType === "pay_priority_items") {
-    return "Quando executada, esta acao atualiza o item prioritario real no financeiro do mes.";
+    return mentorMode === "execution_short" ? "Quitar prioridade agora" : "Regularizar prioridade";
   }
   if (actionType === "charge_follow_up") {
-    return "Quando executada, esta acao reativa a cobranca mais urgente do Asaas e atualiza os links de pagamento.";
+    return mentorMode === "execution_short" ? "Cobrar agora" : "Executar follow-up";
+  }
+  if (actionType === "create_asaas_charge") {
+    return mentorMode === "execution_short" ? "Gerar cobranca agora" : "Criar cobranca Asaas";
+  }
+  return mentorMode === "execution_short" ? "Fazer agora" : "Concluir agora";
+}
+
+function getPlanActionExecutionNote(
+  actionType?: string | null,
+  mentorMode?: "execution_short" | "strategic" | "calibration"
+) {
+  if (actionType === "transfer_company_reserve") {
+    return mentorMode === "strategic"
+      ? "O mentor elevou esta recomendacao porque sua execucao recente comporta proteger mais o longo prazo da empresa."
+      : "Quando executada, esta acao registra um aporte real na reserva da empresa.";
+  }
+  if (actionType === "transfer_personal_reserve") {
+    return mentorMode === "strategic"
+      ? "O mentor elevou esta recomendacao porque sua execucao recente comporta fortalecer mais a reserva pessoal."
+      : "Quando executada, esta acao registra um aporte real na reserva pessoal.";
+  }
+  if (actionType === "pay_priority_items") {
+    return mentorMode === "execution_short"
+      ? "O mentor encurtou o plano: primeiro quite essa prioridade real antes de abrir novas frentes."
+      : "Quando executada, esta acao atualiza o item prioritario real no financeiro do mes.";
+  }
+  if (actionType === "charge_follow_up") {
+    return mentorMode === "execution_short"
+      ? "O mentor simplificou a execucao: reative primeiro a cobranca mais urgente antes de discutir novas estrategias."
+      : "Quando executada, esta acao reativa a cobranca mais urgente do Asaas e atualiza os links de pagamento.";
+  }
+  if (actionType === "create_asaas_charge") {
+    return mentorMode === "execution_short"
+      ? "O mentor encurtou o caminho: transforme primeiro essa receita pendente em cobranca real no Asaas."
+      : "Quando executada, esta acao cria uma cobranca real no Asaas para a receita escolhida e vincula os links ao financeiro local.";
   }
   return null;
 }
@@ -669,6 +695,7 @@ function getDefaultPreviewMessage(intent?: string | null, lastPrompt?: string | 
 function buildNextExecutableActionSection(args: {
   intent?: string | null;
   decisionTone?: DecisionTone | null;
+  mentorMode?: "execution_short" | "strategic" | "calibration";
   lastPrompt?: string | null;
   canSendWhatsappMessage: boolean;
   hasCurrentPlan: boolean;
@@ -682,6 +709,7 @@ function buildNextExecutableActionSection(args: {
   const {
     intent,
     decisionTone,
+    mentorMode,
     lastPrompt,
     canSendWhatsappMessage,
     hasCurrentPlan,
@@ -767,7 +795,7 @@ function buildNextExecutableActionSection(args: {
           id: `complete-action-${firstPendingAction.id}`,
           title: firstPendingAction.title,
           description: firstPendingAction.description,
-          ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType),
+          ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType, mentorMode),
           kind: "complete_plan_action",
           actionId: firstPendingAction.id,
         },
@@ -818,7 +846,7 @@ function buildNextExecutableActionSection(args: {
             id: `complete-action-support-${firstPendingAction.id}`,
             title: firstPendingAction.title,
             description: "Se preferir, execute antes a prioridade operacional do plano.",
-            ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType),
+            ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType, mentorMode),
             kind: "complete_plan_action",
             actionId: firstPendingAction.id,
           }
@@ -842,7 +870,7 @@ function buildNextExecutableActionSection(args: {
         id: `complete-action-default-${firstPendingAction.id}`,
         title: firstPendingAction.title,
         description: firstPendingAction.description,
-        ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType),
+        ctaLabel: getPlanActionCtaLabel(firstPendingAction.actionType, mentorMode),
         kind: "complete_plan_action",
         actionId: firstPendingAction.id,
       },
@@ -1099,6 +1127,14 @@ export default function WhatsAppPlanos() {
   const { data: currentPlan } = trpc.assistantPlans.getCurrent.useQuery();
   const { data: plans, isLoading } = trpc.assistantPlans.list.useQuery();
   const { data: events } = trpc.assistantAutomation.list.useQuery();
+  const mentorMode =
+    mentorMemory?.executionScore != null
+      ? mentorMemory.executionScore <= 42
+        ? "execution_short"
+        : mentorMemory.executionScore >= 72 && mentorMemory.trendDirection === "improving"
+          ? "strategic"
+          : "calibration"
+      : "calibration";
 
   async function refreshMentorData() {
     await Promise.all([
@@ -1415,6 +1451,7 @@ export default function WhatsAppPlanos() {
   const nextExecutableActionSection = buildNextExecutableActionSection({
     intent: activeMentorIntent,
     decisionTone: activeDecisionTone,
+    mentorMode,
     lastPrompt: lastMentorPrompt,
     canSendWhatsappMessage,
     hasCurrentPlan: Boolean(currentPlan),
@@ -2160,9 +2197,9 @@ export default function WhatsAppPlanos() {
                         <StatusBadge status={action.priority} />
                       </div>
                       <p className="text-sm text-muted-foreground">{action.description}</p>
-                      {getPlanActionExecutionNote(action.actionType) ? (
+                      {getPlanActionExecutionNote(action.actionType, mentorMode) ? (
                         <p className="text-xs text-zinc-500">
-                          {getPlanActionExecutionNote(action.actionType)}
+                          {getPlanActionExecutionNote(action.actionType, mentorMode)}
                         </p>
                       ) : null}
                     </div>
@@ -2175,7 +2212,7 @@ export default function WhatsAppPlanos() {
                         disabled={confirmMut.isPending}
                       >
                         <CheckCircle2 className="size-4" />
-                        {getPlanActionCtaLabel(action.actionType)}
+                        {getPlanActionCtaLabel(action.actionType, mentorMode)}
                       </Button>
                     ) : (
                       <StatusBadge status={action.status} />
@@ -2308,9 +2345,9 @@ export default function WhatsAppPlanos() {
                           <StatusBadge status={action.priority} />
                         </div>
                         <p className="text-sm text-muted-foreground">{action.description}</p>
-                        {getPlanActionExecutionNote(action.actionType) ? (
+                        {getPlanActionExecutionNote(action.actionType, mentorMode) ? (
                           <p className="text-xs text-zinc-500">
-                            {getPlanActionExecutionNote(action.actionType)}
+                            {getPlanActionExecutionNote(action.actionType, mentorMode)}
                           </p>
                         ) : null}
                       </div>
@@ -2327,7 +2364,7 @@ export default function WhatsAppPlanos() {
                           onClick={() => confirmMut.mutate({ actionId: action.id })}
                           disabled={confirmMut.isPending}
                         >
-                          {getPlanActionCtaLabel(action.actionType)}
+                          {getPlanActionCtaLabel(action.actionType, mentorMode)}
                         </Button>
                       ) : null}
                     </div>

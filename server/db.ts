@@ -998,6 +998,12 @@ export async function createReserveFund(data: InsertReserveFund) {
   return { id: inserted.id, ...data };
 }
 
+export async function updateReserveFund(id: number, userId: number, data: Partial<InsertReserveFund>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(reserveFunds).set(data).where(and(eq(reserveFunds.id, id), eq(reserveFunds.userId, userId)));
+}
+
 export async function deleteReserveFund(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");

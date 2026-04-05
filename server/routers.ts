@@ -149,6 +149,12 @@ export const appRouter = router({
                 reserveFundType: z.enum(["empresa", "pessoal"]).optional(),
                 defaultCategory: z.string().optional(),
                 defaultStatus: z.string().optional(),
+                reconciliation: z
+                  .object({
+                    mode: z.enum(["create", "update"]).optional(),
+                    existingId: z.number().optional(),
+                  })
+                  .optional(),
                 row: z.object({
                   date: z.string().optional(),
                   description: z.string().optional(),
@@ -614,6 +620,19 @@ export const appRouter = router({
         notes: z.string().optional(),
       }))
       .mutation(({ ctx, input }) => db.createReserveFund({ userId: ctx.user.id, ...input })),
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        type: z.enum(["empresa", "pessoal"]).optional(),
+        depositAmount: z.string().optional(),
+        date: z.string().optional(),
+        description: z.string().nullable().optional(),
+        notes: z.string().nullable().optional(),
+      }))
+      .mutation(({ ctx, input }) => {
+        const { id, ...data } = input;
+        return db.updateReserveFund(id, ctx.user.id, data);
+      }),
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(({ ctx, input }) => db.deleteReserveFund(input.id, ctx.user.id)),
@@ -746,6 +765,7 @@ export const appRouter = router({
       .input(
         z.object({
           clientId: z.number(),
+          revenueId: z.number().optional(),
           serviceId: z.number().optional(),
           description: z.string().optional(),
           value: z.string().optional(),

@@ -28,6 +28,15 @@ export type AsaasChargeFollowUpItem = {
   pixCopyAndPaste?: string | null;
 };
 
+export type AsaasChargeCreationTarget = {
+  revenueId: number;
+  description: string;
+  clientName: string;
+  dueDate: string;
+  value: number;
+  billingType: "PIX" | "BOLETO";
+};
+
 export type PaymentPrioritySourceType =
   | "company_fixed_cost"
   | "company_variable_cost"
@@ -54,6 +63,7 @@ export type FinancialRecommendation = {
   kind:
     | "freeze_discretionary"
     | "charge_follow_up"
+    | "create_asaas_charge"
     | "transfer_company_reserve"
     | "transfer_personal_reserve"
     | "protect_tax_provision"
@@ -517,16 +527,79 @@ function pickChargeFollowUpTarget(charges: AnyRecord[]) {
     })[0] ?? null;
 }
 
+function normalizeTextToken(value?: string | null) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeAsaasChargeCreationTarget(value?: AnyRecord | null): AsaasChargeCreationTarget | null {
+  if (!value || typeof value !== "object") return null;
+  const revenueId = Number(value.revenueId);
+  if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
+
+  const clientName = String(value.clientName ?? "").trim();
+  if (!clientName) return null;
+
+  const dueDate = String(value.dueDate ?? "").trim();
+  if (!dueDate) return null;
+
+  return {
+    revenueId,
+    description: String(value.description ?? "Receita pendente"),
+    clientName,
+    dueDate,
+    value: clampCurrency(toNumber(value.value ?? 0)),
+    billingType: String(value.billingType ?? "PIX").toUpperCase() === "BOLETO" ? "BOLETO" : "PIX",
+  };
+}
+
+function pickChargeCreationTarget(revenues: AnyRecord[]) {
+  return revenues
+    .map<AsaasChargeCreationTarget | null>(revenue => {
+      const revenueId = Number(revenue.id);
+      const clientName = String(revenue.client ?? "").trim();
+      const asaasPaymentId = String(revenue.asaasPaymentId ?? "").trim();
+      const status = String(revenue.status ?? "").toLowerCase();
+      const dueDate = String(revenue.dueDate ?? "").trim();
+      const value = clampCurrency(toNumber(revenue.grossAmount ?? revenue.netAmount ?? 0));
+      if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
+      if (!clientName || !dueDate || value <= 0) return null;
+      if (asaasPaymentId) return null;
+      if (status === "recebido" || status === "cancelado") return null;
+
+      return {
+        revenueId,
+        description: String(revenue.description ?? "Receita pendente"),
+        clientName,
+        dueDate,
+        value,
+        billingType: "PIX",
+      };
+    })
+    .filter((item): item is AsaasChargeCreationTarget => Boolean(item))
+    .sort((left, right) => {
+      const leftDue = parseIsoDate(left.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightDue = parseIsoDate(right.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      if (leftDue !== rightDue) return leftDue - rightDue;
+      return right.value - left.value;
+    })[0] ?? null;
+}
+
 function buildTopRecommendations(args: {
   snapshotBase: Omit<FinancialGovernanceSnapshot, "summary">;
   companyVariableRatio: number;
   personalVariableRatio: number;
   asaasCharges: AnyRecord[];
+  companyRevenues: AnyRecord[];
 }) {
-  const { snapshotBase, companyVariableRatio, personalVariableRatio, asaasCharges } = args;
+  const { snapshotBase, companyVariableRatio, personalVariableRatio, asaasCharges, companyRevenues } = args;
   const recommendations: FinancialRecommendation[] = [];
   const actionablePriority = findFirstActionablePaymentPriorityItem(snapshotBase.paymentPriority);
   const chargeTarget = pickChargeFollowUpTarget(asaasCharges);
+  const chargeCreationTarget = pickChargeCreationTarget(companyRevenues);
 
   if (snapshotBase.counts.overdueItems > 0) {
     recommendations.push({
@@ -561,6 +634,17 @@ function buildTopRecommendations(args: {
             pendingCharges: snapshotBase.counts.pendingCharges,
             overdueCharges: snapshotBase.counts.overdueCharges,
           },
+    });
+  }
+
+  if (chargeCreationTarget) {
+    recommendations.push({
+      kind: "create_asaas_charge",
+      title: "Gerar cobranca Asaas para receita pendente",
+      description: `A receita ${chargeCreationTarget.description} de ${chargeCreationTarget.clientName} ainda nao virou cobranca automatizada.`,
+      metadata: {
+        targetRevenue: chargeCreationTarget,
+      },
     });
   }
 
@@ -1223,6 +1307,7 @@ export function calculateFinancialGovernanceSnapshot(
     personalVariableRatio:
       personalAvailableIncome > 0 ? personalVariableCosts / Math.max(personalAvailableIncome, 1) : 0,
     asaasCharges: context.asaasCharges,
+    companyRevenues: Array.isArray(context.company?.revenue?.items) ? context.company.revenue.items : [],
   });
 
   const completed = { ...snapshotBase, topRecommendations };
@@ -1696,11 +1781,12 @@ export function personalizeFinancialRecommendations(
     ? {
         pay_priority_items: 0,
         charge_follow_up: 1,
-        freeze_discretionary: 2,
-        protect_tax_provision: 3,
-        transfer_company_reserve: 4,
-        transfer_personal_reserve: 5,
-        review_variable_costs: 6,
+        create_asaas_charge: 2,
+        freeze_discretionary: 3,
+        protect_tax_provision: 4,
+        transfer_company_reserve: 5,
+        transfer_personal_reserve: 6,
+        review_variable_costs: 7,
       }
     : strategicMoment
       ? {
@@ -1710,23 +1796,27 @@ export function personalizeFinancialRecommendations(
           protect_tax_provision: 3,
           pay_priority_items: 4,
           charge_follow_up: 5,
-          freeze_discretionary: 6,
+          create_asaas_charge: 6,
+          freeze_discretionary: 7,
         }
       : {
           pay_priority_items: 0,
           charge_follow_up: 1,
-          transfer_company_reserve: 2,
-          transfer_personal_reserve: 3,
-          review_variable_costs: 4,
-          protect_tax_provision: 5,
-          freeze_discretionary: 6,
+          create_asaas_charge: 2,
+          transfer_company_reserve: 3,
+          transfer_personal_reserve: 4,
+          review_variable_costs: 5,
+          protect_tax_provision: 6,
+          freeze_discretionary: 7,
         };
 
   return snapshot.topRecommendations
     .map(recommendation => {
       if (lowExecution) {
         const lowExecutionMessage =
-          recommendation.kind === "pay_priority_items" || recommendation.kind === "charge_follow_up"
+          recommendation.kind === "pay_priority_items" ||
+          recommendation.kind === "charge_follow_up" ||
+          recommendation.kind === "create_asaas_charge"
             ? "Foque em executar esta unica frente antes de abrir novas decisoes."
             : "O mentor simplificou a orientacao para aumentar a chance de execucao real.";
         return {
@@ -2282,6 +2372,21 @@ async function resolveChargeFollowUpTarget(userId: number, metadata: AnyRecord) 
   return pickChargeFollowUpTarget(charges);
 }
 
+async function resolveChargeCreationTarget(userId: number, metadata: AnyRecord) {
+  const fromMetadata = normalizeAsaasChargeCreationTarget(
+    metadata.targetRevenue && typeof metadata.targetRevenue === "object" ? metadata.targetRevenue : null
+  );
+  if (fromMetadata) return fromMetadata;
+
+  const revenues = (await db.getRevenues(userId, undefined, undefined, {
+    page: 1,
+    limit: 200,
+    sortBy: "dueDate",
+    sortOrder: "asc",
+  }).catch(() => null))?.data ?? [];
+  return pickChargeCreationTarget(revenues);
+}
+
 export async function confirmFinancialAdvisorAction(userId: number, actionId: number) {
   const action = await whatsappDb.getFinancialPlanActionById(userId, actionId);
   if (!action) {
@@ -2379,6 +2484,104 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
       message: `Follow-up executado para ${targetCharge.description} (${dueDate}) no valor de R$ ${value.toFixed(2)}. ${accessHint}`,
       executionKind: "charge_follow_up" as const,
       targetChargeId: refreshedCharge.id ?? targetCharge.id,
+      billingType,
+      dueDate,
+      value,
+    };
+  }
+
+  if (action.actionType === "create_asaas_charge") {
+    const targetRevenue = await resolveChargeCreationTarget(userId, metadata);
+    if (!targetRevenue) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei uma receita elegivel para gerar cobranca agora.",
+      });
+    }
+
+    const revenue = await asaasDb.getRevenueById(userId, targetRevenue.revenueId);
+    if (!revenue) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "A receita selecionada para cobranca nao existe mais.",
+      });
+    }
+    if (String(revenue.asaasPaymentId ?? "").trim()) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Essa receita ja possui uma cobranca Asaas vinculada.",
+      });
+    }
+
+    const clients = await db.getClients(userId);
+    const matchedClient = clients.find(client =>
+      normalizeTextToken(client.name) === normalizeTextToken(targetRevenue.clientName || revenue.client)
+    );
+
+    if (!matchedClient) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Nao encontrei um cliente correspondente para gerar a cobranca no Asaas.",
+      });
+    }
+
+    const createdCharge = await asaas.createAsaasCharge(userId, {
+      clientId: matchedClient.id,
+      revenueId: revenue.id,
+      description: revenue.description,
+      value: String(revenue.grossAmount ?? targetRevenue.value.toFixed(2)),
+      dueDate: revenue.dueDate,
+      billingType: targetRevenue.billingType,
+    });
+
+    const billingType = String(createdCharge.billingType || targetRevenue.billingType || "PIX").toUpperCase();
+    const dueDate = String(createdCharge.dueDate || revenue.dueDate || targetRevenue.dueDate);
+    const value = clampCurrency(toNumber(createdCharge.value ?? revenue.grossAmount ?? targetRevenue.value));
+
+    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
+      status: "concluida",
+      metadata: buildExecutedActionMetadata(metadata, {
+        kind: "create_asaas_charge",
+        targetRevenue: {
+          revenueId: revenue.id,
+          description: revenue.description,
+          clientName: matchedClient.name,
+          dueDate,
+          value,
+          billingType,
+        },
+        targetCharge: {
+          id: createdCharge.id,
+          asaasChargeId: createdCharge.asaasChargeId,
+          description: createdCharge.description,
+          billingType,
+          status: createdCharge.status,
+          dueDate,
+          value,
+          invoiceUrl: createdCharge.invoiceUrl ?? null,
+          bankSlipUrl: createdCharge.bankSlipUrl ?? null,
+          pixQrCodeUrl: createdCharge.pixQrCodeUrl ?? null,
+          pixCopyAndPaste: createdCharge.pixCopyAndPaste ?? null,
+        },
+        executedAt: executedAt.toISOString(),
+      }),
+    });
+
+    const accessHint =
+      billingType === "PIX"
+        ? createdCharge.pixCopyAndPaste || createdCharge.pixQrCodeUrl
+          ? "PIX criado e pronto para compartilhamento."
+          : "Cobranca PIX criada e sincronizada."
+        : createdCharge.bankSlipUrl || createdCharge.invoiceUrl
+          ? "Boleto criado com link pronto para envio."
+          : "Cobranca criada e sincronizada no Asaas.";
+
+    return {
+      success: true,
+      message: `Cobranca criada para ${matchedClient.name} em ${dueDate}, no valor de R$ ${value.toFixed(2)}. ${accessHint}`,
+      executionKind: "create_asaas_charge" as const,
+      targetChargeId: createdCharge.id,
+      revenueId: revenue.id,
       billingType,
       dueDate,
       value,

@@ -84,6 +84,24 @@ type PreviewRow = {
 
 type ImportMode = "preset_import" | "statement_reconciliation";
 
+type ReconciliationMatchTarget = Extract<
+  FinancialStatementSelectableTarget,
+  | "revenues"
+  | "company_variable_costs"
+  | "personal_variable_costs"
+  | "debts"
+  | "investments"
+  | "reserve_company"
+  | "reserve_personal"
+>;
+
+type StatementReconciliationMatch = {
+  id: number;
+  target: ReconciliationMatchTarget;
+  label: string;
+  confidence: "alta" | "media";
+};
+
 type StatementPreviewRow = {
   id: number;
   date: string;
@@ -99,10 +117,18 @@ type StatementPreviewRow = {
   category?: string;
   investmentType?: string;
   reserveFundType?: FinancialImportReserveType;
+  status?: string;
+  monthlyPayment?: string;
+  interestRate?: string;
+  totalInstallments?: number;
+  paidInstallments?: number;
+  dueDay?: number;
   installmentLabel?: string;
   installmentNumber?: number;
   installmentCount?: number;
   originalDescription?: string;
+  reconciliationMode?: "create" | "update";
+  matchedExisting?: StatementReconciliationMatch | null;
   error?: string;
 };
 
@@ -156,6 +182,7 @@ function getStatementTargetLabel(target: FinancialStatementSelectableTarget) {
     revenues: "Receita empresa",
     company_variable_costs: "Custo empresa",
     personal_variable_costs: "Gasto pessoal",
+    debts: "Divida",
     investments: "Investimento",
     reserve_company: "Reserva empresa",
     reserve_personal: "Reserva pessoal",
@@ -169,6 +196,7 @@ function getStatementTargetBadge(target: FinancialStatementSelectableTarget) {
   if (target === "revenues") return "empresa";
   if (target === "company_variable_costs") return "empresa";
   if (target === "personal_variable_costs") return "pessoal";
+  if (target === "debts") return "divida";
   if (target === "investments") return "investimento";
   return "reserva";
 }
@@ -207,27 +235,43 @@ function resolveAbsoluteImportAmount(params: {
 
 function buildImportSuccessMessage(params: {
   imported: number;
+  updatedExisting: number;
   skippedDuplicates: number;
   label: string;
   totalAmount: string;
 }) {
-  const base = `${params.imported} registro(s) importados em ${params.label.toLowerCase()} (${formatCurrency(params.totalAmount)}).`;
+  const pieces = [];
+  if (params.imported) pieces.push(`${params.imported} novo(s)`);
+  if (params.updatedExisting) pieces.push(`${params.updatedExisting} conciliado(s)`);
+  const base = `${pieces.join(" e ") || "0 registro"} em ${params.label.toLowerCase()} (${formatCurrency(params.totalAmount)}).`;
   if (!params.skippedDuplicates) return base;
   return `${base} ${params.skippedDuplicates} duplicada(s) foram ignoradas.`;
 }
 
 function buildStatementImportSuccessMessage(params: {
   imported: number;
+  updatedExisting: number;
   skippedDuplicates: number;
   totalAmount: string;
 }) {
-  const base = `${params.imported} movimento(s) conciliados (${formatCurrency(params.totalAmount)}).`;
+  const pieces = [];
+  if (params.imported) pieces.push(`${params.imported} novo(s)`);
+  if (params.updatedExisting) pieces.push(`${params.updatedExisting} atualizado(s)`);
+  const base = `${pieces.join(" e ") || "0 movimento"} conciliados (${formatCurrency(params.totalAmount)}).`;
   if (!params.skippedDuplicates) return base;
   return `${base} ${params.skippedDuplicates} duplicada(s) foram ignoradas.`;
 }
 
 function getStatementSourceKindLabel(sourceKind: FinancialStatementSourceKind) {
   return sourceKind === "credit_card" ? "Fatura de cartao" : "Extrato bancario";
+}
+
+function normalizeConciliationText(value?: string | null) {
+  return normalizeImportLookup(String(value ?? ""));
+}
+
+function getAmountDifference(left?: string | number | null, right?: string | number | null) {
+  return Math.abs(Number(left ?? 0) - Number(right ?? 0));
 }
 
 function normalizeBankConnectionProfile(profile: any): BankConnectionProfile {
@@ -599,7 +643,164 @@ function buildStatementPreviewRows(params: {
   mapping: FinancialImportMapping;
   scope: FinancialStatementScope;
   sourceKind: FinancialStatementSourceKind;
+  existingEntries: {
+    revenues: Array<Record<string, any>>;
+    companyVariableCosts: Array<Record<string, any>>;
+    personalVariableCosts: Array<Record<string, any>>;
+    debts: Array<Record<string, any>>;
+    investments: Array<Record<string, any>>;
+    reserveFunds: Array<Record<string, any>>;
+  };
 }): StatementPreviewRow[] {
+  const findReconciliationMatch = (
+    target: FinancialStatementSelectableTarget,
+    row: {
+      date: string;
+      description: string;
+      counterparty?: string;
+      absoluteAmount: string;
+    }
+  ): StatementReconciliationMatch | null => {
+    const normalizedDescription = normalizeConciliationText(row.description);
+    const normalizedCounterparty = normalizeConciliationText(row.counterparty);
+
+    const buildMatch = (
+        item: Record<string, any>,
+        config: {
+          id: number;
+          label: string;
+          date: string;
+          amount: string | number;
+          comparisonText: string;
+          target: ReconciliationMatchTarget;
+        }
+      ) => {
+      const sameDate = config.date === row.date;
+      const amountDifference = getAmountDifference(config.amount, row.absoluteAmount);
+      const exactAmount = amountDifference <= 0.009;
+      const normalizedComparison = normalizeConciliationText(config.comparisonText);
+      const strongText =
+        normalizedComparison.includes(normalizedDescription) ||
+        normalizedDescription.includes(normalizedComparison) ||
+        (!!normalizedCounterparty && normalizedComparison.includes(normalizedCounterparty));
+
+      if (!sameDate || !exactAmount || !strongText) return null;
+
+      return {
+        id: config.id,
+        target: config.target,
+        label: config.label,
+        confidence: "alta" as const,
+      };
+    };
+
+    if (target === "revenues") {
+      return (
+        params.existingEntries.revenues
+          .map(item =>
+            buildMatch(item, {
+              id: Number(item.id),
+              label: `${item.description} • ${item.dueDate}`,
+              date: String(item.dueDate ?? ""),
+              amount: item.netAmount ?? item.grossAmount,
+              comparisonText: `${item.description ?? ""} ${item.client ?? ""}`,
+              target: "revenues",
+            })
+          )
+          .find(Boolean) ?? null
+      );
+    }
+
+    if (target === "company_variable_costs") {
+      return (
+        params.existingEntries.companyVariableCosts
+          .map(item =>
+            buildMatch(item, {
+              id: Number(item.id),
+              label: `${item.description} • ${item.date}`,
+              date: String(item.date ?? ""),
+              amount: item.amount,
+              comparisonText: `${item.description ?? ""} ${item.supplier ?? ""}`,
+              target: "company_variable_costs",
+            })
+          )
+          .find(Boolean) ?? null
+      );
+    }
+
+    if (target === "personal_variable_costs") {
+      return (
+        params.existingEntries.personalVariableCosts
+          .map(item =>
+            buildMatch(item, {
+              id: Number(item.id),
+              label: `${item.description} • ${item.date}`,
+              date: String(item.date ?? ""),
+              amount: item.amount,
+              comparisonText: String(item.description ?? ""),
+              target: "personal_variable_costs",
+            })
+          )
+          .find(Boolean) ?? null
+      );
+    }
+
+    if (target === "investments") {
+      return (
+        params.existingEntries.investments
+          .map(item =>
+            buildMatch(item, {
+              id: Number(item.id),
+              label: `${item.description} • ${item.date}`,
+              date: String(item.date ?? ""),
+              amount: item.depositAmount,
+              comparisonText: `${item.description ?? ""} ${item.institution ?? ""}`,
+              target: "investments",
+            })
+          )
+          .find(Boolean) ?? null
+      );
+    }
+
+    if (target === "debts") {
+      return (
+        params.existingEntries.debts
+          .map(item =>
+            buildMatch(item, {
+              id: Number(item.id),
+              label: `${item.description} • ${item.creditor}`,
+              date: row.date,
+              amount: item.currentBalance,
+              comparisonText: `${item.description ?? ""} ${item.creditor ?? ""}`,
+              target: "debts",
+            })
+          )
+          .find(Boolean) ?? null
+      );
+    }
+
+    if (target === "reserve_company" || target === "reserve_personal") {
+      const reserveType = target === "reserve_company" ? "empresa" : "pessoal";
+      return (
+        params.existingEntries.reserveFunds
+          .filter(item => String(item.type ?? "") === reserveType)
+          .map(item =>
+            buildMatch(item, {
+              id: Number(item.id),
+              label: `${item.description || "Reserva"} • ${item.date}`,
+              date: String(item.date ?? ""),
+              amount: item.depositAmount,
+              comparisonText: String(item.description ?? reserveType),
+              target,
+            })
+          )
+          .find(Boolean) ?? null
+      );
+    }
+
+    return null;
+  };
+
   return params.records.map((record, index) => {
     const rawDate = params.mapping.date ? record[params.mapping.date] || "" : "";
     const date = normalizeImportDate(rawDate);
@@ -621,6 +822,22 @@ function buildStatementPreviewRows(params: {
     const balanceValue = params.mapping.balance ? record[params.mapping.balance] || "" : "";
     const parsedBalance = parseImportAmount(balanceValue);
     const amountPreview = rawAmount || rawCredit || rawDebit;
+    const debtStatus = (params.mapping.status ? record[params.mapping.status] || "" : "").trim() || "ativa";
+    const debtMonthlyPayment = parseImportAmount(
+      params.mapping.monthlyPayment ? record[params.mapping.monthlyPayment] || "" : ""
+    );
+    const debtInterestRate = parseImportAmount(
+      params.mapping.interestRate ? record[params.mapping.interestRate] || "" : ""
+    );
+    const debtTotalInstallments = parseImportInteger(
+      params.mapping.totalInstallments ? record[params.mapping.totalInstallments] || "" : ""
+    );
+    const debtPaidInstallments = parseImportInteger(
+      params.mapping.paidInstallments ? record[params.mapping.paidInstallments] || "" : ""
+    );
+    const debtDueDay =
+      parseImportInteger(params.mapping.dueDay ? record[params.mapping.dueDay] || "" : "") ??
+      (date ? Number(date.slice(-2)) : undefined);
 
     if (!params.mapping.date || !hasMappedAmountColumns(params.mapping)) {
       return {
@@ -677,6 +894,12 @@ function buildStatementPreviewRows(params: {
       scope: params.scope,
       sourceKind: params.sourceKind,
     });
+    const matchedExisting = findReconciliationMatch(suggestion.suggestedTarget, {
+      date,
+      description,
+      counterparty,
+      absoluteAmount: Math.abs(signedAmount).toFixed(2),
+    });
 
     return {
       id: index,
@@ -694,6 +917,14 @@ function buildStatementPreviewRows(params: {
       category: suggestion.category,
       investmentType: suggestion.investmentType,
       reserveFundType: suggestion.reserveFundType,
+      status: debtStatus,
+      monthlyPayment: debtMonthlyPayment != null ? debtMonthlyPayment.toFixed(2) : undefined,
+      interestRate: debtInterestRate != null ? debtInterestRate.toFixed(2) : undefined,
+      totalInstallments: debtTotalInstallments ?? undefined,
+      paidInstallments: debtPaidInstallments ?? undefined,
+      dueDay: debtDueDay,
+      reconciliationMode: matchedExisting ? "update" : "create",
+      matchedExisting,
       installmentLabel: installmentInfo?.label,
       installmentNumber: installmentInfo?.installmentNumber,
       installmentCount: installmentInfo?.installmentCount,
@@ -727,11 +958,28 @@ export default function ImportadorFinanceiro() {
   const [statementTargetOverrides, setStatementTargetOverrides] = useState<
     Record<number, FinancialStatementSelectableTarget>
   >({});
+  const [statementReconciliationOverrides, setStatementReconciliationOverrides] = useState<
+    Record<number, "create" | "update">
+  >({});
   const [statementProfiles, setStatementProfiles] = useState<StatementProfile[]>([]);
   const [profileName, setProfileName] = useState("");
   const [profileBankName, setProfileBankName] = useState("");
   const { data: rawBankConnections = [] } = trpc.bankConnections.list.useQuery();
+  const { data: revenuesData } = trpc.revenues.list.useQuery({});
+  const { data: companyVariableCostsData } = trpc.companyVariableCosts.list.useQuery({});
+  const { data: personalVariableCostsData } = trpc.personalVariableCosts.list.useQuery({});
+  const { data: debtsData = [] } = trpc.debts.list.useQuery();
+  const { data: investmentsData = [] } = trpc.investments.list.useQuery();
+  const { data: reserveFundsData = [] } = trpc.reserveFunds.list.useQuery({});
   const bankConnections = rawBankConnections.map(connection => normalizeBankConnectionProfile(connection));
+  const existingEntries = {
+    revenues: revenuesData?.data ?? [],
+    companyVariableCosts: companyVariableCostsData?.data ?? [],
+    personalVariableCosts: personalVariableCostsData?.data ?? [],
+    debts: debtsData,
+    investments: investmentsData,
+    reserveFunds: reserveFundsData,
+  };
 
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
@@ -873,14 +1121,29 @@ export default function ImportadorFinanceiro() {
     mapping: statementMapping,
     scope: statementScope,
     sourceKind: statementSourceKind,
+    existingEntries,
   });
-  const statementRows = baseStatementRows.map(row => ({
-    ...row,
-    selectedTarget: statementTargetOverrides[row.id] ?? row.selectedTarget,
-  }));
+  const statementRows = baseStatementRows.map(row => {
+    const selectedTarget = statementTargetOverrides[row.id] ?? row.selectedTarget;
+    const matchedExisting =
+      row.matchedExisting && row.matchedExisting.target === selectedTarget ? row.matchedExisting : null;
+
+    return {
+      ...row,
+      selectedTarget,
+      matchedExisting,
+      reconciliationMode:
+        matchedExisting
+          ? statementReconciliationOverrides[row.id] ?? row.reconciliationMode ?? "create"
+          : "create",
+    };
+  });
   const validStatementRows = statementRows.filter(row => !row.error);
   const statementReadyRows = validStatementRows.filter(row => row.selectedTarget !== "skip");
   const statementIgnoredRows = validStatementRows.filter(row => row.selectedTarget === "skip");
+  const statementMatchedRows = statementReadyRows.filter(
+    row => row.matchedExisting && row.reconciliationMode === "update"
+  );
   const statementAmount = statementReadyRows.reduce(
     (sum, row) => sum + Number(row.absoluteAmount || 0),
     0
@@ -916,6 +1179,7 @@ export default function ImportadorFinanceiro() {
       toast.success(
         buildImportSuccessMessage({
           imported: data.imported,
+          updatedExisting: data.updatedExisting,
           skippedDuplicates: data.skippedDuplicates,
           label: meta.shortLabel,
           totalAmount: data.totalAmount,
@@ -947,6 +1211,7 @@ export default function ImportadorFinanceiro() {
       toast.success(
         buildStatementImportSuccessMessage({
           imported: data.imported,
+          updatedExisting: data.updatedExisting,
           skippedDuplicates: data.skippedDuplicates,
           totalAmount: data.totalAmount,
         })
@@ -995,6 +1260,7 @@ export default function ImportadorFinanceiro() {
   const updateStatementScope = (scope: FinancialStatementScope) => {
     setStatementScope(scope);
     setStatementTargetOverrides({});
+    setStatementReconciliationOverrides({});
     if (typeof window === "undefined") return;
     const next = new URL(window.location.href);
     next.searchParams.set("mode", "statement");
@@ -1007,6 +1273,7 @@ export default function ImportadorFinanceiro() {
   const updateStatementSourceKind = (sourceKind: FinancialStatementSourceKind) => {
     setStatementSourceKind(sourceKind);
     setStatementTargetOverrides({});
+    setStatementReconciliationOverrides({});
     if (typeof window === "undefined") return;
     const next = new URL(window.location.href);
     next.searchParams.set("mode", "statement");
@@ -1022,6 +1289,7 @@ export default function ImportadorFinanceiro() {
     setDelimiter(profile.delimiter || ";");
     setStatementMapping(profile.mapping);
     setStatementTargetOverrides({});
+    setStatementReconciliationOverrides({});
     setProfileName(profile.name);
     setProfileBankName(profile.bankName);
 
@@ -1115,6 +1383,7 @@ export default function ImportadorFinanceiro() {
 
     if (importMode === "statement_reconciliation") {
       const inferredSourceKind = inferStatementSourceKind({ fileName: file.name });
+      setStatementReconciliationOverrides({});
       updateStatementSourceKind(inferredSourceKind);
     }
   };
@@ -1172,9 +1441,18 @@ export default function ImportadorFinanceiro() {
         fileName.trim() ||
         (statementSourceKind === "credit_card" ? "Fatura conciliada" : "Extrato conciliado"),
       items: statementReadyRows.map(row => {
+        const reconciliation =
+          row.matchedExisting && row.reconciliationMode === "update"
+            ? {
+                mode: "update" as const,
+                existingId: row.matchedExisting.id,
+              }
+            : undefined;
+
         if (row.selectedTarget === "revenues") {
           return {
             target: "revenues" as const,
+            reconciliation,
             row: {
               date: row.date,
               description: row.description,
@@ -1196,6 +1474,7 @@ export default function ImportadorFinanceiro() {
         if (row.selectedTarget === "company_variable_costs") {
           return {
             target: "company_variable_costs" as const,
+            reconciliation,
             row: {
               date: row.date,
               description: row.description,
@@ -1221,6 +1500,7 @@ export default function ImportadorFinanceiro() {
         if (row.selectedTarget === "personal_variable_costs") {
           return {
             target: "personal_variable_costs" as const,
+            reconciliation,
             row: {
               date: row.date,
               description: row.description,
@@ -1246,6 +1526,7 @@ export default function ImportadorFinanceiro() {
         if (row.selectedTarget === "investments") {
           return {
             target: "investments" as const,
+            reconciliation,
             row: {
               date: row.date,
               description: row.description,
@@ -1267,12 +1548,35 @@ export default function ImportadorFinanceiro() {
           };
         }
 
+        if (row.selectedTarget === "debts") {
+          return {
+            target: "debts" as const,
+            reconciliation,
+            row: {
+              date: row.date,
+              description: row.description,
+              amount: row.absoluteAmount,
+              balance: row.balance || row.absoluteAmount,
+              counterparty: row.counterparty,
+              category: row.category || "media",
+              status: row.status || "ativa",
+              monthlyPayment: row.monthlyPayment || row.absoluteAmount,
+              interestRate: row.interestRate || "0.00",
+              totalInstallments: row.totalInstallments || 1,
+              paidInstallments: row.paidInstallments || 0,
+              dueDay: row.dueDay || Number(row.date.slice(-2)),
+              notes: buildStatementNotes(row),
+            },
+          };
+        }
+
         const reserveFundType =
           row.selectedTarget === "reserve_company" ? "empresa" : "pessoal";
 
         return {
           target: "reserve_funds" as const,
           reserveFundType,
+          reconciliation,
           row: {
             date: row.date,
             description: row.description,
@@ -1800,7 +2104,10 @@ export default function ImportadorFinanceiro() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setStatementTargetOverrides({})}
+                    onClick={() => {
+                      setStatementTargetOverrides({});
+                      setStatementReconciliationOverrides({});
+                    }}
                   >
                     Reaplicar sugestoes
                   </Button>
@@ -1936,6 +2243,10 @@ export default function ImportadorFinanceiro() {
                       <p className="mt-1 text-2xl font-semibold text-emerald-700">{statementReadyRows.length}</p>
                     </div>
                     <div className="rounded-2xl border bg-white px-4 py-3">
+                      <p className="text-xs uppercase text-muted-foreground">Conciliadas com existentes</p>
+                      <p className="mt-1 text-2xl font-semibold text-blue-700">{statementMatchedRows.length}</p>
+                    </div>
+                    <div className="rounded-2xl border bg-white px-4 py-3">
                       <p className="text-xs uppercase text-muted-foreground">Ignoradas</p>
                       <p className="mt-1 text-2xl font-semibold">{statementIgnoredRows.length}</p>
                     </div>
@@ -2047,13 +2358,14 @@ export default function ImportadorFinanceiro() {
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead>Motivo</TableHead>
                     <TableHead>Destino</TableHead>
+                    <TableHead>Conciliacao</TableHead>
                     <TableHead>Observacao</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {statementRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                         Carregue ou cole um extrato para ver a conciliacao.
                       </TableCell>
                     </TableRow>
@@ -2111,6 +2423,7 @@ export default function ImportadorFinanceiro() {
                                 "revenues",
                                 "company_variable_costs",
                                 "personal_variable_costs",
+                                "debts",
                                 "investments",
                                 "reserve_company",
                                 "reserve_personal",
@@ -2125,14 +2438,46 @@ export default function ImportadorFinanceiro() {
                             Grupo: {getStatementTargetBadge(row.selectedTarget)}
                           </div>
                         </TableCell>
+                        <TableCell className="min-w-[220px]">
+                          {row.matchedExisting ? (
+                            <>
+                              <Select
+                                value={row.reconciliationMode || "create"}
+                                onValueChange={value =>
+                                  setStatementReconciliationOverrides(current => ({
+                                    ...current,
+                                    [row.id]: value as "create" | "update",
+                                  }))
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="create">Criar novo</SelectItem>
+                                  <SelectItem value="update">Atualizar existente</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                #{row.matchedExisting.id} • {row.matchedExisting.label}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              Nenhum match forte encontrado.
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className={row.error ? "text-destructive" : "text-muted-foreground"}>
                           {row.error
                             ? row.error
-                            : row.installmentNumber === 1 &&
-                                row.installmentCount &&
-                                row.installmentCount > 1
-                              ? `Pronto para importar e abrir ${row.installmentCount} parcelas`
-                              : "Pronto para importar"}
+                            : row.matchedExisting && row.reconciliationMode === "update"
+                              ? `Pronto para atualizar o lancamento #${row.matchedExisting.id}`
+                              : row.installmentNumber === 1 &&
+                                  row.installmentCount &&
+                                  row.installmentCount > 1
+                                ? `Pronto para importar e abrir ${row.installmentCount} parcelas`
+                                : "Pronto para importar"}
                         </TableCell>
                       </TableRow>
                     ))

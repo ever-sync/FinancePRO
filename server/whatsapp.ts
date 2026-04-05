@@ -56,6 +56,7 @@ type AssistantReplyPayload = {
   summary: string;
   alerts: string[];
   suggestedActions: SuggestedAction[];
+  mentorMode?: financialAdvisor.FinancialAdvisorMentorMode;
 };
 
 type MonthlyPlanPayload = {
@@ -140,9 +141,16 @@ function formatAdvisorPreviewMessage(params: {
   reply: string;
   alerts: string[];
   suggestedActions: SuggestedAction[];
+  mentorMode?: financialAdvisor.FinancialAdvisorMentorMode;
 }) {
+  const header =
+    params.mentorMode === "execution_short"
+      ? "Mentoria Financeira · Modo execucao curta"
+      : params.mentorMode === "strategic"
+        ? "Mentoria Financeira · Modo estrategico"
+        : "Mentoria Financeira · Modo calibracao";
   const parts = [
-    "Mentoria Financeira",
+    header,
     `Pergunta: ${params.question}`,
     params.reply,
   ];
@@ -154,6 +162,35 @@ function formatAdvisorPreviewMessage(params: {
   const nextActions = params.suggestedActions.slice(0, 3);
   if (nextActions.length) {
     parts.push(`Proximas acoes:\n- ${nextActions.map(action => action.title).join("\n- ")}`);
+  }
+
+  return parts.join("\n\n");
+}
+
+function getMentorModeLabel(mode?: financialAdvisor.FinancialAdvisorMentorMode) {
+  if (mode === "execution_short") return "execucao curta";
+  if (mode === "strategic") return "estrategico";
+  return "calibracao";
+}
+
+function formatMentorChannelMessage(params: {
+  reply: string;
+  mentorMode?: financialAdvisor.FinancialAdvisorMentorMode;
+  alerts?: string[];
+  suggestedActions?: SuggestedAction[];
+  intro?: string;
+}) {
+  const parts = [
+    `Mentor em modo ${getMentorModeLabel(params.mentorMode)}.`,
+    params.intro ? `${params.intro} ${params.reply}` : params.reply,
+  ];
+
+  if (params.alerts?.length) {
+    parts.push(`Alertas:\n- ${params.alerts.slice(0, 3).join("\n- ")}`);
+  }
+
+  if (params.suggestedActions?.length) {
+    parts.push(`Proximas acoes:\n- ${params.suggestedActions.slice(0, 3).map(action => action.title).join("\n- ")}`);
   }
 
   return parts.join("\n\n");
@@ -178,6 +215,29 @@ function mapAdvisorRecommendationsToSuggestedActions(
       : recommendation.amount != null
         ? { amount: recommendation.amount }
         : undefined,
+  }));
+}
+
+function mapPlanActionsToSuggestedActions(
+  actions: Array<{
+    actionType: string;
+    title: string;
+    description: string;
+    priority: string;
+    dueDate?: string | null;
+    metadata?: string | null;
+  }>
+): SuggestedAction[] {
+  return actions.map(action => ({
+    actionType: action.actionType,
+    title: action.title,
+    description: action.description,
+    priority:
+      action.priority === "alta" || action.priority === "baixa"
+        ? action.priority
+        : "media",
+    dueDate: action.dueDate ?? null,
+    metadata: action.metadata ? { rawMetadata: action.metadata } : undefined,
   }));
 }
 
@@ -820,6 +880,7 @@ export async function sendFinancialAdvisorPreviewMessage(userId: number, questio
     reply: advisorReply.reply,
     alerts: advisorReply.alerts,
     suggestedActions: mapAdvisorRecommendationsToSuggestedActions(advisorReply.suggestedActions),
+    mentorMode: advisorReply.mentorMode,
   });
 
   try {
@@ -1473,6 +1534,7 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
           summary: advisorReply.summary,
           alerts: advisorReply.alerts,
           suggestedActions: mapAdvisorRecommendationsToSuggestedActions(advisorReply.suggestedActions),
+          mentorMode: advisorReply.mentorMode,
         }
       : await generateAssistantReply(intent, incoming.text, context);
 
@@ -1496,7 +1558,14 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       contactId: contact.id,
       threadId: thread.id,
       phoneNumber: contact.phoneNumber,
-      text: reply.reply,
+      text: advisorReply
+        ? formatMentorChannelMessage({
+            reply: reply.reply,
+            mentorMode: reply.mentorMode,
+            alerts: reply.alerts,
+            suggestedActions: reply.suggestedActions,
+          })
+        : reply.reply,
       detectedIntent: intent,
     });
 
@@ -1537,6 +1606,10 @@ async function runDailyDigestForIntegration(
     integrationId: integration.id,
     timezone: integration.timezone,
   });
+  const digestMemory = await financialAdvisor.getFinancialAdvisorMemory(integration.userId, {
+    currentSnapshot: digest.snapshot,
+  });
+  const digestMentorMode = financialAdvisor.getFinancialAdvisorMentorMode(digestMemory);
   const run = await whatsappDb.createAssistantRun({
     userId: integration.userId,
     integrationId: integration.id,
@@ -1555,7 +1628,12 @@ async function runDailyDigestForIntegration(
     contactId: contact.id,
     threadId: thread.id,
     phoneNumber: contact.phoneNumber,
-    text: `Bom dia. ${digest.message}`,
+    text: formatMentorChannelMessage({
+      reply: digest.message,
+      mentorMode: digestMentorMode,
+      suggestedActions: mapPlanActionsToSuggestedActions(digest.actions),
+      intro: "Bom dia.",
+    }),
     detectedIntent: "upcoming_bills",
   });
   await createNotification({
@@ -1606,7 +1684,13 @@ async function runMonthStartForIntegration(
     contactId: contact.id,
     threadId: thread.id,
     phoneNumber: contact.phoneNumber,
-    text: `Inicio do mes: ${preview.reply}`,
+    text: formatMentorChannelMessage({
+      reply: preview.reply,
+      mentorMode: preview.mentorMode,
+      alerts: preview.alerts,
+      suggestedActions: previewActions,
+      intro: "Inicio do mes.",
+    }),
     detectedIntent: "monthly_plan_request",
     requiresConfirmation: true,
   });
@@ -1639,6 +1723,10 @@ async function runMonthEndForIntegration(
     integrationId: integration.id,
     timezone: integration.timezone,
   });
+  const closeMemory = await financialAdvisor.getFinancialAdvisorMemory(integration.userId, {
+    currentSnapshot: close.snapshot,
+  });
+  const closeMentorMode = financialAdvisor.getFinancialAdvisorMentorMode(closeMemory);
   const run = await whatsappDb.createAssistantRun({
     userId: integration.userId,
     integrationId: integration.id,
@@ -1657,7 +1745,12 @@ async function runMonthEndForIntegration(
     contactId: contact.id,
     threadId: thread.id,
     phoneNumber: contact.phoneNumber,
-    text: `Fechamento do mes: ${close.message}`,
+    text: formatMentorChannelMessage({
+      reply: close.message,
+      mentorMode: closeMentorMode,
+      suggestedActions: mapAdvisorRecommendationsToSuggestedActions(close.snapshot.topRecommendations),
+      intro: "Fechamento do mes.",
+    }),
     detectedIntent: "consolidated_analysis",
   });
   await createNotification({

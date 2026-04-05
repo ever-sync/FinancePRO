@@ -21,6 +21,7 @@ export type FinancialStatementSelectableTarget =
   | "revenues"
   | "company_variable_costs"
   | "personal_variable_costs"
+  | "debts"
   | "investments"
   | "reserve_company"
   | "reserve_personal";

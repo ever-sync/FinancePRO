@@ -406,6 +406,7 @@ async function ensureRevenueForPayment(input: {
   userId: number;
   clientId?: number | null;
   serviceId?: number | null;
+  revenueId?: number | null;
   payment: AsaasPaymentRecord;
   lastEvent?: string | null;
 }) {
@@ -429,6 +430,29 @@ async function ensureRevenueForPayment(input: {
       asaasSyncedAt: new Date(),
     });
     return existing.id;
+  }
+
+  if (input.revenueId != null) {
+    const linkedRevenue = await asaasDb.getRevenueById(input.userId, input.revenueId);
+    if (linkedRevenue) {
+      await asaasDb.updateRevenueAsaasState(input.userId, linkedRevenue.id, {
+        description: String(input.payment.description ?? linkedRevenue.description),
+        dueDate: String(input.payment.dueDate || linkedRevenue.dueDate),
+        status: localStatus,
+        receivedDate: localStatus === "recebido" ? receivedDate ?? linkedRevenue.receivedDate : null,
+        asaasPaymentId: String(input.payment.id),
+        asaasSubscriptionId: input.payment.subscription ? String(input.payment.subscription) : null,
+        asaasBillingType: input.payment.billingType ? String(input.payment.billingType) : null,
+        asaasInvoiceUrl: input.payment.invoiceUrl ? String(input.payment.invoiceUrl) : null,
+        asaasBankSlipUrl: input.payment.bankSlipUrl ? String(input.payment.bankSlipUrl) : null,
+        asaasLastEvent: input.lastEvent ? String(input.lastEvent) : null,
+        asaasExternalReference: input.payment.externalReference
+          ? String(input.payment.externalReference)
+          : null,
+        asaasSyncedAt: new Date(),
+      });
+      return linkedRevenue.id;
+    }
   }
 
   const userSettings = await asaasDb.getSettingsForRevenue(input.userId);
@@ -469,6 +493,7 @@ async function syncPaymentMirror(input: {
   accountId: number;
   clientId?: number | null;
   serviceId?: number | null;
+  revenueId?: number | null;
   payment: AsaasPaymentRecord;
   pix?: AsaasPixQrCodeRecord | null;
   lastEvent?: string | null;
@@ -675,6 +700,7 @@ export async function createAsaasCharge(
   userId: number,
   input: {
     clientId: number;
+    revenueId?: number;
     serviceId?: number;
     description?: string;
     value?: string;
@@ -713,6 +739,7 @@ export async function createAsaasCharge(
     accountId: account.id,
     clientId: localClient.id,
     serviceId: localService?.id ?? null,
+    revenueId: input.revenueId ?? null,
     payment,
     pix,
     lastEvent: "PAYMENT_CREATED",

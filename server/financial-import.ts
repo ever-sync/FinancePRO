@@ -42,6 +42,7 @@ export type FinancialImportRow = {
 
 export type FinancialImportResult = {
   imported: number;
+  updatedExisting: number;
   skippedDuplicates: number;
   totalAmount: string;
   target: FinancialImportTarget;
@@ -49,11 +50,17 @@ export type FinancialImportResult = {
   importedAt: string;
 };
 
+export type FinancialImportReconciliationInput = {
+  mode?: "create" | "update";
+  existingId?: number;
+};
+
 export type MixedFinancialImportItem = {
   target: FinancialImportTarget;
   reserveFundType?: FinancialImportReserveType | null;
   defaultCategory?: string | null;
   defaultStatus?: string | null;
+  reconciliation?: FinancialImportReconciliationInput | null;
   row: FinancialImportRow;
 };
 
@@ -267,10 +274,12 @@ export async function importFinancialRows(input: {
   defaultStatus?: string | null;
   sourceLabel?: string | null;
   reserveFundType?: FinancialImportReserveType | null;
+  reconciliation?: FinancialImportReconciliationInput | null;
 }): Promise<FinancialImportResult> {
   const categories = new Set<string>();
   let totalAmount = 0;
   let imported = 0;
+  let updatedExisting = 0;
   let skippedDuplicates = 0;
 
   for (let index = 0; index < input.rows.length; index += 1) {
@@ -292,6 +301,26 @@ export async function importFinancialRows(input: {
         "Receita importada";
       const status = normalizeRevenueStatus(row.status ?? input.defaultStatus);
       const amountValue = amount.toFixed(2);
+
+      if (input.reconciliation?.mode === "update" && Number.isFinite(Number(input.reconciliation.existingId))) {
+        await db.updateRevenue(Number(input.reconciliation.existingId), input.userId, {
+          description,
+          category,
+          grossAmount: amountValue,
+          taxAmount: "0.00",
+          netAmount: amountValue,
+          client: normalizeText(row.counterparty),
+          dueDate: date,
+          receivedDate: status === "recebido" ? date : null,
+          status,
+          notes,
+        });
+
+        updatedExisting += 1;
+        totalAmount += amount;
+        categories.add(category);
+        continue;
+      }
 
       if (
         await isDuplicateImport({
@@ -347,6 +376,34 @@ export async function importFinancialRows(input: {
       const status = normalizeCostStatus(row.status ?? input.defaultStatus);
       const amountValue = amount.toFixed(2);
       const installmentCount = Math.max(parseImportInteger(row.totalInstallments) ?? 1, 1);
+
+      if (input.reconciliation?.mode === "update" && Number.isFinite(Number(input.reconciliation.existingId))) {
+        if (input.target === "company_variable_costs") {
+          await db.updateCompanyVariableCost(Number(input.reconciliation.existingId), input.userId, {
+            description,
+            category,
+            amount: amountValue,
+            date,
+            supplier: normalizeText(row.counterparty),
+            status,
+            notes,
+          });
+        } else {
+          await db.updatePersonalVariableCost(Number(input.reconciliation.existingId), input.userId, {
+            description,
+            category,
+            amount: amountValue,
+            date,
+            status,
+            notes,
+          });
+        }
+
+        updatedExisting += 1;
+        totalAmount += amount;
+        categories.add(category);
+        continue;
+      }
 
       if (
         await isDuplicateImport({
@@ -407,6 +464,27 @@ export async function importFinancialRows(input: {
       const priority = normalizeDebtPriority(row.category);
       const balanceValue = currentBalance.toFixed(2);
 
+      if (input.reconciliation?.mode === "update" && Number.isFinite(Number(input.reconciliation.existingId))) {
+        await db.updateDebt(Number(input.reconciliation.existingId), input.userId, {
+          creditor,
+          description,
+          originalAmount: originalAmount.toFixed(2),
+          currentBalance: balanceValue,
+          monthlyPayment: monthlyPayment.toFixed(2),
+          interestRate: interestRate.toFixed(2),
+          totalInstallments,
+          paidInstallments,
+          dueDay: Math.min(Math.max(dueDay, 1), 31),
+          status,
+          priority,
+          notes,
+        });
+
+        updatedExisting += 1;
+        totalAmount += currentBalance;
+        continue;
+      }
+
       if (
         await isDuplicateImport({
           userId: input.userId,
@@ -456,6 +534,23 @@ export async function importFinancialRows(input: {
         suggestInvestmentType({ description, institution });
       const amountValue = depositAmount.toFixed(2);
 
+      if (input.reconciliation?.mode === "update" && Number.isFinite(Number(input.reconciliation.existingId))) {
+        await db.updateInvestment(Number(input.reconciliation.existingId), input.userId, {
+          description,
+          institution,
+          type: investmentType,
+          depositAmount: amountValue,
+          currentBalance: currentBalance.toFixed(2),
+          yieldAmount: yieldAmount.toFixed(2),
+          date,
+          notes,
+        });
+
+        updatedExisting += 1;
+        totalAmount += depositAmount;
+        continue;
+      }
+
       if (
         await isDuplicateImport({
           userId: input.userId,
@@ -499,6 +594,20 @@ export async function importFinancialRows(input: {
       });
     const amountValue = depositAmount.toFixed(2);
 
+    if (input.reconciliation?.mode === "update" && Number.isFinite(Number(input.reconciliation.existingId))) {
+      await db.updateReserveFund(Number(input.reconciliation.existingId), input.userId, {
+        type: reserveType,
+        depositAmount: amountValue,
+        date,
+        description,
+        notes,
+      });
+
+      updatedExisting += 1;
+      totalAmount += depositAmount;
+      continue;
+    }
+
     if (
       await isDuplicateImport({
         userId: input.userId,
@@ -528,6 +637,7 @@ export async function importFinancialRows(input: {
 
   return {
     imported,
+    updatedExisting,
     skippedDuplicates,
     totalAmount: totalAmount.toFixed(2),
     target: input.target,
@@ -542,6 +652,7 @@ export async function importMixedFinancialRows(input: {
   sourceLabel?: string | null;
 }) {
   let imported = 0;
+  let updatedExisting = 0;
   let skippedDuplicates = 0;
   let totalAmount = 0;
   const categories = new Set<string>();
@@ -555,11 +666,13 @@ export async function importMixedFinancialRows(input: {
       reserveFundType: item.reserveFundType,
       defaultCategory: item.defaultCategory,
       defaultStatus: item.defaultStatus,
+      reconciliation: item.reconciliation,
       sourceLabel: input.sourceLabel,
       rows: [item.row],
     });
 
     imported += result.imported;
+    updatedExisting += result.updatedExisting;
     skippedDuplicates += result.skippedDuplicates;
     totalAmount += Number(result.totalAmount);
     result.categories.forEach(category => {
@@ -570,6 +683,7 @@ export async function importMixedFinancialRows(input: {
 
   return {
     imported,
+    updatedExisting,
     skippedDuplicates,
     totalAmount: totalAmount.toFixed(2),
     targets: Array.from(touchedTargets),

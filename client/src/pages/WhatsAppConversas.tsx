@@ -159,6 +159,7 @@ function getHoursSince(value?: string | Date | null) {
 
 function getPlanActionLabel(actionType?: string | null) {
   if (actionType === "charge_follow_up") return "Executar cobranca";
+  if (actionType === "create_asaas_charge") return "Criar cobranca Asaas";
   if (actionType === "pay_priority_items") return "Regularizar prioridade";
   if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
     return "Executar aporte";
@@ -169,6 +170,7 @@ function getPlanActionLabel(actionType?: string | null) {
 function formatPlanActionType(actionType?: string | null) {
   const labels: Record<string, string> = {
     charge_follow_up: "cobranca Asaas",
+    create_asaas_charge: "nova cobranca Asaas",
     pay_priority_items: "prioridade financeira",
     transfer_company_reserve: "aporte na reserva da empresa",
     transfer_personal_reserve: "aporte na reserva pessoal",
@@ -256,6 +258,10 @@ function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
       baseScore = 90;
       urgency = "alta";
       impact = "alto";
+    } else if (item.actionType === "create_asaas_charge") {
+      baseScore = 84;
+      urgency = "alta";
+      impact = "alto";
     } else if (item.actionType === "pay_priority_items") {
       baseScore = 94;
       urgency = "alta";
@@ -332,6 +338,9 @@ function getAttackPlanReason(item: PrioritizedInboxItem, index: number) {
   if (item.kind === "plano") {
     if (item.actionType === "charge_follow_up") {
       return "Ativa a cobranca mais urgente do plano e reduz atraso de recebimento sem sair da inbox.";
+    }
+    if (item.actionType === "create_asaas_charge") {
+      return "Transforma uma receita pendente em cobranca real no Asaas para acelerar recebimento e previsibilidade.";
     }
     if (item.actionType === "pay_priority_items") {
       return "Regulariza o item financeiro mais pressionado do plano com execucao real no backend.";
@@ -414,6 +423,9 @@ function getOperationalActionLead(item: PrioritizedInboxItem) {
   if (item.kind === "plano") {
     if (item.actionType === "charge_follow_up") {
       return "O mentor ja encontrou a cobranca certa; falta so executar o follow-up.";
+    }
+    if (item.actionType === "create_asaas_charge") {
+      return "O mentor encontrou uma receita elegivel; falta so transformar isso em cobranca real no Asaas.";
     }
     if (item.actionType === "pay_priority_items") {
       return "Existe uma prioridade pronta para regularizacao no plano atual.";
