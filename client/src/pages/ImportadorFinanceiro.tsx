@@ -5,21 +5,29 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   Building2,
+  CreditCard,
   FileSpreadsheet,
+  Landmark,
   PiggyBank,
+  Save,
   TrendingUp,
+  Trash2,
   Upload,
   Wallet,
 } from "lucide-react";
 import {
   createEmptyFinancialImportMapping,
   detectImportDelimiter,
+  extractInstallmentInfo,
   type FinancialStatementScope,
+  type FinancialStatementSourceKind,
   type FinancialStatementSelectableTarget,
   getFinancialImportMappingFields,
   getFinancialImportTargetMeta,
   inferFinancialImportMapping,
+  inferStatementSourceKind,
   normalizeImportDate,
+  normalizeImportLookup,
   parseImportAmount,
   parseImportSource,
   parseImportInteger,
@@ -88,8 +96,26 @@ type StatementPreviewRow = {
   category?: string;
   investmentType?: string;
   reserveFundType?: FinancialImportReserveType;
+  installmentLabel?: string;
+  installmentNumber?: number;
+  installmentCount?: number;
+  originalDescription?: string;
   error?: string;
 };
+
+type StatementProfile = {
+  id: string;
+  name: string;
+  bankName: string;
+  sourceKind: FinancialStatementSourceKind;
+  scope: FinancialStatementScope;
+  delimiter: string;
+  mapping: FinancialImportMapping;
+  createdAt: string;
+  updatedAt: string;
+};
+
+const STATEMENT_PROFILE_STORAGE_KEY = "financepro.statementProfiles.v1";
 
 function getDelimiterLabel(delimiter: string) {
   if (delimiter === "\t") return "Tab";
@@ -195,6 +221,54 @@ function buildStatementImportSuccessMessage(params: {
   const base = `${params.imported} movimento(s) conciliados (${formatCurrency(params.totalAmount)}).`;
   if (!params.skippedDuplicates) return base;
   return `${base} ${params.skippedDuplicates} duplicada(s) foram ignoradas.`;
+}
+
+function getStatementSourceKindLabel(sourceKind: FinancialStatementSourceKind) {
+  return sourceKind === "credit_card" ? "Fatura de cartao" : "Extrato bancario";
+}
+
+function readStoredStatementProfiles() {
+  if (typeof window === "undefined") return [] as StatementProfile[];
+
+  try {
+    const raw = window.localStorage.getItem(STATEMENT_PROFILE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StatementProfile[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredStatementProfiles(profiles: StatementProfile[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STATEMENT_PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+}
+
+function createStatementProfileId() {
+  if (typeof window !== "undefined" && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `profile-${Date.now()}`;
+}
+
+function findMatchingStatementProfile(params: {
+  profiles: StatementProfile[];
+  fileName?: string;
+  sourceLabel?: string;
+  sourceKind: FinancialStatementSourceKind;
+}) {
+  const normalizedSource = normalizeImportLookup(`${params.fileName || ""} ${params.sourceLabel || ""}`);
+  if (!normalizedSource) return null;
+
+  return (
+    params.profiles.find(profile => {
+      if (profile.sourceKind !== params.sourceKind) return false;
+      const bankName = normalizeImportLookup(profile.bankName);
+      const name = normalizeImportLookup(profile.name);
+      return Boolean(bankName && normalizedSource.includes(bankName)) || Boolean(name && normalizedSource.includes(name));
+    }) || null
+  );
 }
 
 function buildPreviewRows(params: {
@@ -510,14 +584,17 @@ function buildStatementPreviewRows(params: {
   records: Array<Record<string, string>>;
   mapping: FinancialImportMapping;
   scope: FinancialStatementScope;
+  sourceKind: FinancialStatementSourceKind;
 }): StatementPreviewRow[] {
   return params.records.map((record, index) => {
     const rawDate = params.mapping.date ? record[params.mapping.date] || "" : "";
     const date = normalizeImportDate(rawDate);
-    const description =
+    const rawDescription =
       (params.mapping.description ? record[params.mapping.description] || "" : "").trim() ||
       (params.mapping.counterparty ? record[params.mapping.counterparty] || "" : "").trim() ||
       `Movimentacao ${index + 1}`;
+    const installmentInfo = extractInstallmentInfo(rawDescription);
+    const description = installmentInfo?.cleanedDescription || rawDescription;
     const counterparty = (params.mapping.counterparty ? record[params.mapping.counterparty] || "" : "").trim();
     const rawAmount = params.mapping.amount ? record[params.mapping.amount] || "" : "";
     const rawCredit = params.mapping.credit ? record[params.mapping.credit] || "" : "";
@@ -584,12 +661,14 @@ function buildStatementPreviewRows(params: {
       counterparty,
       amount: signedAmount,
       scope: params.scope,
+      sourceKind: params.sourceKind,
     });
 
     return {
       id: index,
       date,
       description,
+      originalDescription: rawDescription,
       counterparty,
       signedAmount,
       absoluteAmount: Math.abs(signedAmount).toFixed(2),
@@ -601,6 +680,9 @@ function buildStatementPreviewRows(params: {
       category: suggestion.category,
       investmentType: suggestion.investmentType,
       reserveFundType: suggestion.reserveFundType,
+      installmentLabel: installmentInfo?.label,
+      installmentNumber: installmentInfo?.installmentNumber,
+      installmentCount: installmentInfo?.installmentCount,
     };
   });
 }
@@ -612,6 +694,7 @@ export default function ImportadorFinanceiro() {
   const [target, setTarget] = useState<FinancialImportTarget>("company_variable_costs");
   const [reserveFundType, setReserveFundType] = useState<FinancialImportReserveType>("empresa");
   const [statementScope, setStatementScope] = useState<FinancialStatementScope>("misto");
+  const [statementSourceKind, setStatementSourceKind] = useState<FinancialStatementSourceKind>("bank_account");
   const [rawCsv, setRawCsv] = useState("");
   const [delimiter, setDelimiter] = useState(";");
   const [sourceFormat, setSourceFormat] = useState<"csv" | "ofx">("csv");
@@ -630,6 +713,9 @@ export default function ImportadorFinanceiro() {
   const [statementTargetOverrides, setStatementTargetOverrides] = useState<
     Record<number, FinancialStatementSelectableTarget>
   >({});
+  const [statementProfiles, setStatementProfiles] = useState<StatementProfile[]>([]);
+  const [profileName, setProfileName] = useState("");
+  const [profileBankName, setProfileBankName] = useState("");
 
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
@@ -637,6 +723,7 @@ export default function ImportadorFinanceiro() {
   const guidedSource = params.get("source");
   const guidedMode = params.get("mode");
   const guidedScope = params.get("scope");
+  const guidedSourceKind = params.get("sourceKind");
   const guidedMeta = resolveFinancialImportPreset(guidedPreset);
   const currentTabValue: FinancialImportPreset =
     target === "reserve_funds"
@@ -647,16 +734,31 @@ export default function ImportadorFinanceiro() {
 
   const meta = getFinancialImportTargetMeta(target, reserveFundType);
   const Icon = getImportTargetIcon(target);
+  const StatementSourceIcon =
+    statementSourceKind === "credit_card" ? CreditCard : Landmark;
   const parsedSource = rawCsv.trim()
     ? parseImportSource(rawCsv, delimiter)
     : { format: "csv" as const, data: { headers: [], records: [] } };
   const parsedCsv = parsedSource.data;
   const detectedSourceFormat = sourceFormat === "ofx" ? "ofx" : parsedSource.format;
+  const matchedStatementProfile = findMatchingStatementProfile({
+    profiles: statementProfiles,
+    fileName,
+    sourceLabel,
+    sourceKind: statementSourceKind,
+  });
+  const visibleStatementProfiles = statementProfiles.filter(
+    profile => profile.sourceKind === statementSourceKind
+  );
   const mappingFields = getFinancialImportMappingFields(target);
 
   useEffect(() => {
     setImportMode(guidedMode === "statement" ? "statement_reconciliation" : "preset_import");
   }, [guidedMode]);
+
+  useEffect(() => {
+    setStatementProfiles(readStoredStatementProfiles());
+  }, []);
 
   useEffect(() => {
     if (
@@ -667,6 +769,12 @@ export default function ImportadorFinanceiro() {
       setStatementScope(guidedScope);
     }
   }, [guidedScope]);
+
+  useEffect(() => {
+    if (guidedSourceKind === "credit_card" || guidedSourceKind === "bank_account") {
+      setStatementSourceKind(guidedSourceKind);
+    }
+  }, [guidedSourceKind]);
 
   useEffect(() => {
     if (!guidedPreset) return;
@@ -729,6 +837,7 @@ export default function ImportadorFinanceiro() {
     records: parsedCsv.records,
     mapping: statementMapping,
     scope: statementScope,
+    sourceKind: statementSourceKind,
   });
   const statementRows = baseStatementRows.map(row => ({
     ...row,
@@ -828,10 +937,13 @@ export default function ImportadorFinanceiro() {
     setImportMode(mode);
     if (typeof window === "undefined") return;
     const next = new URL(window.location.href);
-    if (mode === "statement_reconciliation") next.searchParams.set("mode", "statement");
-    else next.searchParams.delete("mode");
+    if (mode === "statement_reconciliation") {
+      next.searchParams.set("mode", "statement");
+      next.searchParams.set("sourceKind", statementSourceKind);
+    } else next.searchParams.delete("mode");
     if (mode !== "statement_reconciliation") {
       next.searchParams.delete("scope");
+      next.searchParams.delete("sourceKind");
     }
     window.history.replaceState({}, "", `${next.pathname}${next.search}`);
   };
@@ -843,8 +955,92 @@ export default function ImportadorFinanceiro() {
     const next = new URL(window.location.href);
     next.searchParams.set("mode", "statement");
     next.searchParams.set("scope", scope);
+    next.searchParams.set("sourceKind", statementSourceKind);
     if (guidedSource) next.searchParams.set("source", guidedSource);
     window.history.replaceState({}, "", `${next.pathname}${next.search}`);
+  };
+
+  const updateStatementSourceKind = (sourceKind: FinancialStatementSourceKind) => {
+    setStatementSourceKind(sourceKind);
+    setStatementTargetOverrides({});
+    if (typeof window === "undefined") return;
+    const next = new URL(window.location.href);
+    next.searchParams.set("mode", "statement");
+    next.searchParams.set("scope", statementScope);
+    next.searchParams.set("sourceKind", sourceKind);
+    if (guidedSource) next.searchParams.set("source", guidedSource);
+    window.history.replaceState({}, "", `${next.pathname}${next.search}`);
+  };
+
+  const applyStatementProfile = (profile: StatementProfile) => {
+    setStatementSourceKind(profile.sourceKind);
+    setStatementScope(profile.scope);
+    setDelimiter(profile.delimiter || ";");
+    setStatementMapping(profile.mapping);
+    setStatementTargetOverrides({});
+    setProfileName(profile.name);
+    setProfileBankName(profile.bankName);
+
+    if (typeof window !== "undefined") {
+      const next = new URL(window.location.href);
+      next.searchParams.set("mode", "statement");
+      next.searchParams.set("scope", profile.scope);
+      next.searchParams.set("sourceKind", profile.sourceKind);
+      if (guidedSource) next.searchParams.set("source", guidedSource);
+      window.history.replaceState({}, "", `${next.pathname}${next.search}`);
+    }
+
+    toast.success(`Regras aplicadas: ${profile.name}.`);
+  };
+
+  const saveCurrentStatementProfile = () => {
+    const name = profileName.trim();
+    const bankName = profileBankName.trim();
+
+    if (!name || !bankName) {
+      toast.error("Preencha nome do perfil e banco/cartao antes de salvar.");
+      return;
+    }
+
+    if (!parsedCsv.headers.length) {
+      toast.error("Carregue um extrato antes de salvar as regras.");
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const existingProfile = statementProfiles.find(profile =>
+      normalizeImportLookup(profile.name) === normalizeImportLookup(name) &&
+      normalizeImportLookup(profile.bankName) === normalizeImportLookup(bankName) &&
+      profile.sourceKind === statementSourceKind
+    );
+
+    const nextProfile: StatementProfile = {
+      id: existingProfile?.id || createStatementProfileId(),
+      name,
+      bankName,
+      sourceKind: statementSourceKind,
+      scope: statementScope,
+      delimiter,
+      mapping: statementMapping,
+      createdAt: existingProfile?.createdAt || timestamp,
+      updatedAt: timestamp,
+    };
+
+    const nextProfiles = [
+      nextProfile,
+      ...statementProfiles.filter(profile => profile.id !== nextProfile.id),
+    ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+    setStatementProfiles(nextProfiles);
+    writeStoredStatementProfiles(nextProfiles);
+    toast.success(`Perfil salvo para ${bankName}.`);
+  };
+
+  const deleteStatementProfile = (profileId: string) => {
+    const nextProfiles = statementProfiles.filter(profile => profile.id !== profileId);
+    setStatementProfiles(nextProfiles);
+    writeStoredStatementProfiles(nextProfiles);
+    toast.success("Perfil removido.");
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -865,8 +1061,18 @@ export default function ImportadorFinanceiro() {
       setSourceFormat("csv");
     }
 
+    const nextLabel = file.name.replace(/\.[^.]+$/, "");
     setFileName(file.name);
-    setSourceLabel(file.name.replace(/\.[^.]+$/, ""));
+    setSourceLabel(nextLabel);
+    setProfileBankName(current => (current.trim().length ? current : nextLabel));
+    setProfileName(current =>
+      current.trim().length ? current : `${getStatementSourceKindLabel(inferStatementSourceKind({ fileName: file.name }))} ${nextLabel}`
+    );
+
+    if (importMode === "statement_reconciliation") {
+      const inferredSourceKind = inferStatementSourceKind({ fileName: file.name });
+      updateStatementSourceKind(inferredSourceKind);
+    }
   };
 
   const handleImport = () => {
@@ -909,8 +1115,18 @@ export default function ImportadorFinanceiro() {
       return;
     }
 
+    const baseNote =
+      statementSourceKind === "credit_card"
+        ? "Conciliado da fatura do cartao"
+        : "Conciliado do extrato bancario";
+    const buildStatementNotes = (row: StatementPreviewRow) =>
+      row.installmentLabel ? `${baseNote} | Parcela ${row.installmentLabel}` : baseNote;
+
     importMixedMut.mutate({
-      sourceLabel: sourceLabel.trim() || fileName.trim() || "Extrato conciliado",
+      sourceLabel:
+        sourceLabel.trim() ||
+        fileName.trim() ||
+        (statementSourceKind === "credit_card" ? "Fatura conciliada" : "Extrato conciliado"),
       items: statementReadyRows.map(row => {
         if (row.selectedTarget === "revenues") {
           return {
@@ -928,7 +1144,7 @@ export default function ImportadorFinanceiro() {
                 }),
               counterparty: row.counterparty,
               status: "recebido",
-              notes: "Conciliado do extrato bancario",
+              notes: buildStatementNotes(row),
             },
           };
         }
@@ -946,10 +1162,14 @@ export default function ImportadorFinanceiro() {
                   target: "company_variable_costs",
                   description: row.description,
                   counterparty: row.counterparty,
-                }),
+              }),
               counterparty: row.counterparty,
               status: "pago",
-              notes: "Conciliado do extrato bancario",
+              totalInstallments:
+                row.installmentNumber === 1 && row.installmentCount && row.installmentCount > 1
+                  ? row.installmentCount
+                  : undefined,
+              notes: buildStatementNotes(row),
             },
           };
         }
@@ -967,10 +1187,14 @@ export default function ImportadorFinanceiro() {
                   target: "personal_variable_costs",
                   description: row.description,
                   counterparty: row.counterparty,
-                }),
+              }),
               counterparty: row.counterparty,
               status: "pago",
-              notes: "Conciliado do extrato bancario",
+              totalInstallments:
+                row.installmentNumber === 1 && row.installmentCount && row.installmentCount > 1
+                  ? row.installmentCount
+                  : undefined,
+              notes: buildStatementNotes(row),
             },
           };
         }
@@ -994,7 +1218,7 @@ export default function ImportadorFinanceiro() {
                 row.balance && Number(row.balance) > Number(row.absoluteAmount)
                   ? (Number(row.balance) - Number(row.absoluteAmount)).toFixed(2)
                   : "0.00",
-              notes: "Conciliado do extrato bancario",
+              notes: buildStatementNotes(row),
             },
           };
         }
@@ -1010,7 +1234,7 @@ export default function ImportadorFinanceiro() {
             description: row.description,
             amount: row.absoluteAmount,
             reserveType: reserveFundType,
-            notes: "Conciliado do extrato bancario",
+            notes: buildStatementNotes(row),
           },
         };
       }),
@@ -1433,14 +1657,31 @@ export default function ImportadorFinanceiro() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Conciliador bancario</CardTitle>
+              <CardTitle>Conciliador de extrato</CardTitle>
               <CardDescription>
-                Suba um extrato CSV ou OFX uma vez e revise a sugestao de destino de cada linha antes de importar.
+                Suba um extrato bancario ou uma fatura CSV/OFX e revise a sugestao de destino de cada linha antes de importar.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
               <div className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>Tipo da fonte</Label>
+                    <Select
+                      value={statementSourceKind}
+                      onValueChange={value =>
+                        updateStatementSourceKind(value as FinancialStatementSourceKind)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bank_account">Extrato bancario</SelectItem>
+                        <SelectItem value="credit_card">Fatura de cartao</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-1.5">
                     <Label>Escopo da conta</Label>
                     <Select value={statementScope} onValueChange={value => updateStatementScope(value as FinancialStatementScope)}>
@@ -1459,7 +1700,11 @@ export default function ImportadorFinanceiro() {
                     <Input
                       value={sourceLabel}
                       onChange={event => setSourceLabel(event.target.value)}
-                      placeholder="Ex.: Extrato Itau abril"
+                      placeholder={
+                        statementSourceKind === "credit_card"
+                          ? "Ex.: Fatura Nubank abril"
+                          : "Ex.: Extrato Itau abril"
+                      }
                     />
                   </div>
                 </div>
@@ -1470,7 +1715,9 @@ export default function ImportadorFinanceiro() {
                     className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium"
                   >
                     <Upload className="size-4" />
-                    Escolher extrato CSV ou OFX
+                    {statementSourceKind === "credit_card"
+                      ? "Escolher fatura CSV ou OFX"
+                      : "Escolher extrato CSV ou OFX"}
                   </Label>
                   <Input
                     id="statement-csv-file"
@@ -1494,7 +1741,9 @@ export default function ImportadorFinanceiro() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Conteudo do extrato</Label>
+                  <Label>
+                    {statementSourceKind === "credit_card" ? "Conteudo da fatura" : "Conteudo do extrato"}
+                  </Label>
                   <Textarea
                     value={rawCsv}
                     onChange={event => {
@@ -1511,6 +1760,99 @@ export default function ImportadorFinanceiro() {
               </div>
 
               <div className="space-y-4">
+                <div className="rounded-2xl border bg-zinc-50 px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+                        <StatementSourceIcon className="size-4" />
+                        Regras salvas por banco ou cartao
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-600">
+                        Salve o mapeamento atual para reaplicar em um clique na proxima importacao.
+                      </p>
+                    </div>
+                    <div className="rounded-full border bg-white px-3 py-1 text-xs font-medium text-zinc-700">
+                      {getStatementSourceKindLabel(statementSourceKind)}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3">
+                    <Input
+                      value={profileName}
+                      onChange={event => setProfileName(event.target.value)}
+                      placeholder="Nome do perfil"
+                    />
+                    <Input
+                      value={profileBankName}
+                      onChange={event => setProfileBankName(event.target.value)}
+                      placeholder="Banco ou cartao"
+                    />
+                    <Button type="button" variant="outline" onClick={saveCurrentStatementProfile}>
+                      <Save className="mr-2 size-4" />
+                      Salvar regras atuais
+                    </Button>
+                  </div>
+
+                  {matchedStatementProfile ? (
+                    <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                      <p className="text-sm font-medium text-emerald-950">Perfil sugerido</p>
+                      <p className="mt-1 text-sm text-emerald-900/80">
+                        {matchedStatementProfile.name} • {matchedStatementProfile.bankName}
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => applyStatementProfile(matchedStatementProfile)}
+                      >
+                        Aplicar perfil sugerido
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 space-y-2">
+                    {visibleStatementProfiles.length === 0 ? (
+                      <div className="rounded-2xl border bg-white px-4 py-3 text-sm text-zinc-500">
+                        Nenhum perfil salvo para este tipo de fonte ainda.
+                      </div>
+                    ) : (
+                      visibleStatementProfiles
+                        .slice(0, 4)
+                        .map(profile => (
+                          <div
+                            key={profile.id}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-white px-4 py-3"
+                          >
+                            <div>
+                              <p className="text-sm font-medium text-zinc-900">{profile.name}</p>
+                              <p className="text-xs text-zinc-500">
+                                {profile.bankName} • {profile.scope}
+                              </p>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => applyStatementProfile(profile)}
+                              >
+                                Aplicar
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => deleteStatementProfile(profile.id)}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+
                 <div className="rounded-2xl border bg-zinc-50 px-4 py-4">
                   <p className="text-sm font-medium text-zinc-900">Resumo da conciliacao</p>
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1536,7 +1878,7 @@ export default function ImportadorFinanceiro() {
                 <div className="rounded-2xl border bg-zinc-50 px-4 py-4 text-sm text-zinc-600">
                   <p className="font-medium text-zinc-900">Leitura automatica</p>
                   <p className="mt-2">
-                    O conciliador sugere destino com base no sinal do valor, contexto da conta e palavras-chave da descricao.
+                    O conciliador sugere destino com base no sinal do valor, tipo da fonte, contexto da conta e palavras-chave da descricao.
                   </p>
                 </div>
 
@@ -1650,8 +1992,18 @@ export default function ImportadorFinanceiro() {
                         <TableCell>{row.date}</TableCell>
                         <TableCell>
                           <div className="font-medium">{row.description}</div>
+                          {row.installmentLabel ? (
+                            <div className="text-xs text-amber-700">
+                              Parcela {row.installmentLabel}
+                            </div>
+                          ) : null}
                           {row.counterparty ? (
                             <div className="text-xs text-muted-foreground">{row.counterparty}</div>
+                          ) : null}
+                          {row.originalDescription && row.originalDescription !== row.description ? (
+                            <div className="text-xs text-muted-foreground">
+                              Original: {row.originalDescription}
+                            </div>
                           ) : null}
                           {row.balance ? (
                             <div className="text-xs text-muted-foreground">
@@ -1703,7 +2055,13 @@ export default function ImportadorFinanceiro() {
                           </div>
                         </TableCell>
                         <TableCell className={row.error ? "text-destructive" : "text-muted-foreground"}>
-                          {row.error || "Pronto para importar"}
+                          {row.error
+                            ? row.error
+                            : row.installmentNumber === 1 &&
+                                row.installmentCount &&
+                                row.installmentCount > 1
+                              ? `Pronto para importar e abrir ${row.installmentCount} parcelas`
+                              : "Pronto para importar"}
                         </TableCell>
                       </TableRow>
                     ))

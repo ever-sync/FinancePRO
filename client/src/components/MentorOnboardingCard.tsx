@@ -239,8 +239,10 @@ export function MentorOnboardingCard() {
     setLocation(`/importador?preset=${preset}&source=mentor-onboarding`);
   };
 
-  const openStatementFlow = () => {
-    setLocation(`/importador?mode=statement&scope=${statementScope}&source=mentor-onboarding`);
+  const openStatementFlow = (sourceKind: "bank_account" | "credit_card" = "bank_account") => {
+    setLocation(
+      `/importador?mode=statement&scope=${statementScope}&sourceKind=${sourceKind}&source=mentor-onboarding`
+    );
   };
 
   return (
@@ -601,8 +603,11 @@ export function MentorOnboardingCard() {
                 <Button variant="outline" onClick={() => setLocation("/importador")}>
                   Abrir importador completo
                 </Button>
-                <Button variant="outline" onClick={openStatementFlow}>
+                <Button variant="outline" onClick={() => openStatementFlow()}>
                   Conciliar extrato bancario
+                </Button>
+                <Button variant="outline" onClick={() => openStatementFlow("credit_card")}>
+                  Conciliar fatura do cartao
                 </Button>
                 <Button variant="outline" onClick={() => setLocation("/calendario")}>
                   {isCalendarReady ? "Revisar calendario" : "Completar calendario"}

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   detectImportDelimiter,
+  extractInstallmentInfo,
   inferFinancialImportMapping,
+  inferStatementSourceKind,
   parseImportCsv,
   parseImportSource,
   parseSignedImportAmount,
@@ -119,6 +121,52 @@ describe("financial import helpers", () => {
       })
     ).toMatchObject({
       suggestedTarget: "revenues",
+    });
+  });
+
+  it("detects card statement source and installment info", () => {
+    expect(
+      inferStatementSourceKind({
+        fileName: "fatura-nubank-abril.csv",
+      })
+    ).toBe("credit_card");
+
+    expect(
+      inferStatementSourceKind({
+        fileName: "extrato-itau-abril.csv",
+      })
+    ).toBe("bank_account");
+
+    expect(extractInstallmentInfo("Mercado do bairro parcela 03/10")).toMatchObject({
+      installmentNumber: 3,
+      installmentCount: 10,
+      label: "3/10",
+      cleanedDescription: "Mercado do bairro",
+    });
+  });
+
+  it("biases card statement classification toward reviewable expenses", () => {
+    expect(
+      suggestFinancialStatementDestination({
+        amount: -345.9,
+        scope: "pessoal",
+        sourceKind: "credit_card",
+        description: "Mercado do bairro 03/10",
+      })
+    ).toMatchObject({
+      suggestedTarget: "personal_variable_costs",
+    });
+
+    expect(
+      suggestFinancialStatementDestination({
+        amount: 1200,
+        scope: "pessoal",
+        sourceKind: "credit_card",
+        description: "Pagamento recebido fatura",
+      })
+    ).toMatchObject({
+      suggestedTarget: "skip",
+      confidence: "alta",
     });
   });
 

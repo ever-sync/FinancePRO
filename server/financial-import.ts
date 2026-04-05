@@ -346,6 +346,7 @@ export async function importFinancialRows(input: {
           : "Gasto importado");
       const status = normalizeCostStatus(row.status ?? input.defaultStatus);
       const amountValue = amount.toFixed(2);
+      const installmentCount = Math.max(parseImportInteger(row.totalInstallments) ?? 1, 1);
 
       if (
         await isDuplicateImport({
@@ -367,6 +368,7 @@ export async function importFinancialRows(input: {
           category,
           amount: amountValue,
           date,
+          installmentCount,
           supplier: normalizeText(row.counterparty) ?? undefined,
           status,
           notes,
@@ -378,6 +380,7 @@ export async function importFinancialRows(input: {
           category,
           amount: amountValue,
           date,
+          installmentCount,
           status,
           notes,
         });

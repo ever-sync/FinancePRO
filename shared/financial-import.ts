@@ -14,6 +14,7 @@ export type FinancialImportPreset =
   | "reserve_personal";
 
 export type FinancialStatementScope = "empresa" | "pessoal" | "misto";
+export type FinancialStatementSourceKind = "bank_account" | "credit_card";
 
 export type FinancialStatementSelectableTarget =
   | "skip"
@@ -31,6 +32,13 @@ export type FinancialStatementSuggestion = {
   category?: string;
   investmentType?: string;
   reserveFundType?: FinancialImportReserveType;
+};
+
+export type FinancialInstallmentInfo = {
+  installmentNumber: number;
+  installmentCount: number;
+  label: string;
+  cleanedDescription: string;
 };
 
 export type FinancialImportColumnKey =
@@ -112,6 +120,26 @@ export function normalizeImportLookup(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+export function inferStatementSourceKind(params: {
+  fileName?: string | null;
+  sourceLabel?: string | null;
+  description?: string | null;
+}): FinancialStatementSourceKind {
+  const normalized = normalizeImportLookup(
+    `${params.fileName || ""} ${params.sourceLabel || ""} ${params.description || ""}`
+  );
+
+  if (
+    /(fatura|cartao|card|visa|mastercard|elo|amex|hipercard|itaucard|nubank ultravioleta|compra aprovada|parcela)/.test(
+      normalized
+    )
+  ) {
+    return "credit_card";
+  }
+
+  return "bank_account";
 }
 
 export function detectImportDelimiter(text: string) {
@@ -364,6 +392,43 @@ export function parseImportInteger(value?: string | number | null) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export function extractInstallmentInfo(description?: string | null): FinancialInstallmentInfo | null {
+  const raw = String(description ?? "").trim();
+  if (!raw) return null;
+
+  const match =
+    raw.match(/\b(?:parc(?:ela)?\s*)?(\d{1,2})\s*\/\s*(\d{1,2})\b/i) ||
+    raw.match(/\b(\d{1,2})\s+de\s+(\d{1,2})\b/i);
+
+  if (!match) return null;
+
+  const installmentNumber = Number.parseInt(match[1] || "", 10);
+  const installmentCount = Number.parseInt(match[2] || "", 10);
+
+  if (
+    !Number.isFinite(installmentNumber) ||
+    !Number.isFinite(installmentCount) ||
+    installmentNumber < 1 ||
+    installmentCount < 2 ||
+    installmentNumber > installmentCount
+  ) {
+    return null;
+  }
+
+  const cleanedDescription = raw
+    .replace(match[0], " ")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s*[-|]\s*$/, "")
+    .trim();
+
+  return {
+    installmentNumber,
+    installmentCount,
+    label: `${installmentNumber}/${installmentCount}`,
+    cleanedDescription: cleanedDescription || raw,
+  };
+}
+
 export function suggestFinancialImportCategory(params: {
   target: FinancialImportTarget;
   description?: string | null;
@@ -442,10 +507,12 @@ export function suggestFinancialStatementDestination(params: {
   counterparty?: string | null;
   amount: number;
   scope: FinancialStatementScope;
+  sourceKind?: FinancialStatementSourceKind;
 }): FinancialStatementSuggestion {
   const normalized = normalizeImportLookup(
     `${params.description || ""} ${params.counterparty || ""}`
   );
+  const sourceKind = params.sourceKind ?? "bank_account";
   const isPositive = params.amount > 0;
   const isNegative = params.amount < 0;
   const hasInvestment = /(tesouro|cdb|rdb|lci|lca|fii|bitcoin|btc|eth|ethereum|corretora|nuinvest|xp\s|rico|clear|previdencia|previdência)/.test(
@@ -458,6 +525,12 @@ export function suggestFinancialStatementDestination(params: {
     normalized
   );
   const hasPersonal = /(mercado|supermercado|ifood|restaurante|padaria|farmacia|farmácia|uber|99|netflix|spotify|cinema|escola|curso|academia|aluguel|condominio|condomínio|lazer|saude|saúde|consulta)/.test(
+    normalized
+  );
+  const hasRefund = /(estorno|reembolso|cashback|chargeback|reversal|credito de confianca|crédito de confiança)/.test(
+    normalized
+  );
+  const hasCardPayment = /(pagamento recebido|pagto recebido|pagamento fatura|pagto fatura|saldo anterior|ajuste de limite|credito rotativo|crédito rotativo)/.test(
     normalized
   );
 
@@ -491,6 +564,50 @@ export function suggestFinancialStatementDestination(params: {
       reason: "Movimentação com sinal de aporte ou ajuste de reserva.",
       reserveFundType,
     };
+  }
+
+  if (sourceKind === "credit_card") {
+    if (isPositive) {
+      return {
+        suggestedTarget: "skip",
+        confidence: hasRefund || hasCardPayment ? "alta" : "media",
+        reason: hasRefund
+          ? "Credito de fatura, estorno ou cashback. Melhor revisar antes de importar para nao virar receita por engano."
+          : "Entradas em fatura costumam ser pagamento, ajuste ou credito da operadora. Vale revisar antes de importar.",
+      };
+    }
+
+    if (isNegative) {
+      if (params.scope === "empresa") {
+        return {
+          suggestedTarget: "company_variable_costs",
+          confidence: hasCompany ? "alta" : "media",
+          reason: hasCompany
+            ? "Lancamento de cartao com sinais de custo empresarial."
+            : "Lancamento de fatura em contexto da empresa.",
+          category: suggestFinancialImportCategory({
+            target: "company_variable_costs",
+            description: params.description,
+            counterparty: params.counterparty,
+          }),
+        };
+      }
+
+      if (params.scope === "pessoal") {
+        return {
+          suggestedTarget: "personal_variable_costs",
+          confidence: hasPersonal ? "alta" : "media",
+          reason: hasPersonal
+            ? "Lancamento de cartao com sinais de gasto pessoal."
+            : "Lancamento de fatura em contexto pessoal.",
+          category: suggestFinancialImportCategory({
+            target: "personal_variable_costs",
+            description: params.description,
+            counterparty: params.counterparty,
+          }),
+        };
+      }
+    }
   }
 
   if (isPositive) {
