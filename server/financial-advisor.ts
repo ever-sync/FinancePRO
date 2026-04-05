@@ -1,5 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { invokeLLM, type Message } from "./_core/llm";
+import {
+  detectFinancialAssistantIntent,
+  extractDecisionAmount,
+  extractInstallmentCount,
+  type FinancialAssistantIntent,
+} from "./_core/financialAssistantIntent";
 import * as db from "./db";
 import * as asaasDb from "./db/asaas";
 import * as advisorDb from "./db/financial-advisor";
@@ -102,6 +108,48 @@ export type FinancialPlanSummary = {
   actions: Awaited<ReturnType<typeof whatsappDb.replaceFinancialPlanActions>>;
   snapshot: FinancialGovernanceSnapshot;
   messageToUser: string;
+};
+
+export type FinancialDecisionKind =
+  | "withdrawal"
+  | "personal_spend"
+  | "monthly_cost"
+  | "hiring"
+  | "installment_purchase"
+  | "recurring_withdrawal";
+
+export type FinancialDecisionMetric = {
+  label: string;
+  value: number;
+  format: "currency" | "percent" | "number";
+};
+
+export type FinancialDecisionAssessment = {
+  kind: FinancialDecisionKind;
+  tone: FinancialGovernanceSnapshot["cashRiskLevel"];
+  amount: number;
+  summary: string;
+  note: string;
+  consumptionPercent: number;
+  metrics: FinancialDecisionMetric[];
+  metadata?: AnyRecord;
+};
+
+export type FinancialDecisionScenarioSet = {
+  headrooms: {
+    company: number;
+    personal: number;
+    personalUsable: number;
+    total: number;
+  };
+  scenarios: {
+    withdrawal: FinancialDecisionAssessment;
+    personalSpend: FinancialDecisionAssessment;
+    monthlyCost: FinancialDecisionAssessment;
+    hiring: FinancialDecisionAssessment;
+    installmentPurchase: FinancialDecisionAssessment;
+    recurringWithdrawal: FinancialDecisionAssessment;
+  };
 };
 
 type FinancialAdvisorContext = {
@@ -277,6 +325,337 @@ function buildTopRecommendations(args: {
   }
 
   return recommendations.slice(0, 6);
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(clampCurrency(value), 100));
+}
+
+function escalateDecisionTone(
+  tone: FinancialGovernanceSnapshot["cashRiskLevel"],
+  globalRisk: FinancialGovernanceSnapshot["cashRiskLevel"]
+): FinancialGovernanceSnapshot["cashRiskLevel"] {
+  if (globalRisk === "critical") return "critical";
+  if (globalRisk === "attention" && tone === "healthy") return "attention";
+  return tone;
+}
+
+function getDecisionSummary(
+  tone: FinancialGovernanceSnapshot["cashRiskLevel"],
+  kind: FinancialDecisionKind,
+  amount: number,
+  metadata?: AnyRecord
+) {
+  const amountLabel = `R$ ${clampCurrency(amount).toFixed(2)}`;
+
+  if (kind === "withdrawal") {
+    if (tone === "healthy") return `Retirar ${amountLabel} parece viavel hoje sem estourar a folga operacional da empresa.`;
+    if (tone === "attention") return `Retirar ${amountLabel} e possivel, mas ja pressiona a folga da empresa e pede mais disciplina no mes.`;
+    return `Retirar ${amountLabel} agora aumenta demais o risco e tende a apertar o caixa operacional.`;
+  }
+
+  if (kind === "personal_spend") {
+    if (tone === "healthy") return `Esse gasto extra de ${amountLabel} cabe no plano atual sem desorganizar o mes.`;
+    if (tone === "attention") return `Esse gasto extra de ${amountLabel} consome boa parte da folga pessoal e merece cautela.`;
+    return `Esse gasto extra de ${amountLabel} tende a furar a folga do mes e reduzir sua seguranca financeira.`;
+  }
+
+  if (kind === "monthly_cost") {
+    if (tone === "healthy") return `Assumir ${amountLabel}/mes como novo custo parece suportavel no cenario atual.`;
+    if (tone === "attention") return `Adicionar ${amountLabel}/mes ja encurta bastante a folga de caixa e pede validacao extra.`;
+    return `Adicionar ${amountLabel}/mes agora deixa o plano muito apertado e aumenta o risco do caixa.`;
+  }
+
+  if (kind === "hiring") {
+    if (tone === "healthy") return `Contratar com um impacto mensal de ${amountLabel} parece viavel sem apertar demais o caixa da empresa.`;
+    if (tone === "attention") return `Essa contratacao de ${amountLabel}/mes e possivel, mas ja encurta a folga e pede acompanhamento proximo.`;
+    return `Essa contratacao de ${amountLabel}/mes aumenta demais a pressao sobre o caixa para o momento atual.`;
+  }
+
+  if (kind === "installment_purchase") {
+    const months = Number(metadata?.installments ?? 0);
+    const total = clampCurrency(Number(metadata?.totalAmount ?? amount));
+    const parcelLabel = `R$ ${clampCurrency(amount).toFixed(2)}`;
+    const totalLabel = `R$ ${total.toFixed(2)}`;
+    if (tone === "healthy") {
+      return `Comprar ${totalLabel} em ${months}x de ${parcelLabel} parece caber no fluxo atual sem desorganizar o mes.`;
+    }
+    if (tone === "attention") {
+      return `Parcelar ${totalLabel} em ${months}x de ${parcelLabel} e possivel, mas ja consome uma parte sensivel da folga.`;
+    }
+    return `Parcelar ${totalLabel} em ${months}x de ${parcelLabel} aperta demais o fluxo para o momento atual.`;
+  }
+
+  if (tone === "healthy") return `Tirar ${amountLabel}/mes da empresa de forma recorrente parece suportavel no cenario atual.`;
+  if (tone === "attention") return `Tirar ${amountLabel}/mes da empresa de forma recorrente exige mais disciplina para nao encurtar demais a folga.`;
+  return `Tirar ${amountLabel}/mes da empresa de forma recorrente agora aumenta demais o risco do caixa.`;
+}
+
+function buildDecisionAssessment(args: {
+  snapshot: FinancialGovernanceSnapshot;
+  kind: FinancialDecisionKind;
+  amount: number;
+  headroom: number;
+  healthyLimit: number;
+  attentionLimit: number;
+  note: string;
+  metrics: FinancialDecisionMetric[];
+  metadata?: AnyRecord;
+}) {
+  const amount = clampCurrency(Math.max(args.amount, 0));
+  const consumptionPercent =
+    args.headroom > 0 ? clampPercent((amount / args.headroom) * 100) : amount > 0 ? 100 : 0;
+
+  let tone: FinancialGovernanceSnapshot["cashRiskLevel"] =
+    amount <= 0
+      ? "healthy"
+      : args.headroom <= 0
+        ? "critical"
+        : consumptionPercent <= args.healthyLimit
+          ? "healthy"
+          : consumptionPercent <= args.attentionLimit
+            ? "attention"
+            : "critical";
+
+  tone = escalateDecisionTone(tone, args.snapshot.cashRiskLevel);
+
+  return {
+    kind: args.kind,
+    tone,
+    amount,
+    summary: getDecisionSummary(tone, args.kind, amount, args.metadata),
+    note: args.note,
+    consumptionPercent,
+    metrics: args.metrics,
+    metadata: args.metadata,
+  } satisfies FinancialDecisionAssessment;
+}
+
+export function evaluateFinancialDecisionScenariosFromSnapshot(
+  snapshot: FinancialGovernanceSnapshot,
+  input?: {
+    withdrawalAmount?: number;
+    personalSpendAmount?: number;
+    monthlyCostAmount?: number;
+    hiringCostAmount?: number;
+    installmentPurchaseAmount?: number;
+    installmentPurchaseMonths?: number;
+    recurringWithdrawalAmount?: number;
+  }
+): FinancialDecisionScenarioSet {
+  const withdrawalAmount = clampCurrency(Math.max(input?.withdrawalAmount ?? 0, 0));
+  const personalSpendAmount = clampCurrency(Math.max(input?.personalSpendAmount ?? 0, 0));
+  const monthlyCostAmount = clampCurrency(Math.max(input?.monthlyCostAmount ?? 0, 0));
+  const hiringCostAmount = clampCurrency(Math.max(input?.hiringCostAmount ?? 0, 0));
+  const installmentPurchaseAmount = clampCurrency(Math.max(input?.installmentPurchaseAmount ?? 0, 0));
+  const installmentPurchaseMonths = Math.max(Math.round(input?.installmentPurchaseMonths ?? 12), 1);
+  const recurringWithdrawalAmount = clampCurrency(Math.max(input?.recurringWithdrawalAmount ?? 0, 0));
+
+  const companyHeadroom = clampCurrency(
+    Math.max(
+      snapshot.guardrails.company.projectedCash - snapshot.guardrails.company.reserveRecommendation,
+      0
+    )
+  );
+  const personalHeadroom = clampCurrency(
+    Math.max(
+      snapshot.guardrails.personal.projectedCash - snapshot.guardrails.personal.reserveRecommendation,
+      0
+    )
+  );
+  const totalHeadroom = clampCurrency(Math.max(snapshot.safeToSpendMonth, 0));
+  const personalUsable = clampCurrency(
+    Math.min(personalHeadroom > 0 ? personalHeadroom : totalHeadroom, totalHeadroom)
+  );
+  const installmentMonthlyAmount = clampCurrency(
+    installmentPurchaseMonths > 0 ? installmentPurchaseAmount / installmentPurchaseMonths : installmentPurchaseAmount
+  );
+  const employeeCostBase = snapshot.guardrails.company.employeeCosts;
+  const companyNetRevenue = Math.max(snapshot.guardrails.company.netRevenue, 0);
+
+  const withdrawal = buildDecisionAssessment({
+    snapshot,
+    kind: "withdrawal",
+    amount: withdrawalAmount,
+    headroom: companyHeadroom,
+    healthyLimit: 50,
+    attentionLimit: 100,
+    note: "A leitura usa a folga operacional estimada da empresa neste mes, depois da recomendacao de reserva.",
+    metrics: [
+      { label: "Folga operacional atual", value: companyHeadroom, format: "currency" },
+      {
+        label: "Folga apos retirada",
+        value: clampCurrency(Math.max(companyHeadroom - withdrawalAmount, 0)),
+        format: "currency",
+      },
+      {
+        label: "Caixa projetado empresa",
+        value: clampCurrency(snapshot.guardrails.company.projectedCash - withdrawalAmount),
+        format: "currency",
+      },
+      {
+        label: "Caixa minimo de referencia",
+        value: snapshot.guardrails.company.minCashTarget,
+        format: "currency",
+      },
+    ],
+  });
+
+  const personalSpend = buildDecisionAssessment({
+    snapshot,
+    kind: "personal_spend",
+    amount: personalSpendAmount,
+    headroom: personalUsable,
+    healthyLimit: 50,
+    attentionLimit: 100,
+    note: "A simulacao cruza sua folga pessoal com o limite seguro total do mes para nao te enganar pelo saldo bruto.",
+    metrics: [
+      { label: "Folga pessoal atual", value: personalHeadroom, format: "currency" },
+      { label: "Limite seguro do mes", value: totalHeadroom, format: "currency" },
+      {
+        label: "Folga pessoal apos gasto",
+        value: clampCurrency(Math.max(personalHeadroom - personalSpendAmount, 0)),
+        format: "currency",
+      },
+      {
+        label: "Caixa pessoal projetado",
+        value: clampCurrency(snapshot.guardrails.personal.projectedCash - personalSpendAmount),
+        format: "currency",
+      },
+    ],
+  });
+
+  const monthlyCost = buildDecisionAssessment({
+    snapshot,
+    kind: "monthly_cost",
+    amount: monthlyCostAmount,
+    headroom: companyHeadroom,
+    healthyLimit: 35,
+    attentionLimit: 70,
+    note: "Essa leitura trata o valor como um novo compromisso mensal recorrente, como aluguel, ferramenta ou assinatura fixa.",
+    metrics: [
+      {
+        label: "Caixa projetado apos custo",
+        value: clampCurrency(snapshot.guardrails.company.projectedCash - monthlyCostAmount),
+        format: "currency",
+      },
+      {
+        label: "Limite seguro apos custo",
+        value: clampCurrency(Math.max(snapshot.safeToSpendMonth - monthlyCostAmount, 0)),
+        format: "currency",
+      },
+      { label: "Folga operacional atual", value: companyHeadroom, format: "currency" },
+      {
+        label: "Reforco de reserva previsto",
+        value: snapshot.guardrails.company.reserveRecommendation,
+        format: "currency",
+      },
+    ],
+  });
+
+  const hiring = buildDecisionAssessment({
+    snapshot,
+    kind: "hiring",
+    amount: hiringCostAmount,
+    headroom: companyHeadroom,
+    healthyLimit: 30,
+    attentionLimit: 60,
+    note: "Essa leitura trata a contratacao como um compromisso mensal continuo e pesa mais a disciplina do caixa operacional.",
+    metrics: [
+      { label: "Custo mensal da contratacao", value: hiringCostAmount, format: "currency" },
+      {
+        label: "Folga apos contratacao",
+        value: clampCurrency(Math.max(companyHeadroom - hiringCostAmount, 0)),
+        format: "currency",
+      },
+      {
+        label: "Folha total estimada",
+        value: clampCurrency(employeeCostBase + hiringCostAmount),
+        format: "currency",
+      },
+      {
+        label: "Peso da folha na receita liquida",
+        value:
+          companyNetRevenue > 0
+            ? clampPercent(((employeeCostBase + hiringCostAmount) / companyNetRevenue) * 100)
+            : 100,
+        format: "percent",
+      },
+    ],
+  });
+
+  const installmentPurchase = buildDecisionAssessment({
+    snapshot,
+    kind: "installment_purchase",
+    amount: installmentMonthlyAmount,
+    headroom: companyHeadroom,
+    healthyLimit: 25,
+    attentionLimit: 60,
+    note: "A compra parcelada entra na analise pelo peso da parcela mensal, nao pelo valor cheio, para refletir o impacto real do fluxo.",
+    metrics: [
+      { label: "Valor total da compra", value: installmentPurchaseAmount, format: "currency" },
+      { label: "Parcela mensal", value: installmentMonthlyAmount, format: "currency" },
+      { label: "Quantidade de parcelas", value: installmentPurchaseMonths, format: "number" },
+      {
+        label: "Folga apos parcela",
+        value: clampCurrency(Math.max(companyHeadroom - installmentMonthlyAmount, 0)),
+        format: "currency",
+      },
+    ],
+    metadata: {
+      totalAmount: installmentPurchaseAmount,
+      installments: installmentPurchaseMonths,
+    },
+  });
+
+  const recurringWithdrawal = buildDecisionAssessment({
+    snapshot,
+    kind: "recurring_withdrawal",
+    amount: recurringWithdrawalAmount,
+    headroom: companyHeadroom,
+    healthyLimit: 35,
+    attentionLimit: 70,
+    note: "A retirada recorrente pesa como um novo compromisso fixo entre empresa e vida pessoal, entao a leitura e mais conservadora do que uma retirada pontual.",
+    metrics: [
+      {
+        label: "Folga apos retirada recorrente",
+        value: clampCurrency(Math.max(companyHeadroom - recurringWithdrawalAmount, 0)),
+        format: "currency",
+      },
+      {
+        label: "Caixa projetado empresa",
+        value: clampCurrency(snapshot.guardrails.company.projectedCash - recurringWithdrawalAmount),
+        format: "currency",
+      },
+      {
+        label: "Caixa pessoal projetado",
+        value: clampCurrency(snapshot.guardrails.personal.projectedCash + recurringWithdrawalAmount),
+        format: "currency",
+      },
+      {
+        label: "Limite seguro apos retirada",
+        value: clampCurrency(Math.max(snapshot.safeToSpendMonth - recurringWithdrawalAmount, 0)),
+        format: "currency",
+      },
+    ],
+  });
+
+  return {
+    headrooms: {
+      company: companyHeadroom,
+      personal: personalHeadroom,
+      personalUsable,
+      total: totalHeadroom,
+    },
+    scenarios: {
+      withdrawal,
+      personalSpend,
+      monthlyCost,
+      hiring,
+      installmentPurchase,
+      recurringWithdrawal,
+    },
+  };
 }
 
 export async function buildFinancialAdvisorContext(
@@ -664,6 +1043,35 @@ export async function getFinancialAdvisorSnapshot(
   return finalized;
 }
 
+export async function evaluateFinancialDecisionScenarios(params: {
+  userId: number;
+  withdrawalAmount?: number;
+  personalSpendAmount?: number;
+  monthlyCostAmount?: number;
+  hiringCostAmount?: number;
+  installmentPurchaseAmount?: number;
+  installmentPurchaseMonths?: number;
+  recurringWithdrawalAmount?: number;
+  timezone?: string;
+  referenceDate?: Date;
+}) {
+  const snapshot = await getFinancialAdvisorSnapshot(params.userId, {
+    timezone: params.timezone,
+    referenceDate: params.referenceDate,
+    persist: false,
+  });
+
+  return evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
+    withdrawalAmount: params.withdrawalAmount,
+    personalSpendAmount: params.personalSpendAmount,
+    monthlyCostAmount: params.monthlyCostAmount,
+    hiringCostAmount: params.hiringCostAmount,
+    installmentPurchaseAmount: params.installmentPurchaseAmount,
+    installmentPurchaseMonths: params.installmentPurchaseMonths,
+    recurringWithdrawalAmount: params.recurringWithdrawalAmount,
+  });
+}
+
 function buildPlanActions(snapshot: FinancialGovernanceSnapshot) {
   const actions = snapshot.topRecommendations.map(recommendation => ({
     actionType: recommendation.kind,
@@ -875,23 +1283,46 @@ export async function snoozeFinancialAdvisorAlert(userId: number, eventId: numbe
   return { success: true, snoozedUntil };
 }
 
+export async function refreshFinancialAdvisorState(params: {
+  userId: number;
+  integrationId?: number | null;
+  timezone?: string;
+  referenceDate?: Date;
+}) {
+  const snapshot = await getFinancialAdvisorSnapshot(params.userId, {
+    integrationId: params.integrationId,
+    timezone: params.timezone,
+    referenceDate: params.referenceDate,
+  });
+  const dailyDigest = await getFinancialAdvisorDailyDigest({
+    userId: params.userId,
+    integrationId: params.integrationId,
+    timezone: params.timezone,
+    referenceDate: params.referenceDate,
+  });
+  const monthClose = await getFinancialAdvisorMonthClose({
+    userId: params.userId,
+    integrationId: params.integrationId,
+    timezone: params.timezone,
+    referenceDate: params.referenceDate,
+  });
+
+  return {
+    success: true,
+    snapshot,
+    dailyDigest,
+    monthClose,
+  };
+}
+
 export async function buildFinancialAdvisorAssistantReply(params: {
-  intent:
-    | "monthly_plan_request"
-    | "cash_advice"
-    | "company_summary"
-    | "personal_summary"
-    | "upcoming_bills"
-    | "overdue_items"
-    | "consolidated_analysis"
-    | "spending_limit"
-    | "reserve_transfer"
-    | "payment_priority"
-    | "financial_health"
-    | "generic_chat";
+  intent: FinancialAssistantIntent;
   userId: number;
   timezone?: string;
   referenceDate?: Date;
+  decisionAmount?: number | null;
+  decisionInstallments?: number | null;
+  messageText?: string;
 }) {
   const snapshot = await getFinancialAdvisorSnapshot(params.userId, {
     timezone: params.timezone,
@@ -921,6 +1352,113 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       alerts: snapshot.counts.overdueItems
         ? ["Existem vencidos pressionando o orçamento antes de qualquer gasto novo."]
         : [],
+      suggestedActions: snapshot.topRecommendations,
+      requiresConfirmation: false,
+    };
+  }
+
+  if (
+    params.intent === "company_withdrawal_decision" ||
+    params.intent === "recurring_withdrawal_decision" ||
+    params.intent === "personal_spend_decision" ||
+    params.intent === "monthly_cost_decision" ||
+    params.intent === "hiring_decision" ||
+    params.intent === "installment_purchase_decision"
+  ) {
+    const amount = clampCurrency(Math.max(params.decisionAmount ?? 0, 0));
+    const installments = Math.max(Math.round(params.decisionInstallments ?? 0), 0);
+    if (amount <= 0) {
+      const prompt =
+        params.intent === "company_withdrawal_decision"
+          ? "Posso avaliar isso, mas me diga o valor exato da retirada. Exemplo: 'Posso tirar R$ 3.000 da empresa hoje?'"
+          : params.intent === "recurring_withdrawal_decision"
+            ? "Me diga o valor mensal dessa retirada recorrente para eu medir o impacto no caixa. Exemplo: 'Posso tirar R$ 5.000 todo mes da empresa?'"
+          : params.intent === "personal_spend_decision"
+            ? "Me diga o valor exato do gasto para eu medir o impacto no seu mês. Exemplo: 'Posso gastar R$ 1.200 no pessoal este mês?'"
+            : params.intent === "monthly_cost_decision"
+              ? "Me diga o valor mensal desse novo custo para eu avaliar o impacto. Exemplo: 'Posso assumir um custo mensal de R$ 2.500?'"
+              : params.intent === "hiring_decision"
+                ? "Me diga o custo mensal dessa contratacao para eu avaliar o impacto. Exemplo: 'Posso contratar alguem por R$ 4.000 por mes?'"
+                : "Me diga o valor total da compra parcelada. Exemplo: 'Posso comprar um notebook de R$ 12.000 em 12x?'";
+
+      return {
+        snapshot,
+        reply: prompt,
+        summary: snapshot.summary,
+        alerts: snapshot.counts.overdueItems
+          ? ["Existem vencidos pressionando o caixa antes de assumir novas saídas."]
+          : [],
+        suggestedActions: snapshot.topRecommendations,
+        requiresConfirmation: false,
+      };
+    }
+
+    if (params.intent === "installment_purchase_decision" && installments <= 0) {
+      return {
+        snapshot,
+        reply:
+          "Consigo avaliar essa compra parcelada, mas preciso da quantidade de parcelas. Exemplo: 'Posso comprar um notebook de R$ 12.000 em 12x?'",
+        summary: snapshot.summary,
+        alerts: snapshot.counts.overdueItems
+          ? ["Existem vencidos pressionando o caixa antes de assumir novas saídas."]
+          : [],
+        suggestedActions: snapshot.topRecommendations,
+        requiresConfirmation: false,
+      };
+    }
+
+    const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
+      withdrawalAmount: params.intent === "company_withdrawal_decision" ? amount : 0,
+      recurringWithdrawalAmount: params.intent === "recurring_withdrawal_decision" ? amount : 0,
+      personalSpendAmount: params.intent === "personal_spend_decision" ? amount : 0,
+      monthlyCostAmount: params.intent === "monthly_cost_decision" ? amount : 0,
+      hiringCostAmount: params.intent === "hiring_decision" ? amount : 0,
+      installmentPurchaseAmount: params.intent === "installment_purchase_decision" ? amount : 0,
+      installmentPurchaseMonths: params.intent === "installment_purchase_decision" ? installments : 0,
+    });
+    const assessment =
+      params.intent === "company_withdrawal_decision"
+        ? scenarios.scenarios.withdrawal
+        : params.intent === "recurring_withdrawal_decision"
+          ? scenarios.scenarios.recurringWithdrawal
+        : params.intent === "personal_spend_decision"
+          ? scenarios.scenarios.personalSpend
+          : params.intent === "monthly_cost_decision"
+            ? scenarios.scenarios.monthlyCost
+            : params.intent === "hiring_decision"
+              ? scenarios.scenarios.hiring
+              : scenarios.scenarios.installmentPurchase;
+    const metricMap = Object.fromEntries(
+      assessment.metrics.map(metric => [metric.label, metric.value])
+    ) as Record<string, number>;
+
+    const reply =
+      params.intent === "company_withdrawal_decision"
+        ? `${assessment.summary} Depois disso, a folga operacional estimada ficaria em R$ ${(metricMap["Folga apos retirada"] ?? 0).toFixed(2)} e o caixa projetado da empresa em R$ ${(metricMap["Caixa projetado empresa"] ?? 0).toFixed(2)}.`
+        : params.intent === "recurring_withdrawal_decision"
+          ? `${assessment.summary} Com essa retirada fixa, a folga operacional cairia para R$ ${(metricMap["Folga apos retirada recorrente"] ?? 0).toFixed(2)}, o caixa projetado da empresa ficaria em R$ ${(metricMap["Caixa projetado empresa"] ?? 0).toFixed(2)} e o pessoal iria para R$ ${(metricMap["Caixa pessoal projetado"] ?? 0).toFixed(2)}.`
+        : params.intent === "personal_spend_decision"
+          ? `${assessment.summary} Depois desse gasto, sua folga pessoal estimada ficaria em R$ ${(metricMap["Folga pessoal apos gasto"] ?? 0).toFixed(2)} e o caixa pessoal projetado em R$ ${(metricMap["Caixa pessoal projetado"] ?? 0).toFixed(2)}.`
+          : params.intent === "monthly_cost_decision"
+            ? `${assessment.summary} Depois disso, o caixa projetado da empresa iria para R$ ${(metricMap["Caixa projetado apos custo"] ?? 0).toFixed(2)} e o limite seguro do mês cairia para R$ ${(metricMap["Limite seguro apos custo"] ?? 0).toFixed(2)}.`
+            : params.intent === "hiring_decision"
+              ? `${assessment.summary} Depois da contratacao, a folga operacional cairia para R$ ${(metricMap["Folga apos contratacao"] ?? 0).toFixed(2)} e a folha total estimada iria para R$ ${(metricMap["Folha total estimada"] ?? 0).toFixed(2)}.`
+              : `${assessment.summary} Nesse parcelamento, a parcela mensal ficaria em R$ ${(metricMap["Parcela mensal"] ?? 0).toFixed(2)} por ${Math.round(metricMap["Quantidade de parcelas"] ?? installments)} mes(es), deixando a folga em R$ ${(metricMap["Folga apos parcela"] ?? 0).toFixed(2)}.`;
+
+    const alerts = [
+      assessment.tone !== "healthy"
+        ? `Essa decisão consome ${assessment.consumptionPercent.toFixed(1)}% da folga usada nesta análise.`
+        : null,
+      snapshot.counts.overdueItems > 0
+        ? "Existem vencidos pressionando o caixa antes de assumir novas saídas."
+        : null,
+    ].filter(Boolean) as string[];
+
+    return {
+      snapshot,
+      reply,
+      summary: assessment.summary,
+      alerts,
       suggestedActions: snapshot.topRecommendations,
       requiresConfirmation: false,
     };
@@ -982,5 +1520,32 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     alerts: [],
     suggestedActions: snapshot.topRecommendations,
     requiresConfirmation: false,
+  };
+}
+
+export async function askFinancialAdvisorQuestion(params: {
+  userId: number;
+  message: string;
+  timezone?: string;
+  referenceDate?: Date;
+}) {
+  const detectedIntent = detectFinancialAssistantIntent(params.message);
+  const decisionAmount = extractDecisionAmount(params.message);
+  const decisionInstallments = extractInstallmentCount(params.message);
+  const reply = await buildFinancialAdvisorAssistantReply({
+    intent: detectedIntent,
+    userId: params.userId,
+    timezone: params.timezone,
+    referenceDate: params.referenceDate,
+    decisionAmount,
+    decisionInstallments,
+    messageText: params.message,
+  });
+
+  return {
+    ...reply,
+    detectedIntent,
+    decisionAmount,
+    decisionInstallments,
   };
 }

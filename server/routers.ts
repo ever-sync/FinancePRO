@@ -735,14 +735,32 @@ export const appRouter = router({
       ),
     syncStatus: protectedProcedure.query(({ ctx }) => whatsapp.getWhatsAppSyncStatus(ctx.user.id)),
     sendTestMessage: protectedProcedure.mutation(({ ctx }) => whatsapp.sendWhatsAppTestMessage(ctx.user.id)),
+    sendAdvisorPreview: protectedProcedure
+      .input(
+        z.object({
+          message: z.string().min(1),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        whatsapp.sendFinancialAdvisorPreviewMessage(ctx.user.id, input.message)
+      ),
   }),
 
   assistantInbox: router({
     list: protectedProcedure.query(({ ctx }) => whatsapp.listAssistantInbox(ctx.user.id)),
+    confirmRun: protectedProcedure
+      .input(z.object({ runId: z.number() }))
+      .mutation(({ ctx, input }) => whatsapp.confirmAssistantRunFromApp(ctx.user.id, input.runId)),
+    snoozeRun: protectedProcedure
+      .input(z.object({ runId: z.number() }))
+      .mutation(({ ctx, input }) => whatsapp.snoozeAssistantRunFromApp(ctx.user.id, input.runId)),
   }),
 
   assistantAutomation: router({
     list: protectedProcedure.query(({ ctx }) => whatsapp.listNotificationEvents(ctx.user.id)),
+    dismissEvent: protectedProcedure
+      .input(z.object({ eventId: z.number() }))
+      .mutation(({ ctx, input }) => whatsapp.dismissNotificationEvent(ctx.user.id, input.eventId)),
   }),
 
   assistantPlans: router({
@@ -764,6 +782,39 @@ export const appRouter = router({
     getSnapshot: protectedProcedure.query(({ ctx }) =>
       financialAdvisor.getFinancialAdvisorSnapshot(ctx.user.id)
     ),
+    ask: protectedProcedure
+      .input(
+        z.object({
+          message: z.string().min(1),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        whatsapp.askFinancialAdvisorFromDashboard(ctx.user.id, input.message)
+      ),
+    evaluateDecisionScenarios: protectedProcedure
+      .input(
+        z.object({
+          withdrawalAmount: z.number().min(0).optional(),
+          personalSpendAmount: z.number().min(0).optional(),
+          monthlyCostAmount: z.number().min(0).optional(),
+          hiringCostAmount: z.number().min(0).optional(),
+          installmentPurchaseAmount: z.number().min(0).optional(),
+          installmentPurchaseMonths: z.number().min(1).max(60).optional(),
+          recurringWithdrawalAmount: z.number().min(0).optional(),
+        })
+      )
+      .query(({ ctx, input }) =>
+        financialAdvisor.evaluateFinancialDecisionScenarios({
+          userId: ctx.user.id,
+          withdrawalAmount: input.withdrawalAmount,
+          personalSpendAmount: input.personalSpendAmount,
+          monthlyCostAmount: input.monthlyCostAmount,
+          hiringCostAmount: input.hiringCostAmount,
+          installmentPurchaseAmount: input.installmentPurchaseAmount,
+          installmentPurchaseMonths: input.installmentPurchaseMonths,
+          recurringWithdrawalAmount: input.recurringWithdrawalAmount,
+        })
+      ),
     generateMonthlyPlan: protectedProcedure.mutation(({ ctx }) =>
       financialAdvisor.generateFinancialAdvisorMonthlyPlan({
         userId: ctx.user.id,
@@ -775,6 +826,9 @@ export const appRouter = router({
     ),
     getMonthClose: protectedProcedure.query(({ ctx }) =>
       financialAdvisor.getFinancialAdvisorMonthClose({ userId: ctx.user.id })
+    ),
+    refreshState: protectedProcedure.mutation(({ ctx }) =>
+      financialAdvisor.refreshFinancialAdvisorState({ userId: ctx.user.id })
     ),
     confirmAction: protectedProcedure
       .input(z.object({ actionId: z.number() }))

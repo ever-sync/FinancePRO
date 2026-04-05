@@ -131,9 +131,9 @@ const useSidebarSections = () => {
         label: "WhatsApp IA",
         items: [
           { icon: MessageCircle, label: "Integracao", path: "/whatsapp/integracao" },
-          { icon: MessageCircle, label: "Conversas", path: "/whatsapp/conversas" },
+          { icon: MessageCircle, label: "Inbox do mentor", path: "/whatsapp/conversas" },
           { icon: Repeat, label: "Automacao", path: "/whatsapp/automacao" },
-          { icon: Sparkles, label: "Planos mensais", path: "/whatsapp/planos" },
+          { icon: Sparkles, label: "Mentoria financeira", path: "/whatsapp/planos" },
           { icon: FileText, label: "Auditoria", path: "/whatsapp/auditoria" },
         ],
       },
