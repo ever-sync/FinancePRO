@@ -205,9 +205,22 @@ export function MentorOnboardingCard() {
   const dataFoundationStep = steps.data_foundation;
   const whatsappStep = steps.whatsapp_channel;
   const monthlyPlanStep = steps.monthly_plan;
+  const dataChecklist = dataFoundationStep?.checklist ?? [];
+  const isCompanyRevenueReady = dataChecklist.find(item => item.id === "company_revenue")?.completed ?? false;
+  const isCompanyCostsReady = dataChecklist.find(item => item.id === "company_costs")?.completed ?? false;
+  const isPersonalCommitmentsReady =
+    dataChecklist.find(item => item.id === "personal_commitments")?.completed ?? false;
+  const isReserveReady = dataChecklist.find(item => item.id === "reserves")?.completed ?? false;
+  const isCalendarReady = dataChecklist.find(item => item.id === "calendar")?.completed ?? false;
   const canSaveWhatsApp = Boolean(
     whatsappForm.instanceId && whatsappForm.apiBaseUrl && whatsappForm.authorizedPhone
   );
+  const statementScope =
+    !isCompanyRevenueReady || !isCompanyCostsReady
+      ? ("empresa" as const)
+      : !isPersonalCommitmentsReady || !isReserveReady
+        ? ("pessoal" as const)
+        : ("misto" as const);
   const recommendedStep = onboarding?.recommendedStepKey
     ? steps[onboarding.recommendedStepKey]
     : undefined;
@@ -221,6 +234,14 @@ export function MentorOnboardingCard() {
       </Card>
     );
   }
+
+  const openImportPreset = (preset: string) => {
+    setLocation(`/importador?preset=${preset}&source=mentor-onboarding`);
+  };
+
+  const openStatementFlow = () => {
+    setLocation(`/importador?mode=statement&scope=${statementScope}&source=mentor-onboarding`);
+  };
 
   return (
     <Card>
@@ -526,19 +547,67 @@ export function MentorOnboardingCard() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <Button variant="outline" onClick={() => setLocation("/receitas")}>
-                Abrir receitas
-              </Button>
-              <Button variant="outline" onClick={() => setLocation("/custos-fixos")}>
-                Abrir custos
-              </Button>
-              <Button variant="outline" onClick={() => setLocation("/pessoal")}>
-                Abrir painel pessoal
-              </Button>
-              <Button variant="outline" onClick={() => setLocation("/fundo-reserva")}>
-                Abrir reserva
-              </Button>
+            <div className="mt-4 rounded-2xl border bg-zinc-50/70 p-4">
+              <p className="text-sm font-medium text-zinc-900">Fluxo guiado de importacao</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Se sua base vier de banco, cartao ou planilha, abra o preset certo e suba tudo em lote.
+              </p>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {!isCompanyRevenueReady ? (
+                  <Button variant="outline" onClick={() => openImportPreset("revenues")}>
+                    Importar receitas do mes
+                  </Button>
+                ) : null}
+                {!isCompanyCostsReady ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => openImportPreset("company_variable_costs")}
+                  >
+                    Importar custos da empresa
+                  </Button>
+                ) : null}
+                {!isPersonalCommitmentsReady ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => openImportPreset("personal_variable_costs")}
+                    >
+                      Importar gastos pessoais
+                    </Button>
+                    <Button variant="outline" onClick={() => openImportPreset("debts")}>
+                      Importar dividas
+                    </Button>
+                  </>
+                ) : null}
+                {!isReserveReady ? (
+                  <>
+                    <Button variant="outline" onClick={() => openImportPreset("investments")}>
+                      Importar investimentos
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => openImportPreset("reserve_company")}
+                    >
+                      Importar reserva da empresa
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => openImportPreset("reserve_personal")}
+                    >
+                      Importar reserva pessoal
+                    </Button>
+                  </>
+                ) : null}
+                <Button variant="outline" onClick={() => setLocation("/importador")}>
+                  Abrir importador completo
+                </Button>
+                <Button variant="outline" onClick={openStatementFlow}>
+                  Conciliar extrato bancario
+                </Button>
+                <Button variant="outline" onClick={() => setLocation("/calendario")}>
+                  {isCalendarReady ? "Revisar calendario" : "Completar calendario"}
+                </Button>
+              </div>
             </div>
 
             <div className="mt-4">

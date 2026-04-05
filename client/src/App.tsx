@@ -21,6 +21,7 @@ const ContasVariaveis = lazy(() => import("./pages/ContasVariaveis"));
 const Dividas = lazy(() => import("./pages/Dividas"));
 const Investimentos = lazy(() => import("./pages/Investimentos"));
 const FundoReserva = lazy(() => import("./pages/FundoReserva"));
+const ImportadorFinanceiro = lazy(() => import("./pages/ImportadorFinanceiro"));
 const DRE = lazy(() => import("./pages/DRE"));
 const Calendario = lazy(() => import("./pages/Calendario"));
 const Configuracoes = lazy(() => import("./pages/Configuracoes"));
@@ -67,6 +68,7 @@ function Router() {
           <Route path="/dividas" component={Dividas} />
           <Route path="/investimentos" component={Investimentos} />
           <Route path="/fundo-reserva" component={FundoReserva} />
+          <Route path="/importador" component={ImportadorFinanceiro} />
           <Route path="/dre" component={DRE} />
           <Route path="/calendario" component={Calendario} />
           <Route path="/configuracoes" component={Configuracoes} />

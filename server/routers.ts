@@ -6,6 +6,7 @@ import * as db from "./db";
 import * as asaas from "./asaas";
 import * as whatsapp from "./whatsapp";
 import * as financialAdvisor from "./financial-advisor";
+import * as financialImport from "./financial-import";
 import { COOKIE_NAME } from "../shared/const";
 
 function getRequestOrigin(headers: Record<string, unknown>) {
@@ -44,6 +45,105 @@ export const appRouter = router({
         companyName: z.string().optional(),
       }))
       .mutation(({ ctx, input }) => db.upsertSettings({ userId: ctx.user.id, ...input })),
+  }),
+
+  financialImports: router({
+    importCsv: protectedProcedure
+      .input(
+        z.object({
+          target: z.enum([
+            "revenues",
+            "company_variable_costs",
+            "personal_variable_costs",
+            "debts",
+            "investments",
+            "reserve_funds",
+          ]),
+          reserveFundType: z.enum(["empresa", "pessoal"]).optional(),
+          defaultCategory: z.string().optional(),
+          defaultStatus: z.string().optional(),
+          sourceLabel: z.string().optional(),
+          rows: z
+            .array(
+              z.object({
+                date: z.string().optional(),
+                description: z.string().optional(),
+                amount: z.union([z.string(), z.number()]).optional(),
+                category: z.string().optional(),
+                counterparty: z.string().optional(),
+                status: z.string().optional(),
+                notes: z.string().optional(),
+                balance: z.union([z.string(), z.number()]).optional(),
+                monthlyPayment: z.union([z.string(), z.number()]).optional(),
+                interestRate: z.union([z.string(), z.number()]).optional(),
+                totalInstallments: z.union([z.string(), z.number()]).optional(),
+                paidInstallments: z.union([z.string(), z.number()]).optional(),
+                dueDay: z.union([z.string(), z.number()]).optional(),
+                institution: z.string().optional(),
+                investmentType: z.string().optional(),
+                yieldAmount: z.union([z.string(), z.number()]).optional(),
+                reserveType: z.string().optional(),
+              })
+            )
+            .min(1)
+            .max(1000),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        financialImport.importFinancialRows({
+          userId: ctx.user.id,
+          ...input,
+        })
+      ),
+    importMixed: protectedProcedure
+      .input(
+        z.object({
+          sourceLabel: z.string().optional(),
+          items: z
+            .array(
+              z.object({
+                target: z.enum([
+                  "revenues",
+                  "company_variable_costs",
+                  "personal_variable_costs",
+                  "debts",
+                  "investments",
+                  "reserve_funds",
+                ]),
+                reserveFundType: z.enum(["empresa", "pessoal"]).optional(),
+                defaultCategory: z.string().optional(),
+                defaultStatus: z.string().optional(),
+                row: z.object({
+                  date: z.string().optional(),
+                  description: z.string().optional(),
+                  amount: z.union([z.string(), z.number()]).optional(),
+                  category: z.string().optional(),
+                  counterparty: z.string().optional(),
+                  status: z.string().optional(),
+                  notes: z.string().optional(),
+                  balance: z.union([z.string(), z.number()]).optional(),
+                  monthlyPayment: z.union([z.string(), z.number()]).optional(),
+                  interestRate: z.union([z.string(), z.number()]).optional(),
+                  totalInstallments: z.union([z.string(), z.number()]).optional(),
+                  paidInstallments: z.union([z.string(), z.number()]).optional(),
+                  dueDay: z.union([z.string(), z.number()]).optional(),
+                  institution: z.string().optional(),
+                  investmentType: z.string().optional(),
+                  yieldAmount: z.union([z.string(), z.number()]).optional(),
+                  reserveType: z.string().optional(),
+                }),
+              })
+            )
+            .min(1)
+            .max(1000),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        financialImport.importMixedFinancialRows({
+          userId: ctx.user.id,
+          ...input,
+        })
+      ),
   }),
 
   // ==================== REVENUES ====================

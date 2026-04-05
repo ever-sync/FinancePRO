@@ -140,6 +140,7 @@ const useSidebarSections = () => {
       {
         label: getLabel("navigation.tools", "Ferramentas"),
         items: [
+          { icon: FileSpreadsheet, label: "Importador CSV", path: "/importador" },
           { icon: FileText, label: "DRE", path: "/dre" },
           { icon: CalendarDays, label: getLabel("navigation.calendar", "Calendario"), path: "/calendario" },
           { icon: Settings, label: getLabel("navigation.settings", "Configuracoes"), path: "/configuracoes" },
