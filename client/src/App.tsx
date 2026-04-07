@@ -7,8 +7,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 
-const DashboardEmpresa = lazy(() => import("./pages/DashboardEmpresa"));
-const DashboardPessoal = lazy(() => import("./pages/DashboardPessoal"));
+const DashboardUnificado = lazy(() => import("./pages/DashboardUnificado"));
 const Receitas = lazy(() => import("./pages/Receitas"));
 const CustosFixos = lazy(() => import("./pages/CustosFixos"));
 const CustosVariaveis = lazy(() => import("./pages/CustosVariaveis"));
@@ -55,8 +54,8 @@ function Router() {
     <DashboardLayout>
       <Suspense fallback={<RouteFallback />}>
         <Switch>
-          <Route path="/" component={DashboardEmpresa} />
-          <Route path="/pessoal" component={DashboardPessoal} />
+          <Route path="/" component={DashboardUnificado} />
+          <Route path="/pessoal" component={DashboardUnificado} />
           <Route path="/receitas" component={Receitas} />
           <Route path="/custos-fixos" component={CustosFixos} />
           <Route path="/custos-variaveis" component={CustosVariaveis} />
