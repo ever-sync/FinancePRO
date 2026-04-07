@@ -40,6 +40,7 @@ import {
   TrendingDown,
   TrendingUp,
   Truck,
+  User,
   UserCheck,
   Users,
   Wallet,
@@ -88,7 +89,10 @@ const useSidebarSections = () => {
     () => [
       {
         label: getLabel("navigation.dashboard", "Dashboard"),
-        items: [{ icon: LayoutDashboard, label: "Painel consolidado", path: "/" }],
+        items: [
+          { icon: LayoutDashboard, label: getLabel("dashboard.title", "Visao geral"), path: "/" },
+          { icon: User, label: getLabel("navigation.profile", "Perfil"), path: "/pessoal" },
+        ],
       },
       {
         label: "Empresa",
