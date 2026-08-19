@@ -22,6 +22,23 @@ type ManagerState =
   | "connection_replaced"
   | "stopped";
 
+type WhatsAppCredentialsState = {
+  registered?: boolean;
+  me?: { id?: string | null } | null;
+  account?: unknown;
+};
+
+export function hasLinkedWhatsAppCredentials(
+  credentials: WhatsAppCredentialsState
+) {
+  // Baileys 7 does not set `registered` during QR pairing, even after it has
+  // persisted the linked account identity. Pairing-code sessions still set it.
+  return Boolean(
+    credentials.registered ||
+      (credentials.account && credentials.me?.id)
+  );
+}
+
 export type WhatsAppStatus = {
   sessionId: string;
   connection: ManagerState;
@@ -291,7 +308,7 @@ export class WhatsAppManager {
     this.pairingAvailable = false;
     this.pairingQrCode = null;
     const { state, saveCreds } = await this.authStore.load();
-    this.registered = Boolean(state.creds.registered);
+    this.registered = hasLinkedWhatsAppCredentials(state.creds);
     const epoch = ++this.connectionEpoch;
     const baileysLogger = this.logger.child(
       { component: "baileys" },
@@ -315,7 +332,7 @@ export class WhatsAppManager {
     this.socket = socket;
 
     socket.ev.on("creds.update", async () => {
-      this.registered = Boolean(state.creds.registered);
+      this.registered = hasLinkedWhatsAppCredentials(state.creds);
       try {
         await saveCreds();
       } catch (error) {
