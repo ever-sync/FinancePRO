@@ -503,6 +503,12 @@ function mapBaileysErrorMessage(error: unknown) {
   if (normalized.includes("wait before requesting")) {
     return "Aguarde alguns segundos antes de gerar outro codigo de vinculacao.";
   }
+  if (normalized.includes("e.164") || normalized.includes("country code")) {
+    return "Informe o numero com codigo do pais e DDD, somente numeros. Exemplo: 5511999999999.";
+  }
+  if (normalized.includes("gateway operation failed")) {
+    return "O WhatsApp recusou o pareamento por telefone. Reinicie o vinculo e use o QR Code.";
+  }
   return rawMessage || "Falha ao acessar o gateway Baileys.";
 }
 
@@ -1160,9 +1166,55 @@ export async function requestBaileysPairingCode(
     await whatsappDb.markWhatsAppConnection(
       integration.id,
       "aguardando_vinculo",
-      "Codigo gerado. Digite-o em Aparelhos conectados no WhatsApp."
+      response.fallbackToQr
+        ? response.message || "Escaneie o QR Code para vincular o WhatsApp."
+        : "Codigo gerado. Digite-o em Aparelhos conectados no WhatsApp."
     );
-    return { success: true, pairingCode: response.pairingCode };
+    return {
+      success: true,
+      pairingCode: response.pairingCode,
+      fallbackToQr: response.fallbackToQr,
+      message: response.message,
+    };
+  } catch (error) {
+    const message = mapBaileysErrorMessage(error);
+    await whatsappDb.markWhatsAppConnection(integration.id, "erro", message);
+    throw new TRPCError({ code: "BAD_REQUEST", message });
+  }
+}
+
+export async function getBaileysPairingStatus(userId: number) {
+  const integration = await whatsappDb.getWhatsAppIntegration(userId);
+  if (!integration || integration.provider !== "baileys") return null;
+
+  try {
+    return await getBaileysGatewayClient(integration).getStatus();
+  } catch (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: mapBaileysErrorMessage(error),
+    });
+  }
+}
+
+export async function resetBaileysPairingSession(userId: number) {
+  const integration = await whatsappDb.getWhatsAppIntegration(userId);
+  if (!integration || integration.provider !== "baileys") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Salve a integracao com o provedor Baileys antes de reiniciar.",
+    });
+  }
+
+  try {
+    const response =
+      await getBaileysGatewayClient(integration).resetUnregisteredSession();
+    await whatsappDb.markWhatsAppConnection(
+      integration.id,
+      "aguardando_vinculo",
+      "Pareamento reiniciado. Escaneie o QR Code ou gere um novo codigo."
+    );
+    return response;
   } catch (error) {
     const message = mapBaileysErrorMessage(error);
     await whatsappDb.markWhatsAppConnection(integration.id, "erro", message);

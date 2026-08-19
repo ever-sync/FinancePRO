@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import {
@@ -20,6 +21,12 @@ export default function WhatsAppIntegracao() {
   const { data: integration, isLoading } =
     trpc.whatsappIntegration.get.useQuery();
   const { data: status } = trpc.whatsappIntegration.syncStatus.useQuery();
+  const { data: gatewayStatus } =
+    trpc.whatsappIntegration.gatewayStatus.useQuery(undefined, {
+      enabled: integration?.provider === "baileys",
+      refetchInterval: integration?.provider === "baileys" ? 5_000 : false,
+      retry: false,
+    });
   const saveMut = trpc.whatsappIntegration.upsert.useMutation({
     onSuccess: async () => {
       await utils.whatsappIntegration.get.invalidate();
@@ -42,15 +49,37 @@ export default function WhatsAppIntegracao() {
   });
   const pairMut = trpc.whatsappIntegration.requestPairingCode.useMutation({
     onSuccess: async data => {
-      setPairingCode(data.pairingCode);
-      await utils.whatsappIntegration.get.invalidate();
-      toast.success("Codigo de vinculacao gerado.");
+      setPairingCode(data.pairingCode || "");
+      await Promise.all([
+        utils.whatsappIntegration.get.invalidate(),
+        utils.whatsappIntegration.gatewayStatus.invalidate(),
+      ]);
+      if (data.fallbackToQr) {
+        toast.warning(
+          data.message || "Use o QR Code para vincular o WhatsApp."
+        );
+      } else {
+        toast.success("Codigo de vinculacao gerado.");
+      }
     },
     onError: error => toast.error(error.message),
   });
+  const resetPairingMut =
+    trpc.whatsappIntegration.resetPairingSession.useMutation({
+      onSuccess: async () => {
+        setPairingCode("");
+        await Promise.all([
+          utils.whatsappIntegration.get.invalidate(),
+          utils.whatsappIntegration.gatewayStatus.invalidate(),
+        ]);
+        toast.success("Pareamento reiniciado. Aguarde o QR Code aparecer.");
+      },
+      onError: error => toast.error(error.message),
+    });
   const canSendTest =
     Boolean(integration?.authorizedPhone) &&
-    integration?.lastConnectionStatus === "sincronizado";
+    (gatewayStatus?.ready ||
+      integration?.lastConnectionStatus === "sincronizado");
   const [pairingCode, setPairingCode] = useState("");
   const [pairingPhone, setPairingPhone] = useState("");
 
@@ -147,7 +176,7 @@ export default function WhatsAppIntegracao() {
               variant="outline"
               onClick={() => pairMut.mutate({ phoneNumber: pairingPhone })}
               disabled={
-                pairMut.isPending || pairingPhone.replace(/\D/g, "").length < 8
+                pairMut.isPending || pairingPhone.replace(/\D/g, "").length < 10
               }
             >
               {pairMut.isPending ? "Gerando..." : "Gerar codigo"}
@@ -336,12 +365,60 @@ export default function WhatsAppIntegracao() {
                   </p>
                 </div>
               ) : null}
+              {gatewayStatus?.pairingQrCode && !gatewayStatus.ready ? (
+                <div className="rounded-2xl border border-primary/30 bg-white p-5 text-center">
+                  <p className="text-sm font-medium text-zinc-900">
+                    Vincular com QR Code
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    No WhatsApp, abra Aparelhos conectados, toque em Vincular
+                    aparelho e escaneie este codigo.
+                  </p>
+                  <div className="mt-4 inline-flex rounded-2xl border bg-white p-3">
+                    <QRCodeSVG
+                      value={gatewayStatus.pairingQrCode}
+                      size={220}
+                      level="M"
+                      marginSize={1}
+                    />
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    O codigo e atualizado automaticamente enquanto a sessao
+                    aguarda vinculacao.
+                  </p>
+                </div>
+              ) : null}
+              {integration?.provider === "baileys" && !gatewayStatus?.ready ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => resetPairingMut.mutate()}
+                  disabled={resetPairingMut.isPending}
+                >
+                  {resetPairingMut.isPending
+                    ? "Reiniciando pareamento..."
+                    : "Reiniciar pareamento"}
+                </Button>
+              ) : null}
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Conexao</span>
                 <StatusBadge
-                  status={integration?.lastConnectionStatus || "pendente"}
+                  status={
+                    gatewayStatus?.ready
+                      ? "sincronizado"
+                      : integration?.lastConnectionStatus || "pendente"
+                  }
                 />
               </div>
+              {integration?.provider === "baileys" && gatewayStatus ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    Gateway Baileys
+                  </span>
+                  <StatusBadge status={gatewayStatus.connection} />
+                </div>
+              ) : null}
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div className="rounded-2xl border p-3">
                   <p className="text-muted-foreground">Threads</p>

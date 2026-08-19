@@ -1072,6 +1072,9 @@ export const appRouter = router({
     syncStatus: protectedProcedure.query(({ ctx }) =>
       whatsapp.getWhatsAppSyncStatus(ctx.user.id)
     ),
+    gatewayStatus: protectedProcedure.query(({ ctx }) =>
+      whatsapp.getBaileysPairingStatus(ctx.user.id)
+    ),
     sendTestMessage: protectedProcedure.mutation(({ ctx }) =>
       whatsapp.sendWhatsAppTestMessage(ctx.user.id)
     ),
@@ -1084,6 +1087,9 @@ export const appRouter = router({
       .mutation(({ ctx, input }) =>
         whatsapp.requestBaileysPairingCode(ctx.user.id, input.phoneNumber)
       ),
+    resetPairingSession: protectedProcedure.mutation(({ ctx }) =>
+      whatsapp.resetBaileysPairingSession(ctx.user.id)
+    ),
     sendAdvisorPreview: protectedProcedure
       .input(
         z.object({

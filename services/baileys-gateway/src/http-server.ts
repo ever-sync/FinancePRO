@@ -99,8 +99,22 @@ export function createGatewayServer(options: {
           throw new HttpError(400, "phoneNumber is required");
         }
         lastPairingRequestAt = now;
-        const pairingCode = await manager.requestPairingCode(body.phoneNumber);
-        return sendJson(res, 200, { ok: true, pairingCode });
+        const result = await manager.requestPairingCode(body.phoneNumber);
+        return sendJson(res, 200, { ok: true, ...result });
+      }
+      if (req.method === "POST" && path === "/v1/session/reset") {
+        const status = await manager.getStatus();
+        if (status.registered) {
+          throw new HttpError(
+            409,
+            "Linked sessions cannot be reset from the pairing flow"
+          );
+        }
+        await manager.resetUnregisteredSession();
+        return sendJson(res, 200, {
+          ok: true,
+          ...(await manager.getStatus()),
+        });
       }
       if (req.method === "POST" && path === "/v1/messages/send") {
         const body = await readJson(req);

@@ -157,15 +157,31 @@ export class BaileysGatewayClient {
       registered: boolean;
       ready: boolean;
       pairingAvailable: boolean;
+      pairingQrCode: string | null;
       lastConnectedAt: string | null;
+      lastDisconnectCode: number | null;
       pendingWebhooks: number;
     }>(() => this.client.get("/v1/status"));
   }
 
   requestPairingCode(phoneNumber: string) {
-    return this.request<{ ok: boolean; pairingCode: string }>(() =>
-      this.client.post("/v1/pairing-code", { phoneNumber })
-    );
+    return this.request<{
+      ok: boolean;
+      pairingCode: string | null;
+      fallbackToQr: boolean;
+      message: string | null;
+    }>(() => this.client.post("/v1/pairing-code", { phoneNumber }));
+  }
+
+  resetUnregisteredSession() {
+    return this.request<{
+      ok: boolean;
+      connection: string;
+      registered: boolean;
+      ready: boolean;
+      pairingAvailable: boolean;
+      pairingQrCode: string | null;
+    }>(() => this.client.post("/v1/session/reset"));
   }
 
   sendTextMessage(phoneNumber: string, text: string) {
