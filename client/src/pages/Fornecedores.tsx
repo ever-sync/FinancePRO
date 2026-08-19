@@ -1,7 +1,9 @@
 import { trpc } from "@/lib/trpc";
 import { useMonthYear } from "@/hooks/useMonthYear";
 import { MonthSelector } from "@/components/MonthSelector";
+import { TablePagination } from "@/components/TablePagination";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -52,27 +54,35 @@ export default function Fornecedores() {
   const { month, year, monthName, goToPrevMonth, goToNextMonth } =
     useMonthYear();
   const utils = trpc.useUtils();
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(50);
   const [orderBy, setOrderBy] = useState<PurchaseOrderBy>("dueDate");
   const [orderDirection, setOrderDirection] = useState<"asc" | "desc">("asc");
+  const purchasePagination = useTablePagination(
+    `${year}-${month}-${orderBy}-${orderDirection}`,
+    50
+  );
+  const supplierPagination = useTablePagination("suppliers");
 
   const { data: suppliersData, isLoading: loadingSuppliers } =
-    trpc.suppliers.list.useQuery();
+    trpc.suppliers.list.useQuery({
+      page: supplierPagination.page,
+      limit: supplierPagination.limit,
+    });
+  const { data: supplierLookupData } = trpc.suppliers.list.useQuery({
+    page: 1,
+    limit: 100,
+  });
   const { data: purchasesData, isLoading: loadingPurchases } =
     trpc.supplierPurchases.list.useQuery({
       month,
       year,
-      page,
-      limit,
+      page: purchasePagination.page,
+      limit: purchasePagination.limit,
       orderBy,
       orderDirection,
     });
-  const suppliers = Array.isArray(suppliersData)
-    ? suppliersData
-    : (suppliersData?.data ?? []);
+  const supplierRows = suppliersData?.data ?? [];
+  const suppliers = supplierLookupData?.data ?? [];
   const purchases = purchasesData?.data || [];
-  const pagination = purchasesData?.pagination;
   const createSupplier = trpc.suppliers.create.useMutation({
     onSuccess: () => {
       utils.suppliers.list.invalidate();
@@ -371,34 +381,11 @@ export default function Fornecedores() {
                   )}
                 </TableBody>
               </Table>
-              {pagination && pagination.totalPages > 1 && (
-                <div className="flex items-center justify-between p-4 border-t">
-                  <p className="text-sm text-muted-foreground">
-                    Página {pagination.page} de {pagination.totalPages} (
-                    {pagination.total} registros)
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPage(p => Math.max(1, p - 1))}
-                      disabled={pagination.page <= 1}
-                    >
-                      Anterior
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setPage(p => Math.min(pagination.totalPages, p + 1))
-                      }
-                      disabled={pagination.page >= pagination.totalPages}
-                    >
-                      Próxima
-                    </Button>
-                  </div>
-                </div>
-              )}
+              <TablePagination
+                pagination={purchasesData?.pagination}
+                onPageChange={purchasePagination.setPage}
+                onPageSizeChange={purchasePagination.setLimit}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -477,7 +464,7 @@ export default function Fornecedores() {
                         Carregando...
                       </TableCell>
                     </TableRow>
-                  ) : suppliers.length === 0 ? (
+                  ) : supplierRows.length === 0 ? (
                     <TableRow>
                       <TableCell
                         colSpan={6}
@@ -487,7 +474,7 @@ export default function Fornecedores() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    suppliers.map(item => (
+                    supplierRows.map(item => (
                       <TableRow key={item.id}>
                         <TableCell className="font-medium">
                           {item.name}
@@ -513,6 +500,11 @@ export default function Fornecedores() {
                   )}
                 </TableBody>
               </Table>
+              <TablePagination
+                pagination={suppliersData?.pagination}
+                onPageChange={supplierPagination.setPage}
+                onPageSizeChange={supplierPagination.setLimit}
+              />
             </CardContent>
           </Card>
         </TabsContent>

@@ -12,93 +12,41 @@ interface PaymentItem {
   amount: string;
   dueDay: number;
   status: string;
-  type: "empresa-fixo" | "empresa-variavel" | "empresa-folha" | "pessoal-fixo" | "pessoal-variavel" | "divida" | "fornecedor";
+  type: string;
 }
 
 export default function Calendario() {
-  const { month, year, monthName, goToPrevMonth, goToNextMonth } = useMonthYear();
-  const { data: companyFixed } = trpc.companyFixedCosts.list.useQuery({ month, year });
-  const { data: companyVariable } = trpc.companyVariableCosts.list.useQuery({ month, year });
-  const { data: personalFixed } = trpc.personalFixedCosts.list.useQuery({ month, year });
-  const { data: personalVariable } = trpc.personalVariableCosts.list.useQuery({ month, year });
-  const { data: employees } = trpc.employees.list.useQuery();
-  const { data: debts = [] } = trpc.debts.list.useQuery();
-  const companyFixedRows = Array.isArray(companyFixed) ? companyFixed : companyFixed?.data ?? [];
-  const companyVariableRows = Array.isArray(companyVariable) ? companyVariable : companyVariable?.data ?? [];
-  const personalFixedRows = Array.isArray(personalFixed) ? personalFixed : personalFixed?.data ?? [];
-  const personalVariableRows = Array.isArray(personalVariable) ? personalVariable : personalVariable?.data ?? [];
-  const employeeRows = Array.isArray(employees) ? employees : employees?.data ?? [];
+  const { month, year, monthName, goToPrevMonth, goToNextMonth } =
+    useMonthYear();
+  const { data: calendarItems = [] } = trpc.calendar.data.useQuery({
+    month,
+    year,
+  });
 
   const today = new Date().getDate();
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
   const isCurrentMonth = month === currentMonth && year === currentYear;
-  const getDayFromDate = (date: string) => Number(date.slice(8, 10));
+  const payments: PaymentItem[] = calendarItems.map((item, index) => ({
+    id: `${item.sourceType ?? item.type}-${item.sourceId ?? index}`,
+    description: item.description,
+    amount: item.amount,
+    dueDay: item.day,
+    status: item.status,
+    type: item.type,
+  }));
 
-  const payments: PaymentItem[] = [
-    ...companyFixedRows.map(item => ({
-      id: `cf-${item.id}`,
-      description: `[EMP] ${item.description}`,
-      amount: item.amount,
-      dueDay: item.dueDay,
-      status: item.status,
-      type: "empresa-fixo" as const,
-    })),
-    ...companyVariableRows.map(item => ({
-      id: `cv-${item.id}`,
-      description: `[EMP] ${item.description}`,
-      amount: item.amount,
-      dueDay: getDayFromDate(item.date),
-      status: item.status,
-      type: "empresa-variavel" as const,
-    })),
-    ...personalFixedRows.map(item => ({
-      id: `pf-${item.id}`,
-      description: `[PES] ${item.description}`,
-      amount: item.amount,
-      dueDay: item.dueDay,
-      status: item.status,
-      type: "pessoal-fixo" as const,
-    })),
-    ...personalVariableRows.map(item => ({
-      id: `pv-${item.id}`,
-      description: `[PES] ${item.description}`,
-      amount: item.amount,
-      dueDay: getDayFromDate(item.date),
-      status: item.status,
-      type: "pessoal-variavel" as const,
-    })),
-    ...employeeRows
-      .filter(item => item.status === "ativo")
-      .map(item => ({
-        id: `em-${item.id}`,
-        description: `[EMP] Salário - ${item.name}`,
-        amount: item.totalCost,
-        dueDay: item.paymentDay || 5,
-        status: isCurrentMonth && (item.paymentDay || 5) < today ? "atrasada" : "pendente",
-        type: "empresa-folha" as const,
-      })),
-    ...debts
-      .filter(item => item.status !== "quitada")
-      .map(item => ({
-        id: `dv-${item.id}`,
-        description: `[DIV] ${item.creditor} - ${item.description}`,
-        amount: item.monthlyPayment,
-        dueDay: item.dueDay,
-        status:
-          item.status === "atrasada" || (isCurrentMonth && item.dueDay < today)
-            ? "atrasada"
-            : "pendente",
-        type: "divida" as const,
-      })),
-  ].sort((a, b) => a.dueDay - b.dueDay);
-
-  const totalMonth = payments.reduce((sum, payment) => sum + parseFloat(payment.amount), 0);
+  const totalMonth = payments.reduce(
+    (sum, payment) => sum + parseFloat(payment.amount),
+    0
+  );
   const totalPending = payments
     .filter(payment => payment.status !== "pago")
     .reduce((sum, payment) => sum + parseFloat(payment.amount), 0);
   const overdue = isCurrentMonth
-    ? payments.filter(payment => payment.status !== "pago" && payment.dueDay < today)
+    ? payments.filter(
+        payment => payment.status !== "pago" && payment.dueDay < today
+      )
     : [];
 
   const grouped: Record<number, PaymentItem[]> = {};
@@ -148,8 +96,12 @@ export default function Calendario() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs uppercase text-muted-foreground">Total do Mês</p>
-            <p className="mt-1 text-xl font-bold">{formatCurrency(totalMonth)}</p>
+            <p className="text-xs uppercase text-muted-foreground">
+              Total do Mês
+            </p>
+            <p className="mt-1 text-xl font-bold">
+              {formatCurrency(totalMonth)}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -163,12 +115,16 @@ export default function Calendario() {
         <Card className={overdue.length > 0 ? "border-destructive/30" : ""}>
           <CardContent className="flex items-center justify-between pt-6">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Atrasados</p>
+              <p className="text-xs uppercase text-muted-foreground">
+                Atrasados
+              </p>
               <p className="mt-1 text-xl font-bold text-destructive">
                 {overdue.length}
               </p>
             </div>
-            {overdue.length > 0 && <AlertTriangle className="h-5 w-5 text-destructive" />}
+            {overdue.length > 0 && (
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+            )}
           </CardContent>
         </Card>
       </div>
@@ -198,7 +154,10 @@ export default function Calendario() {
             const dayNum = Number(day);
             const isPast = isCurrentMonth && dayNum < today;
             const isToday = isCurrentMonth && dayNum === today;
-            const dayTotal = items.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+            const dayTotal = items.reduce(
+              (sum, item) => sum + parseFloat(item.amount),
+              0
+            );
 
             return (
               <Card
@@ -217,13 +176,20 @@ export default function Calendario() {
                         {isToday ? "Hoje" : `Dia ${day}`}
                       </span>
                     </div>
-                    <span className="text-sm font-bold">{formatCurrency(dayTotal)}</span>
+                    <span className="text-sm font-bold">
+                      {formatCurrency(dayTotal)}
+                    </span>
                   </div>
                   <div className="ml-10 space-y-1.5">
                     {items.map(item => (
-                      <div key={item.id} className="flex items-center justify-between text-sm">
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between text-sm"
+                      >
                         <div className="flex items-center gap-2">
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] ${typeColor(item.type)}`}>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] ${typeColor(item.type)}`}
+                          >
                             {item.type.includes("empresa")
                               ? "EMP"
                               : item.type === "divida"
@@ -231,7 +197,10 @@ export default function Calendario() {
                                 : "PES"}
                           </span>
                           <span className="max-w-[200px] truncate sm:max-w-none">
-                            {item.description.replace(/^\[(EMP|PES|DIV)\]\s*/, "")}
+                            {item.description.replace(
+                              /^\[(EMP|PES|DIV)\]\s*/,
+                              ""
+                            )}
                           </span>
                         </div>
                         <div className="flex items-center gap-3">

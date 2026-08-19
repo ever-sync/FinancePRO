@@ -52,7 +52,7 @@
 ### Fase 1: Fundação & Performance (Sprints 1-3)
 
 - [ ] Modularizar db.ts em repositórios menores
-- [ ] Implementar paginação em todas as listas
+- [x] Implementar paginação em todas as listas
 - [x] Criar índices no banco de dados
 - [ ] Implementar Repository Pattern
 - [ ] Criar Service Layer para lógica de negócio
@@ -148,7 +148,7 @@
 
 Prioridade máxima para entrega rápida de valor:
 
-1. [ ] Paginação em listas (4h)
+1. [x] Paginação em listas (4h)
 2. [ ] Confirmação de delete (2h)
 3. [ ] Skeletons específicos (4h)
 4. [ ] Validação em tempo real (5h)

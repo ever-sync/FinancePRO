@@ -1,4 +1,6 @@
 import { trpc } from "@/lib/trpc";
+import { TablePagination } from "@/components/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,7 +125,12 @@ function validate(f: FormData): FormErrors {
 
 export default function Clientes() {
   const utils = trpc.useUtils();
-  const { data: clients = [], isLoading } = trpc.clients.list.useQuery();
+  const { page, limit, setPage, setLimit } = useTablePagination();
+  const { data: clientsData, isLoading } = trpc.clients.list.useQuery({
+    page,
+    limit,
+  });
+  const clients = clientsData?.data ?? [];
   const createClient = trpc.clients.create.useMutation({
     onSuccess: () => {
       utils.clients.list.invalidate();
@@ -515,6 +522,11 @@ export default function Clientes() {
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            pagination={clientsData?.pagination}
+            onPageChange={setPage}
+            onPageSizeChange={setLimit}
+          />
         </CardContent>
       </Card>
 
@@ -525,7 +537,9 @@ export default function Clientes() {
             <p className="text-xs text-muted-foreground uppercase">
               Total de Clientes
             </p>
-            <p className="text-xl font-bold mt-1">{clients.length}</p>
+            <p className="text-xl font-bold mt-1">
+              {clientsData?.pagination.total ?? 0}
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -534,7 +548,7 @@ export default function Clientes() {
               Categorias
             </p>
             <p className="text-xl font-bold mt-1">
-              {new Set(clients.map(c => c.category).filter(Boolean)).size}
+              {clientsData?.summary.categoryCount ?? 0}
             </p>
           </CardContent>
         </Card>

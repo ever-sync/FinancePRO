@@ -21,6 +21,10 @@ export interface PaginatedResult<T> {
   };
 }
 
+export type PaginatedResultWithSummary<T, TSummary> = PaginatedResult<T> & {
+  summary: TSummary;
+};
+
 export const MAX_PAGE_SIZE = 100;
 
 export function normalizePagination(

@@ -13,6 +13,8 @@ import { getConfiguredAppOrigin } from "./_core/env";
 const monthSchema = z.number().int().min(1).max(12);
 const yearSchema = z.number().int().min(1900).max(2200);
 const entityIdSchema = z.number().int().positive();
+const pageSchema = z.number().int().min(1).default(1);
+const pageSizeSchema = z.number().int().min(1).max(100).default(25);
 const moneySchema = z
   .string()
   .trim()
@@ -131,6 +133,40 @@ export const appRouter = router({
   }),
 
   financialImports: router({
+    reconciliationData: protectedProcedure.query(async ({ ctx }) => {
+      const [
+        revenuesResult,
+        companyVariableCostsResult,
+        personalVariableCostsResult,
+        debtsResult,
+        investmentsResult,
+        reserveFundsResult,
+      ] = await Promise.all([
+        db.getRevenues(ctx.user.id),
+        db.getCompanyVariableCosts(ctx.user.id),
+        db.getPersonalVariableCosts(ctx.user.id),
+        db.getDebts(ctx.user.id),
+        db.getInvestments(ctx.user.id),
+        db.getReserveFunds(ctx.user.id),
+      ]);
+      const limit = 2_000;
+
+      return {
+        revenues: revenuesResult.data.slice(0, limit),
+        companyVariableCosts: companyVariableCostsResult.data.slice(0, limit),
+        personalVariableCosts: personalVariableCostsResult.data.slice(0, limit),
+        debts: debtsResult.slice(0, limit),
+        investments: investmentsResult.slice(0, limit),
+        reserveFunds: reserveFundsResult.slice(0, limit),
+        truncated:
+          revenuesResult.pagination.total > limit ||
+          companyVariableCostsResult.pagination.total > limit ||
+          personalVariableCostsResult.pagination.total > limit ||
+          debtsResult.length > limit ||
+          investmentsResult.length > limit ||
+          reserveFundsResult.length > limit,
+      };
+    }),
     importCsv: protectedProcedure
       .input(
         z.object({
@@ -243,10 +279,18 @@ export const appRouter = router({
   revenues: router({
     list: protectedProcedure
       .input(
-        z.object({ month: monthSchema.optional(), year: yearSchema.optional() })
+        z.object({
+          month: monthSchema.optional(),
+          year: yearSchema.optional(),
+          page: pageSchema,
+          limit: pageSizeSchema,
+        })
       )
       .query(({ ctx, input }) =>
-        db.getRevenues(ctx.user.id, input.month, input.year)
+        db.getRevenues(ctx.user.id, input.month, input.year, {
+          page: input.page,
+          limit: input.limit,
+        })
       ),
     create: protectedProcedure
       .input(
@@ -321,10 +365,18 @@ export const appRouter = router({
   companyFixedCosts: router({
     list: protectedProcedure
       .input(
-        z.object({ month: monthSchema.optional(), year: yearSchema.optional() })
+        z.object({
+          month: monthSchema.optional(),
+          year: yearSchema.optional(),
+          page: pageSchema,
+          limit: pageSizeSchema,
+        })
       )
       .query(({ ctx, input }) =>
-        db.getCompanyFixedCosts(ctx.user.id, input.month, input.year)
+        db.getCompanyFixedCosts(ctx.user.id, input.month, input.year, {
+          page: input.page,
+          limit: input.limit,
+        })
       ),
     create: protectedProcedure
       .input(
@@ -371,10 +423,18 @@ export const appRouter = router({
   companyVariableCosts: router({
     list: protectedProcedure
       .input(
-        z.object({ month: monthSchema.optional(), year: yearSchema.optional() })
+        z.object({
+          month: monthSchema.optional(),
+          year: yearSchema.optional(),
+          page: pageSchema,
+          limit: pageSizeSchema,
+        })
       )
       .query(({ ctx, input }) =>
-        db.getCompanyVariableCosts(ctx.user.id, input.month, input.year)
+        db.getCompanyVariableCosts(ctx.user.id, input.month, input.year, {
+          page: input.page,
+          limit: input.limit,
+        })
       ),
     create: protectedProcedure
       .input(
@@ -418,7 +478,14 @@ export const appRouter = router({
 
   // ==================== EMPLOYEES ====================
   employees: router({
-    list: protectedProcedure.query(({ ctx }) => db.getEmployees(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({ page: pageSchema, limit: pageSizeSchema }).optional())
+      .query(({ ctx, input }) =>
+        db.getEmployees(ctx.user.id, {
+          page: input?.page ?? 1,
+          limit: input?.limit ?? 25,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({
@@ -472,7 +539,14 @@ export const appRouter = router({
 
   // ==================== SUPPLIERS ====================
   suppliers: router({
-    list: protectedProcedure.query(({ ctx }) => db.getSuppliers(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({ page: pageSchema, limit: pageSizeSchema }).optional())
+      .query(({ ctx, input }) =>
+        db.getSuppliers(ctx.user.id, {
+          page: input?.page ?? 1,
+          limit: input?.limit ?? 25,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({
@@ -579,10 +653,18 @@ export const appRouter = router({
   personalFixedCosts: router({
     list: protectedProcedure
       .input(
-        z.object({ month: monthSchema.optional(), year: yearSchema.optional() })
+        z.object({
+          month: monthSchema.optional(),
+          year: yearSchema.optional(),
+          page: pageSchema,
+          limit: pageSizeSchema,
+        })
       )
       .query(({ ctx, input }) =>
-        db.getPersonalFixedCosts(ctx.user.id, input.month, input.year)
+        db.getPersonalFixedCosts(ctx.user.id, input.month, input.year, {
+          page: input.page,
+          limit: input.limit,
+        })
       ),
     create: protectedProcedure
       .input(
@@ -629,10 +711,18 @@ export const appRouter = router({
   personalVariableCosts: router({
     list: protectedProcedure
       .input(
-        z.object({ month: monthSchema.optional(), year: yearSchema.optional() })
+        z.object({
+          month: monthSchema.optional(),
+          year: yearSchema.optional(),
+          page: pageSchema,
+          limit: pageSizeSchema,
+        })
       )
       .query(({ ctx, input }) =>
-        db.getPersonalVariableCosts(ctx.user.id, input.month, input.year)
+        db.getPersonalVariableCosts(ctx.user.id, input.month, input.year, {
+          page: input.page,
+          limit: input.limit,
+        })
       ),
     create: protectedProcedure
       .input(
@@ -674,7 +764,14 @@ export const appRouter = router({
 
   // ==================== DEBTS ====================
   debts: router({
-    list: protectedProcedure.query(({ ctx }) => db.getDebts(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({ page: pageSchema, limit: pageSizeSchema }).optional())
+      .query(({ ctx, input }) =>
+        db.getDebtsPage(ctx.user.id, {
+          page: input?.page ?? 1,
+          limit: input?.limit ?? 25,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({
@@ -728,7 +825,14 @@ export const appRouter = router({
 
   // ==================== INVESTMENTS ====================
   investments: router({
-    list: protectedProcedure.query(({ ctx }) => db.getInvestments(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({ page: pageSchema, limit: pageSizeSchema }).optional())
+      .query(({ ctx, input }) =>
+        db.getInvestmentsPage(ctx.user.id, {
+          page: input?.page ?? 1,
+          limit: input?.limit ?? 25,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({
@@ -771,8 +875,19 @@ export const appRouter = router({
   // ==================== RESERVE FUNDS ====================
   reserveFunds: router({
     list: protectedProcedure
-      .input(z.object({ type: z.enum(["empresa", "pessoal"]).optional() }))
-      .query(({ ctx, input }) => db.getReserveFunds(ctx.user.id, input.type)),
+      .input(
+        z.object({
+          type: z.enum(["empresa", "pessoal"]).optional(),
+          page: pageSchema,
+          limit: pageSizeSchema,
+        })
+      )
+      .query(({ ctx, input }) =>
+        db.getReserveFundsPage(ctx.user.id, input.type, {
+          page: input.page,
+          limit: input.limit,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({
@@ -810,7 +925,14 @@ export const appRouter = router({
 
   // ==================== CLIENTS ====================
   clients: router({
-    list: protectedProcedure.query(({ ctx }) => db.getClients(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({ page: pageSchema, limit: pageSizeSchema }).optional())
+      .query(({ ctx, input }) =>
+        db.getClientsPage(ctx.user.id, {
+          page: input?.page ?? 1,
+          limit: input?.limit ?? 25,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({
@@ -852,7 +974,14 @@ export const appRouter = router({
 
   // ==================== SERVICES ====================
   services: router({
-    list: protectedProcedure.query(({ ctx }) => db.getServices(ctx.user.id)),
+    list: protectedProcedure
+      .input(z.object({ page: pageSchema, limit: pageSizeSchema }).optional())
+      .query(({ ctx, input }) =>
+        db.getServicesPage(ctx.user.id, {
+          page: input?.page ?? 1,
+          limit: input?.limit ?? 25,
+        })
+      ),
     create: protectedProcedure
       .input(
         z.object({

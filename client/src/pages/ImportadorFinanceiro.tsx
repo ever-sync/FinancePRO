@@ -44,19 +44,36 @@ import {
   type FinancialImportReserveType,
   type FinancialImportTarget,
 } from "@shared/financial-import";
-import {
-  type BankConnectionProfile,
-} from "@/lib/bankConnections";
+import { type BankConnectionProfile } from "@/lib/bankConnections";
 import { trpc } from "@/lib/trpc";
 import { formatCurrency } from "@/lib/format";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type PreviewRow = {
   id: number;
@@ -242,7 +259,8 @@ function buildImportSuccessMessage(params: {
 }) {
   const pieces = [];
   if (params.imported) pieces.push(`${params.imported} novo(s)`);
-  if (params.updatedExisting) pieces.push(`${params.updatedExisting} conciliado(s)`);
+  if (params.updatedExisting)
+    pieces.push(`${params.updatedExisting} conciliado(s)`);
   const base = `${pieces.join(" e ") || "0 registro"} em ${params.label.toLowerCase()} (${formatCurrency(params.totalAmount)}).`;
   if (!params.skippedDuplicates) return base;
   return `${base} ${params.skippedDuplicates} duplicada(s) foram ignoradas.`;
@@ -256,7 +274,8 @@ function buildStatementImportSuccessMessage(params: {
 }) {
   const pieces = [];
   if (params.imported) pieces.push(`${params.imported} novo(s)`);
-  if (params.updatedExisting) pieces.push(`${params.updatedExisting} atualizado(s)`);
+  if (params.updatedExisting)
+    pieces.push(`${params.updatedExisting} atualizado(s)`);
   const base = `${pieces.join(" e ") || "0 movimento"} conciliados (${formatCurrency(params.totalAmount)}).`;
   if (!params.skippedDuplicates) return base;
   return `${base} ${params.skippedDuplicates} duplicada(s) foram ignoradas.`;
@@ -270,7 +289,10 @@ function normalizeConciliationText(value?: string | null) {
   return normalizeImportLookup(String(value ?? ""));
 }
 
-function getAmountDifference(left?: string | number | null, right?: string | number | null) {
+function getAmountDifference(
+  left?: string | number | null,
+  right?: string | number | null
+) {
   return Math.abs(Number(left ?? 0) - Number(right ?? 0));
 }
 
@@ -300,7 +322,10 @@ function readStoredStatementProfiles() {
 
 function writeStoredStatementProfiles(profiles: StatementProfile[]) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STATEMENT_PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+  window.localStorage.setItem(
+    STATEMENT_PROFILE_STORAGE_KEY,
+    JSON.stringify(profiles)
+  );
 }
 
 function createStatementProfileId() {
@@ -316,7 +341,9 @@ function findMatchingStatementProfile(params: {
   sourceLabel?: string;
   sourceKind: FinancialStatementSourceKind;
 }) {
-  const normalizedSource = normalizeImportLookup(`${params.fileName || ""} ${params.sourceLabel || ""}`);
+  const normalizedSource = normalizeImportLookup(
+    `${params.fileName || ""} ${params.sourceLabel || ""}`
+  );
   if (!normalizedSource) return null;
 
   return (
@@ -324,7 +351,10 @@ function findMatchingStatementProfile(params: {
       if (profile.sourceKind !== params.sourceKind) return false;
       const bankName = normalizeImportLookup(profile.bankName);
       const name = normalizeImportLookup(profile.name);
-      return Boolean(bankName && normalizedSource.includes(bankName)) || Boolean(name && normalizedSource.includes(name));
+      return (
+        Boolean(bankName && normalizedSource.includes(bankName)) ||
+        Boolean(name && normalizedSource.includes(name))
+      );
     }) || null
   );
 }
@@ -339,11 +369,19 @@ function buildPreviewRows(params: {
   sourceLabel: string;
 }): PreviewRow[] {
   return params.records.map((record, index) => {
-    const rawDate = params.mapping.date ? record[params.mapping.date] || "" : "";
+    const rawDate = params.mapping.date
+      ? record[params.mapping.date] || ""
+      : "";
     const normalizedDate = normalizeImportDate(rawDate);
-    const rawAmount = params.mapping.amount ? record[params.mapping.amount] || "" : "";
-    const rawCredit = params.mapping.credit ? record[params.mapping.credit] || "" : "";
-    const rawDebit = params.mapping.debit ? record[params.mapping.debit] || "" : "";
+    const rawAmount = params.mapping.amount
+      ? record[params.mapping.amount] || ""
+      : "";
+    const rawCredit = params.mapping.credit
+      ? record[params.mapping.credit] || ""
+      : "";
+    const rawDebit = params.mapping.debit
+      ? record[params.mapping.debit] || ""
+      : "";
     const amountPreview = rawAmount || rawCredit || rawDebit;
     const parsedAmount = resolveAbsoluteImportAmount({
       target: params.target,
@@ -352,11 +390,23 @@ function buildPreviewRows(params: {
       debit: rawDebit,
     });
     const description =
-      (params.mapping.description ? record[params.mapping.description] || "" : "").trim() ||
-      (params.mapping.counterparty ? record[params.mapping.counterparty] || "" : "").trim() ||
+      (params.mapping.description
+        ? record[params.mapping.description] || ""
+        : ""
+      ).trim() ||
+      (params.mapping.counterparty
+        ? record[params.mapping.counterparty] || ""
+        : ""
+      ).trim() ||
       `Registro importado ${index + 1}`;
-    const counterparty = (params.mapping.counterparty ? record[params.mapping.counterparty] || "" : "").trim();
-    const notes = params.sourceLabel ? `Importado via CSV: ${params.sourceLabel}` : "Importado via CSV";
+    const counterparty = (
+      params.mapping.counterparty
+        ? record[params.mapping.counterparty] || ""
+        : ""
+    ).trim();
+    const notes = params.sourceLabel
+      ? `Importado via CSV: ${params.sourceLabel}`
+      : "Importado via CSV";
 
     if (
       params.target === "revenues" ||
@@ -367,7 +417,10 @@ function buildPreviewRows(params: {
         !(params.mapping.category && record[params.mapping.category]?.trim()) &&
         params.defaultCategory.trim().length === 0;
       const category =
-        (params.mapping.category ? record[params.mapping.category] || "" : "").trim() ||
+        (params.mapping.category
+          ? record[params.mapping.category] || ""
+          : ""
+        ).trim() ||
         params.defaultCategory.trim() ||
         suggestFinancialImportCategory({
           target: params.target,
@@ -375,8 +428,10 @@ function buildPreviewRows(params: {
           counterparty,
         });
       const status =
-        (params.mapping.status ? record[params.mapping.status] || "" : "").trim() ||
-        params.defaultStatus;
+        (params.mapping.status
+          ? record[params.mapping.status] || ""
+          : ""
+        ).trim() || params.defaultStatus;
 
       if (!params.mapping.date || !hasMappedAmountColumns(params.mapping)) {
         return {
@@ -434,7 +489,9 @@ function buildPreviewRows(params: {
     }
 
     if (params.target === "debts") {
-      const balanceValue = params.mapping.balance ? record[params.mapping.balance] || "" : rawAmount;
+      const balanceValue = params.mapping.balance
+        ? record[params.mapping.balance] || ""
+        : rawAmount;
       const balance = parseImportAmount(balanceValue);
       const monthlyPaymentValue = params.mapping.monthlyPayment
         ? record[params.mapping.monthlyPayment] || ""
@@ -444,22 +501,34 @@ function buildPreviewRows(params: {
         ? record[params.mapping.interestRate] || ""
         : "";
       const interestRate = parseImportAmount(interestRateValue);
-      const dueDayValue = params.mapping.dueDay ? record[params.mapping.dueDay] || "" : "";
+      const dueDayValue = params.mapping.dueDay
+        ? record[params.mapping.dueDay] || ""
+        : "";
       const dueDay =
         parseImportInteger(dueDayValue) ??
         (normalizedDate ? Number(normalizedDate.slice(-2)) : null);
       const totalInstallments = parseImportInteger(
-        params.mapping.totalInstallments ? record[params.mapping.totalInstallments] || "" : ""
+        params.mapping.totalInstallments
+          ? record[params.mapping.totalInstallments] || ""
+          : ""
       );
       const paidInstallments = parseImportInteger(
-        params.mapping.paidInstallments ? record[params.mapping.paidInstallments] || "" : ""
+        params.mapping.paidInstallments
+          ? record[params.mapping.paidInstallments] || ""
+          : ""
       );
       const status =
-        (params.mapping.status ? record[params.mapping.status] || "" : "").trim() ||
+        (params.mapping.status
+          ? record[params.mapping.status] || ""
+          : ""
+        ).trim() ||
         params.defaultStatus ||
         "ativa";
       const priority =
-        (params.mapping.category ? record[params.mapping.category] || "" : "").trim() || "media";
+        (params.mapping.category
+          ? record[params.mapping.category] || ""
+          : ""
+        ).trim() || "media";
 
       if (balance == null || balance <= 0) {
         return {
@@ -502,19 +571,35 @@ function buildPreviewRows(params: {
           credit: rawCredit,
           debit: rawDebit,
         }) ??
-        parseImportAmount(params.mapping.balance ? record[params.mapping.balance] || "" : "");
-      const balanceValue = params.mapping.balance ? record[params.mapping.balance] || "" : "";
+        parseImportAmount(
+          params.mapping.balance ? record[params.mapping.balance] || "" : ""
+        );
+      const balanceValue = params.mapping.balance
+        ? record[params.mapping.balance] || ""
+        : "";
       const currentBalance = parseImportAmount(balanceValue) ?? depositAmount;
-      const yieldValue = params.mapping.yieldAmount ? record[params.mapping.yieldAmount] || "" : "";
-      const yieldAmount = parseImportAmount(yieldValue) ?? Math.max((currentBalance ?? 0) - (depositAmount ?? 0), 0);
+      const yieldValue = params.mapping.yieldAmount
+        ? record[params.mapping.yieldAmount] || ""
+        : "";
+      const yieldAmount =
+        parseImportAmount(yieldValue) ??
+        Math.max((currentBalance ?? 0) - (depositAmount ?? 0), 0);
       const institution =
-        (params.mapping.institution ? record[params.mapping.institution] || "" : "").trim() ||
+        (params.mapping.institution
+          ? record[params.mapping.institution] || ""
+          : ""
+        ).trim() ||
         counterparty ||
         "Instituicao importada";
-      const autoCategory = !(params.mapping.investmentType && record[params.mapping.investmentType]?.trim());
+      const autoCategory = !(
+        params.mapping.investmentType &&
+        record[params.mapping.investmentType]?.trim()
+      );
       const investmentType =
-        (params.mapping.investmentType ? record[params.mapping.investmentType] || "" : "").trim() ||
-        suggestInvestmentType({ description, institution });
+        (params.mapping.investmentType
+          ? record[params.mapping.investmentType] || ""
+          : ""
+        ).trim() || suggestInvestmentType({ description, institution });
 
       if (!params.mapping.date) {
         return {
@@ -581,8 +666,10 @@ function buildPreviewRows(params: {
     const reserveType = suggestReserveFundType({
       description,
       explicitType:
-        (params.mapping.reserveType ? record[params.mapping.reserveType] || "" : "").trim() ||
-        params.reserveFundType,
+        (params.mapping.reserveType
+          ? record[params.mapping.reserveType] || ""
+          : ""
+        ).trim() || params.reserveFundType,
     });
 
     if (!params.mapping.date || !hasMappedAmountColumns(params.mapping)) {
@@ -633,7 +720,8 @@ function buildPreviewRows(params: {
       status: params.defaultStatus,
       notes,
       reserveType,
-      extra: reserveType === "empresa" ? "Reserva operacional" : "Reserva pessoal",
+      extra:
+        reserveType === "empresa" ? "Reserva operacional" : "Reserva pessoal",
     };
   });
 }
@@ -665,24 +753,30 @@ function buildStatementPreviewRows(params: {
     const normalizedCounterparty = normalizeConciliationText(row.counterparty);
 
     const buildMatch = (
-        item: Record<string, any>,
-        config: {
-          id: number;
-          label: string;
-          date: string;
-          amount: string | number;
-          comparisonText: string;
-          target: ReconciliationMatchTarget;
-        }
-      ) => {
+      item: Record<string, any>,
+      config: {
+        id: number;
+        label: string;
+        date: string;
+        amount: string | number;
+        comparisonText: string;
+        target: ReconciliationMatchTarget;
+      }
+    ) => {
       const sameDate = config.date === row.date;
-      const amountDifference = getAmountDifference(config.amount, row.absoluteAmount);
+      const amountDifference = getAmountDifference(
+        config.amount,
+        row.absoluteAmount
+      );
       const exactAmount = amountDifference <= 0.009;
-      const normalizedComparison = normalizeConciliationText(config.comparisonText);
+      const normalizedComparison = normalizeConciliationText(
+        config.comparisonText
+      );
       const strongText =
         normalizedComparison.includes(normalizedDescription) ||
         normalizedDescription.includes(normalizedComparison) ||
-        (!!normalizedCounterparty && normalizedComparison.includes(normalizedCounterparty));
+        (!!normalizedCounterparty &&
+          normalizedComparison.includes(normalizedCounterparty));
 
       if (!sameDate || !exactAmount || !strongText) return null;
 
@@ -802,42 +896,75 @@ function buildStatementPreviewRows(params: {
   };
 
   return params.records.map((record, index) => {
-    const rawDate = params.mapping.date ? record[params.mapping.date] || "" : "";
+    const rawDate = params.mapping.date
+      ? record[params.mapping.date] || ""
+      : "";
     const date = normalizeImportDate(rawDate);
     const rawDescription =
-      (params.mapping.description ? record[params.mapping.description] || "" : "").trim() ||
-      (params.mapping.counterparty ? record[params.mapping.counterparty] || "" : "").trim() ||
+      (params.mapping.description
+        ? record[params.mapping.description] || ""
+        : ""
+      ).trim() ||
+      (params.mapping.counterparty
+        ? record[params.mapping.counterparty] || ""
+        : ""
+      ).trim() ||
       `Movimentacao ${index + 1}`;
     const installmentInfo = extractInstallmentInfo(rawDescription);
     const description = installmentInfo?.cleanedDescription || rawDescription;
-    const counterparty = (params.mapping.counterparty ? record[params.mapping.counterparty] || "" : "").trim();
-    const rawAmount = params.mapping.amount ? record[params.mapping.amount] || "" : "";
-    const rawCredit = params.mapping.credit ? record[params.mapping.credit] || "" : "";
-    const rawDebit = params.mapping.debit ? record[params.mapping.debit] || "" : "";
+    const counterparty = (
+      params.mapping.counterparty
+        ? record[params.mapping.counterparty] || ""
+        : ""
+    ).trim();
+    const rawAmount = params.mapping.amount
+      ? record[params.mapping.amount] || ""
+      : "";
+    const rawCredit = params.mapping.credit
+      ? record[params.mapping.credit] || ""
+      : "";
+    const rawDebit = params.mapping.debit
+      ? record[params.mapping.debit] || ""
+      : "";
     const signedAmount = parseSignedImportAmountFromColumns({
       amount: rawAmount,
       credit: rawCredit,
       debit: rawDebit,
     });
-    const balanceValue = params.mapping.balance ? record[params.mapping.balance] || "" : "";
+    const balanceValue = params.mapping.balance
+      ? record[params.mapping.balance] || ""
+      : "";
     const parsedBalance = parseImportAmount(balanceValue);
     const amountPreview = rawAmount || rawCredit || rawDebit;
-    const debtStatus = (params.mapping.status ? record[params.mapping.status] || "" : "").trim() || "ativa";
+    const debtStatus =
+      (params.mapping.status
+        ? record[params.mapping.status] || ""
+        : ""
+      ).trim() || "ativa";
     const debtMonthlyPayment = parseImportAmount(
-      params.mapping.monthlyPayment ? record[params.mapping.monthlyPayment] || "" : ""
+      params.mapping.monthlyPayment
+        ? record[params.mapping.monthlyPayment] || ""
+        : ""
     );
     const debtInterestRate = parseImportAmount(
-      params.mapping.interestRate ? record[params.mapping.interestRate] || "" : ""
+      params.mapping.interestRate
+        ? record[params.mapping.interestRate] || ""
+        : ""
     );
     const debtTotalInstallments = parseImportInteger(
-      params.mapping.totalInstallments ? record[params.mapping.totalInstallments] || "" : ""
+      params.mapping.totalInstallments
+        ? record[params.mapping.totalInstallments] || ""
+        : ""
     );
     const debtPaidInstallments = parseImportInteger(
-      params.mapping.paidInstallments ? record[params.mapping.paidInstallments] || "" : ""
+      params.mapping.paidInstallments
+        ? record[params.mapping.paidInstallments] || ""
+        : ""
     );
     const debtDueDay =
-      parseImportInteger(params.mapping.dueDay ? record[params.mapping.dueDay] || "" : "") ??
-      (date ? Number(date.slice(-2)) : undefined);
+      parseImportInteger(
+        params.mapping.dueDay ? record[params.mapping.dueDay] || "" : ""
+      ) ?? (date ? Number(date.slice(-2)) : undefined);
 
     if (!params.mapping.date || !hasMappedAmountColumns(params.mapping)) {
       return {
@@ -850,7 +977,8 @@ function buildStatementPreviewRows(params: {
         selectedTarget: "skip",
         suggestedTarget: "skip",
         confidence: "baixa",
-        reason: "Mapeie data e valor, ou use as colunas separadas de credito e debito.",
+        reason:
+          "Mapeie data e valor, ou use as colunas separadas de credito e debito.",
         error: "Colunas obrigatorias nao mapeadas.",
       };
     }
@@ -882,7 +1010,8 @@ function buildStatementPreviewRows(params: {
         selectedTarget: "skip",
         suggestedTarget: "skip",
         confidence: "baixa",
-        reason: "Nao consegui ler um valor com sinal ou montar o sinal via credito/debito.",
+        reason:
+          "Nao consegui ler um valor com sinal ou montar o sinal via credito/debito.",
         error: "Valor invalido.",
       };
     }
@@ -894,12 +1023,15 @@ function buildStatementPreviewRows(params: {
       scope: params.scope,
       sourceKind: params.sourceKind,
     });
-    const matchedExisting = findReconciliationMatch(suggestion.suggestedTarget, {
-      date,
-      description,
-      counterparty,
-      absoluteAmount: Math.abs(signedAmount).toFixed(2),
-    });
+    const matchedExisting = findReconciliationMatch(
+      suggestion.suggestedTarget,
+      {
+        date,
+        description,
+        counterparty,
+        absoluteAmount: Math.abs(signedAmount).toFixed(2),
+      }
+    );
 
     return {
       id: index,
@@ -918,8 +1050,10 @@ function buildStatementPreviewRows(params: {
       investmentType: suggestion.investmentType,
       reserveFundType: suggestion.reserveFundType,
       status: debtStatus,
-      monthlyPayment: debtMonthlyPayment != null ? debtMonthlyPayment.toFixed(2) : undefined,
-      interestRate: debtInterestRate != null ? debtInterestRate.toFixed(2) : undefined,
+      monthlyPayment:
+        debtMonthlyPayment != null ? debtMonthlyPayment.toFixed(2) : undefined,
+      interestRate:
+        debtInterestRate != null ? debtInterestRate.toFixed(2) : undefined,
       totalInstallments: debtTotalInstallments ?? undefined,
       paidInstallments: debtPaidInstallments ?? undefined,
       dueDay: debtDueDay,
@@ -936,10 +1070,15 @@ export default function ImportadorFinanceiro() {
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
   const [importMode, setImportMode] = useState<ImportMode>("preset_import");
-  const [target, setTarget] = useState<FinancialImportTarget>("company_variable_costs");
-  const [reserveFundType, setReserveFundType] = useState<FinancialImportReserveType>("empresa");
-  const [statementScope, setStatementScope] = useState<FinancialStatementScope>("misto");
-  const [statementSourceKind, setStatementSourceKind] = useState<FinancialStatementSourceKind>("bank_account");
+  const [target, setTarget] = useState<FinancialImportTarget>(
+    "company_variable_costs"
+  );
+  const [reserveFundType, setReserveFundType] =
+    useState<FinancialImportReserveType>("empresa");
+  const [statementScope, setStatementScope] =
+    useState<FinancialStatementScope>("misto");
+  const [statementSourceKind, setStatementSourceKind] =
+    useState<FinancialStatementSourceKind>("bank_account");
   const [rawCsv, setRawCsv] = useState("");
   const [delimiter, setDelimiter] = useState(";");
   const [sourceFormat, setSourceFormat] = useState<"csv" | "ofx">("csv");
@@ -951,35 +1090,46 @@ export default function ImportadorFinanceiro() {
   const [defaultStatus, setDefaultStatus] = useState(
     getFinancialImportTargetMeta("company_variable_costs").defaultStatus
   );
-  const [mapping, setMapping] = useState<FinancialImportMapping>(createEmptyFinancialImportMapping());
-  const [statementMapping, setStatementMapping] = useState<FinancialImportMapping>(
+  const [mapping, setMapping] = useState<FinancialImportMapping>(
     createEmptyFinancialImportMapping()
   );
+  const [statementMapping, setStatementMapping] =
+    useState<FinancialImportMapping>(createEmptyFinancialImportMapping());
   const [statementTargetOverrides, setStatementTargetOverrides] = useState<
     Record<number, FinancialStatementSelectableTarget>
   >({});
-  const [statementReconciliationOverrides, setStatementReconciliationOverrides] = useState<
-    Record<number, "create" | "update">
-  >({});
-  const [statementProfiles, setStatementProfiles] = useState<StatementProfile[]>([]);
+  const [
+    statementReconciliationOverrides,
+    setStatementReconciliationOverrides,
+  ] = useState<Record<number, "create" | "update">>({});
+  const [statementProfiles, setStatementProfiles] = useState<
+    StatementProfile[]
+  >([]);
   const [profileName, setProfileName] = useState("");
   const [profileBankName, setProfileBankName] = useState("");
-  const { data: rawBankConnections = [] } = trpc.bankConnections.list.useQuery();
-  const { data: revenuesData } = trpc.revenues.list.useQuery({});
-  const { data: companyVariableCostsData } = trpc.companyVariableCosts.list.useQuery({});
-  const { data: personalVariableCostsData } = trpc.personalVariableCosts.list.useQuery({});
-  const { data: debtsData = [] } = trpc.debts.list.useQuery();
-  const { data: investmentsData = [] } = trpc.investments.list.useQuery();
-  const { data: reserveFundsData = [] } = trpc.reserveFunds.list.useQuery({});
-  const bankConnections = rawBankConnections.map(connection => normalizeBankConnectionProfile(connection));
+  const { data: rawBankConnections = [] } =
+    trpc.bankConnections.list.useQuery();
+  const { data: reconciliationData } =
+    trpc.financialImports.reconciliationData.useQuery();
+  const bankConnections = rawBankConnections.map(connection =>
+    normalizeBankConnectionProfile(connection)
+  );
   const existingEntries = {
-    revenues: revenuesData?.data ?? [],
-    companyVariableCosts: companyVariableCostsData?.data ?? [],
-    personalVariableCosts: personalVariableCostsData?.data ?? [],
-    debts: debtsData,
-    investments: investmentsData,
-    reserveFunds: reserveFundsData,
+    revenues: reconciliationData?.revenues ?? [],
+    companyVariableCosts: reconciliationData?.companyVariableCosts ?? [],
+    personalVariableCosts: reconciliationData?.personalVariableCosts ?? [],
+    debts: reconciliationData?.debts ?? [],
+    investments: reconciliationData?.investments ?? [],
+    reserveFunds: reconciliationData?.reserveFunds ?? [],
   };
+
+  useEffect(() => {
+    if (reconciliationData?.truncated) {
+      toast.warning(
+        "A conciliação considera os 2.000 lançamentos mais recentes de cada categoria."
+      );
+    }
+  }, [reconciliationData?.truncated]);
 
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
@@ -1005,7 +1155,8 @@ export default function ImportadorFinanceiro() {
     ? parseImportSource(rawCsv, delimiter)
     : { format: "csv" as const, data: { headers: [], records: [] } };
   const parsedCsv = parsedSource.data;
-  const detectedSourceFormat = sourceFormat === "ofx" ? "ofx" : parsedSource.format;
+  const detectedSourceFormat =
+    sourceFormat === "ofx" ? "ofx" : parsedSource.format;
   const matchedStatementProfile = findMatchingStatementProfile({
     profiles: statementProfiles,
     fileName,
@@ -1016,11 +1167,15 @@ export default function ImportadorFinanceiro() {
     profile => profile.sourceKind === statementSourceKind
   );
   const activeBankConnection =
-    bankConnections.find(connection => connection.id === Number(guidedConnectionId)) ?? null;
+    bankConnections.find(
+      connection => connection.id === Number(guidedConnectionId)
+    ) ?? null;
   const mappingFields = getFinancialImportMappingFields(target);
 
   useEffect(() => {
-    setImportMode(guidedMode === "statement" ? "statement_reconciliation" : "preset_import");
+    setImportMode(
+      guidedMode === "statement" ? "statement_reconciliation" : "preset_import"
+    );
   }, [guidedMode]);
 
   useEffect(() => {
@@ -1038,7 +1193,10 @@ export default function ImportadorFinanceiro() {
   }, [guidedScope]);
 
   useEffect(() => {
-    if (guidedSourceKind === "credit_card" || guidedSourceKind === "bank_account") {
+    if (
+      guidedSourceKind === "credit_card" ||
+      guidedSourceKind === "bank_account"
+    ) {
       setStatementSourceKind(guidedSourceKind);
     }
   }, [guidedSourceKind]);
@@ -1046,7 +1204,9 @@ export default function ImportadorFinanceiro() {
   useEffect(() => {
     if (!activeBankConnection) return;
     setImportMode("statement_reconciliation");
-    setStatementSourceKind(activeBankConnection.sourceKind as FinancialStatementSourceKind);
+    setStatementSourceKind(
+      activeBankConnection.sourceKind as FinancialStatementSourceKind
+    );
     setStatementScope(activeBankConnection.scope as FinancialStatementScope);
     setSourceLabel(current =>
       current.trim().length
@@ -1056,7 +1216,9 @@ export default function ImportadorFinanceiro() {
     setProfileBankName(current =>
       current.trim().length ? current : activeBankConnection.institution
     );
-    setProfileName(current => (current.trim().length ? current : activeBankConnection.label));
+    setProfileName(current =>
+      current.trim().length ? current : activeBankConnection.label
+    );
   }, [activeBankConnection]);
 
   useEffect(() => {
@@ -1064,7 +1226,10 @@ export default function ImportadorFinanceiro() {
     const preset = resolveFinancialImportPreset(guidedPreset);
     setTarget(preset.target);
     setReserveFundType(preset.reserveFundType);
-    const presetMeta = getFinancialImportTargetMeta(preset.target, preset.reserveFundType);
+    const presetMeta = getFinancialImportTargetMeta(
+      preset.target,
+      preset.reserveFundType
+    );
     setDefaultStatus(presetMeta.defaultStatus);
     setDefaultCategory(presetMeta.defaultCategory);
     setSourceLabel(current => (current.trim().length ? current : preset.title));
@@ -1088,16 +1253,23 @@ export default function ImportadorFinanceiro() {
     setMapping(current => {
       const next = createEmptyFinancialImportMapping();
       (Object.keys(next) as FinancialImportColumnKey[]).forEach(key => {
-        next[key] = parsedCsv.headers.includes(current[key]) ? current[key] : inferred[key];
+        next[key] = parsedCsv.headers.includes(current[key])
+          ? current[key]
+          : inferred[key];
       });
       return next;
     });
 
-    const statementInferred = inferFinancialImportMapping(parsedCsv.headers, "company_variable_costs");
+    const statementInferred = inferFinancialImportMapping(
+      parsedCsv.headers,
+      "company_variable_costs"
+    );
     setStatementMapping(current => {
       const next = createEmptyFinancialImportMapping();
       (Object.keys(next) as FinancialImportColumnKey[]).forEach(key => {
-        next[key] = parsedCsv.headers.includes(current[key]) ? current[key] : statementInferred[key];
+        next[key] = parsedCsv.headers.includes(current[key])
+          ? current[key]
+          : statementInferred[key];
       });
       return next;
     });
@@ -1115,7 +1287,10 @@ export default function ImportadorFinanceiro() {
   });
   const validRows = previewRows.filter(row => !row.error);
   const invalidRows = previewRows.filter(row => row.error);
-  const previewAmount = validRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const previewAmount = validRows.reduce(
+    (sum, row) => sum + Number(row.amount || 0),
+    0
+  );
   const baseStatementRows = buildStatementPreviewRows({
     records: parsedCsv.records,
     mapping: statementMapping,
@@ -1124,23 +1299,31 @@ export default function ImportadorFinanceiro() {
     existingEntries,
   });
   const statementRows = baseStatementRows.map(row => {
-    const selectedTarget = statementTargetOverrides[row.id] ?? row.selectedTarget;
+    const selectedTarget =
+      statementTargetOverrides[row.id] ?? row.selectedTarget;
     const matchedExisting =
-      row.matchedExisting && row.matchedExisting.target === selectedTarget ? row.matchedExisting : null;
+      row.matchedExisting && row.matchedExisting.target === selectedTarget
+        ? row.matchedExisting
+        : null;
 
     return {
       ...row,
       selectedTarget,
       matchedExisting,
-      reconciliationMode:
-        matchedExisting
-          ? statementReconciliationOverrides[row.id] ?? row.reconciliationMode ?? "create"
-          : "create",
+      reconciliationMode: matchedExisting
+        ? (statementReconciliationOverrides[row.id] ??
+          row.reconciliationMode ??
+          "create")
+        : "create",
     };
   });
   const validStatementRows = statementRows.filter(row => !row.error);
-  const statementReadyRows = validStatementRows.filter(row => row.selectedTarget !== "skip");
-  const statementIgnoredRows = validStatementRows.filter(row => row.selectedTarget === "skip");
+  const statementReadyRows = validStatementRows.filter(
+    row => row.selectedTarget !== "skip"
+  );
+  const statementIgnoredRows = validStatementRows.filter(
+    row => row.selectedTarget === "skip"
+  );
   const statementMatchedRows = statementReadyRows.filter(
     row => row.matchedExisting && row.reconciliationMode === "update"
   );
@@ -1148,13 +1331,17 @@ export default function ImportadorFinanceiro() {
     (sum, row) => sum + Number(row.absoluteAmount || 0),
     0
   );
-  const statementCounts = statementRows.reduce<Record<string, number>>((acc, row) => {
-    const key = row.selectedTarget;
-    acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {});
+  const statementCounts = statementRows.reduce<Record<string, number>>(
+    (acc, row) => {
+      const key = row.selectedTarget;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    },
+    {}
+  );
 
-  const markConnectionImportedMut = trpc.bankConnections.markImported.useMutation();
+  const markConnectionImportedMut =
+    trpc.bankConnections.markImported.useMutation();
   const importMut = trpc.financialImports.importCsv.useMutation({
     onSuccess: async data => {
       await Promise.all([
@@ -1186,7 +1373,9 @@ export default function ImportadorFinanceiro() {
         })
       );
       if (guidedConnectionId) {
-        await markConnectionImportedMut.mutateAsync({ connectionId: Number(guidedConnectionId) });
+        await markConnectionImportedMut.mutateAsync({
+          connectionId: Number(guidedConnectionId),
+        });
         await utils.bankConnections.list.invalidate();
       }
     },
@@ -1217,18 +1406,26 @@ export default function ImportadorFinanceiro() {
         })
       );
       if (guidedConnectionId) {
-        await markConnectionImportedMut.mutateAsync({ connectionId: Number(guidedConnectionId) });
+        await markConnectionImportedMut.mutateAsync({
+          connectionId: Number(guidedConnectionId),
+        });
         await utils.bankConnections.list.invalidate();
       }
     },
     onError: error => toast.error(error.message),
   });
 
-  const applyPreset = (presetKey: FinancialImportPreset, source?: string | null) => {
+  const applyPreset = (
+    presetKey: FinancialImportPreset,
+    source?: string | null
+  ) => {
     const preset = resolveFinancialImportPreset(presetKey);
     setTarget(preset.target);
     setReserveFundType(preset.reserveFundType);
-    const presetMeta = getFinancialImportTargetMeta(preset.target, preset.reserveFundType);
+    const presetMeta = getFinancialImportTargetMeta(
+      preset.target,
+      preset.reserveFundType
+    );
     setDefaultStatus(presetMeta.defaultStatus);
     setDefaultCategory(presetMeta.defaultCategory);
     setSourceLabel(current => (current.trim().length ? current : preset.title));
@@ -1270,7 +1467,9 @@ export default function ImportadorFinanceiro() {
     window.history.replaceState({}, "", `${next.pathname}${next.search}`);
   };
 
-  const updateStatementSourceKind = (sourceKind: FinancialStatementSourceKind) => {
+  const updateStatementSourceKind = (
+    sourceKind: FinancialStatementSourceKind
+  ) => {
     setStatementSourceKind(sourceKind);
     setStatementTargetOverrides({});
     setStatementReconciliationOverrides({});
@@ -1320,10 +1519,12 @@ export default function ImportadorFinanceiro() {
     }
 
     const timestamp = new Date().toISOString();
-    const existingProfile = statementProfiles.find(profile =>
-      normalizeImportLookup(profile.name) === normalizeImportLookup(name) &&
-      normalizeImportLookup(profile.bankName) === normalizeImportLookup(bankName) &&
-      profile.sourceKind === statementSourceKind
+    const existingProfile = statementProfiles.find(
+      profile =>
+        normalizeImportLookup(profile.name) === normalizeImportLookup(name) &&
+        normalizeImportLookup(profile.bankName) ===
+          normalizeImportLookup(bankName) &&
+        profile.sourceKind === statementSourceKind
     );
 
     const nextProfile: StatementProfile = {
@@ -1349,13 +1550,17 @@ export default function ImportadorFinanceiro() {
   };
 
   const deleteStatementProfile = (profileId: string) => {
-    const nextProfiles = statementProfiles.filter(profile => profile.id !== profileId);
+    const nextProfiles = statementProfiles.filter(
+      profile => profile.id !== profileId
+    );
     setStatementProfiles(nextProfiles);
     writeStoredStatementProfiles(nextProfiles);
     toast.success("Perfil removido.");
   };
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -1376,13 +1581,19 @@ export default function ImportadorFinanceiro() {
     const nextLabel = file.name.replace(/\.[^.]+$/, "");
     setFileName(file.name);
     setSourceLabel(nextLabel);
-    setProfileBankName(current => (current.trim().length ? current : nextLabel));
+    setProfileBankName(current =>
+      current.trim().length ? current : nextLabel
+    );
     setProfileName(current =>
-      current.trim().length ? current : `${getStatementSourceKindLabel(inferStatementSourceKind({ fileName: file.name }))} ${nextLabel}`
+      current.trim().length
+        ? current
+        : `${getStatementSourceKindLabel(inferStatementSourceKind({ fileName: file.name }))} ${nextLabel}`
     );
 
     if (importMode === "statement_reconciliation") {
-      const inferredSourceKind = inferStatementSourceKind({ fileName: file.name });
+      const inferredSourceKind = inferStatementSourceKind({
+        fileName: file.name,
+      });
       setStatementReconciliationOverrides({});
       updateStatementSourceKind(inferredSourceKind);
     }
@@ -1397,7 +1608,9 @@ export default function ImportadorFinanceiro() {
     importMut.mutate({
       target,
       reserveFundType: target === "reserve_funds" ? reserveFundType : undefined,
-      defaultCategory: meta.supportsCategory ? defaultCategory.trim() || undefined : undefined,
+      defaultCategory: meta.supportsCategory
+        ? defaultCategory.trim() || undefined
+        : undefined,
       defaultStatus: defaultStatus || undefined,
       sourceLabel: sourceLabel.trim() || fileName.trim() || undefined,
       rows: validRows.map(row => ({
@@ -1433,13 +1646,17 @@ export default function ImportadorFinanceiro() {
         ? "Conciliado da fatura do cartao"
         : "Conciliado do extrato bancario";
     const buildStatementNotes = (row: StatementPreviewRow) =>
-      row.installmentLabel ? `${baseNote} | Parcela ${row.installmentLabel}` : baseNote;
+      row.installmentLabel
+        ? `${baseNote} | Parcela ${row.installmentLabel}`
+        : baseNote;
 
     importMixedMut.mutate({
       sourceLabel:
         sourceLabel.trim() ||
         fileName.trim() ||
-        (statementSourceKind === "credit_card" ? "Fatura conciliada" : "Extrato conciliado"),
+        (statementSourceKind === "credit_card"
+          ? "Fatura conciliada"
+          : "Extrato conciliado"),
       items: statementReadyRows.map(row => {
         const reconciliation =
           row.matchedExisting && row.reconciliationMode === "update"
@@ -1485,11 +1702,13 @@ export default function ImportadorFinanceiro() {
                   target: "company_variable_costs",
                   description: row.description,
                   counterparty: row.counterparty,
-              }),
+                }),
               counterparty: row.counterparty,
               status: "pago",
               totalInstallments:
-                row.installmentNumber === 1 && row.installmentCount && row.installmentCount > 1
+                row.installmentNumber === 1 &&
+                row.installmentCount &&
+                row.installmentCount > 1
                   ? row.installmentCount
                   : undefined,
               notes: buildStatementNotes(row),
@@ -1511,11 +1730,13 @@ export default function ImportadorFinanceiro() {
                   target: "personal_variable_costs",
                   description: row.description,
                   counterparty: row.counterparty,
-              }),
+                }),
               counterparty: row.counterparty,
               status: "pago",
               totalInstallments:
-                row.installmentNumber === 1 && row.installmentCount && row.installmentCount > 1
+                row.installmentNumber === 1 &&
+                row.installmentCount &&
+                row.installmentCount > 1
                   ? row.installmentCount
                   : undefined,
               notes: buildStatementNotes(row),
@@ -1541,7 +1762,9 @@ export default function ImportadorFinanceiro() {
                 }),
               yieldAmount:
                 row.balance && Number(row.balance) > Number(row.absoluteAmount)
-                  ? (Number(row.balance) - Number(row.absoluteAmount)).toFixed(2)
+                  ? (Number(row.balance) - Number(row.absoluteAmount)).toFixed(
+                      2
+                    )
                   : "0.00",
               notes: buildStatementNotes(row),
             },
@@ -1598,7 +1821,8 @@ export default function ImportadorFinanceiro() {
             Importador financeiro
           </h1>
           <p className="text-sm text-muted-foreground">
-            Suba extratos e planilhas CSV com mapeamento simples, categorizacao automatica e previa antes de gravar.
+            Suba extratos e planilhas CSV com mapeamento simples, categorizacao
+            automatica e previa antes de gravar.
           </p>
         </div>
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
@@ -1615,13 +1839,21 @@ export default function ImportadorFinanceiro() {
               <p className="text-sm font-medium text-emerald-950">
                 Fluxo guiado do mentor: {guidedMeta.title}
               </p>
-              <p className="mt-1 text-sm text-emerald-900/80">{guidedMeta.description}</p>
+              <p className="mt-1 text-sm text-emerald-900/80">
+                {guidedMeta.description}
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => setLocation("/whatsapp/planos")}>
+              <Button
+                variant="outline"
+                onClick={() => setLocation("/whatsapp/planos")}
+              >
                 Voltar ao onboarding
               </Button>
-              <Button variant="outline" onClick={() => setLocation("/whatsapp/conversas")}>
+              <Button
+                variant="outline"
+                onClick={() => setLocation("/whatsapp/conversas")}
+              >
                 Abrir inbox do mentor
               </Button>
             </div>
@@ -1637,8 +1869,12 @@ export default function ImportadorFinanceiro() {
                 Conexao bancaria ativa: {activeBankConnection.label}
               </p>
               <p className="mt-1 text-sm text-orange-900/80">
-                {activeBankConnection.institution} · escopo {activeBankConnection.scope} ·{" "}
-                {activeBankConnection.sourceKind === "credit_card" ? "cartao" : "conta"}.
+                {activeBankConnection.institution} · escopo{" "}
+                {activeBankConnection.scope} ·{" "}
+                {activeBankConnection.sourceKind === "credit_card"
+                  ? "cartao"
+                  : "conta"}
+                .
                 {activeBankConnection.lastImportedAt
                   ? ` Ultima importacao em ${new Intl.DateTimeFormat("pt-BR", {
                       day: "2-digit",
@@ -1649,7 +1885,10 @@ export default function ImportadorFinanceiro() {
                   : " Ainda sem importacao registrada."}
               </p>
             </div>
-            <Button variant="outline" onClick={() => setLocation("/integracoes-bancarias")}>
+            <Button
+              variant="outline"
+              onClick={() => setLocation("/integracoes-bancarias")}
+            >
               Abrir central bancaria
             </Button>
           </CardContent>
@@ -1660,7 +1899,8 @@ export default function ImportadorFinanceiro() {
         <CardHeader>
           <CardTitle>Modo de trabalho</CardTitle>
           <CardDescription>
-            Use importacao por destino quando ja souber o modulo certo, ou conciliacao quando vier de extrato bancario misto.
+            Use importacao por destino quando ja souber o modulo certo, ou
+            conciliacao quando vier de extrato bancario misto.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
@@ -1672,7 +1912,9 @@ export default function ImportadorFinanceiro() {
             Importacao por destino
           </Button>
           <Button
-            variant={importMode === "statement_reconciliation" ? "default" : "outline"}
+            variant={
+              importMode === "statement_reconciliation" ? "default" : "outline"
+            }
             className="justify-start"
             onClick={() => setImportModeWithUrl("statement_reconciliation")}
           >
@@ -1687,7 +1929,8 @@ export default function ImportadorFinanceiro() {
             <CardHeader>
               <CardTitle>Atalhos de importacao</CardTitle>
               <CardDescription>
-                Escolha o que voce quer alimentar primeiro. O app ajusta o preset e o modelo esperado.
+                Escolha o que voce quer alimentar primeiro. O app ajusta o
+                preset e o modelo esperado.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
@@ -1714,317 +1957,396 @@ export default function ImportadorFinanceiro() {
             </CardContent>
           </Card>
 
-          <Tabs value={currentTabValue} onValueChange={value => applyPreset(value as FinancialImportPreset, guidedSource)}>
+          <Tabs
+            value={currentTabValue}
+            onValueChange={value =>
+              applyPreset(value as FinancialImportPreset, guidedSource)
+            }
+          >
             <TabsList className="grid w-full grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-              <TabsTrigger value="company_variable_costs">Custos empresa</TabsTrigger>
+              <TabsTrigger value="company_variable_costs">
+                Custos empresa
+              </TabsTrigger>
               <TabsTrigger value="revenues">Receitas</TabsTrigger>
-              <TabsTrigger value="personal_variable_costs">Gastos pessoais</TabsTrigger>
+              <TabsTrigger value="personal_variable_costs">
+                Gastos pessoais
+              </TabsTrigger>
               <TabsTrigger value="debts">Dividas</TabsTrigger>
               <TabsTrigger value="investments">Investimentos</TabsTrigger>
-              <TabsTrigger value={reserveFundType === "empresa" ? "reserve_company" : "reserve_personal"}>
+              <TabsTrigger
+                value={
+                  reserveFundType === "empresa"
+                    ? "reserve_company"
+                    : "reserve_personal"
+                }
+              >
                 Reserva
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value={currentTabValue} className="mt-4 space-y-6">
-          <Card className="border-zinc-200">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Icon className="size-5 text-zinc-700" />
-                {meta.label}
-              </CardTitle>
-              <CardDescription>{meta.description}</CardDescription>
-            </CardHeader>
-          </Card>
+              <Card className="border-zinc-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Icon className="size-5 text-zinc-700" />
+                    {meta.label}
+                  </CardTitle>
+                  <CardDescription>{meta.description}</CardDescription>
+                </CardHeader>
+              </Card>
 
-          <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-            <Card>
-              <CardHeader>
-                <CardTitle>Arquivo ou cola manual</CardTitle>
-                <CardDescription>
-                  Use CSV com cabecalho ou OFX. O app detecta o formato, sugere o mapeamento e mostra como vai gravar cada linha.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Label
-                    htmlFor="csv-file"
-                    className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium"
-                  >
-                    <Upload className="size-4" />
-                    Escolher CSV ou OFX
-                  </Label>
-                  <Input
-                    id="csv-file"
-                    type="file"
-                    accept=".csv,.ofx,text/csv,application/x-ofx,application/ofx"
-                    className="hidden"
-                    onChange={handleFileChange}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setRawCsv("");
-                      setSourceFormat("csv");
-                      setFileName("");
-                      setSourceLabel("");
-                    }}
-                  >
-                    Limpar
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setRawCsv(meta.templateCsv);
-                      setDelimiter(detectImportDelimiter(meta.templateCsv));
-                      setSourceFormat("csv");
-                      setFileName("");
-                      if (!sourceLabel.trim()) setSourceLabel(meta.shortLabel);
-                    }}
-                  >
-                    Usar modelo
-                  </Button>
-                  {fileName ? (
-                    <span className="text-sm text-muted-foreground">{fileName}</span>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Nenhum arquivo carregado</span>
-                  )}
-                </div>
+              <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Arquivo ou cola manual</CardTitle>
+                    <CardDescription>
+                      Use CSV com cabecalho ou OFX. O app detecta o formato,
+                      sugere o mapeamento e mostra como vai gravar cada linha.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Label
+                        htmlFor="csv-file"
+                        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium"
+                      >
+                        <Upload className="size-4" />
+                        Escolher CSV ou OFX
+                      </Label>
+                      <Input
+                        id="csv-file"
+                        type="file"
+                        accept=".csv,.ofx,text/csv,application/x-ofx,application/ofx"
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setRawCsv("");
+                          setSourceFormat("csv");
+                          setFileName("");
+                          setSourceLabel("");
+                        }}
+                      >
+                        Limpar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setRawCsv(meta.templateCsv);
+                          setDelimiter(detectImportDelimiter(meta.templateCsv));
+                          setSourceFormat("csv");
+                          setFileName("");
+                          if (!sourceLabel.trim())
+                            setSourceLabel(meta.shortLabel);
+                        }}
+                      >
+                        Usar modelo
+                      </Button>
+                      {fileName ? (
+                        <span className="text-sm text-muted-foreground">
+                          {fileName}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          Nenhum arquivo carregado
+                        </span>
+                      )}
+                    </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>Fonte da importacao</Label>
-                    <Input
-                      value={sourceLabel}
-                      onChange={event => setSourceLabel(event.target.value)}
-                      placeholder="Ex.: Extrato Nubank marco"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Separador</Label>
-                    <Select value={delimiter} onValueChange={value => setDelimiter(value)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value=";">Ponto e virgula (;)</SelectItem>
-                        <SelectItem value=",">Virgula (,)</SelectItem>
-                        <SelectItem value="	">Tab</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Fonte da importacao</Label>
+                        <Input
+                          value={sourceLabel}
+                          onChange={event => setSourceLabel(event.target.value)}
+                          placeholder="Ex.: Extrato Nubank marco"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Separador</Label>
+                        <Select
+                          value={delimiter}
+                          onValueChange={value => setDelimiter(value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value=";">
+                              Ponto e virgula (;)
+                            </SelectItem>
+                            <SelectItem value=",">Virgula (,)</SelectItem>
+                            <SelectItem value="	">Tab</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
 
-                <div className="space-y-1.5">
-                  <Label>Conteudo do arquivo</Label>
-                  <Textarea
-                    value={rawCsv}
-                    onChange={event => {
-                      setRawCsv(event.target.value);
-                      setSourceFormat("csv");
-                    }}
-                    rows={14}
-                    placeholder={meta.templateCsv}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Aceita CSV com coluna `valor` ou colunas separadas de `credito` e `debito`.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+                    <div className="space-y-1.5">
+                      <Label>Conteudo do arquivo</Label>
+                      <Textarea
+                        value={rawCsv}
+                        onChange={event => {
+                          setRawCsv(event.target.value);
+                          setSourceFormat("csv");
+                        }}
+                        rows={14}
+                        placeholder={meta.templateCsv}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Aceita CSV com coluna `valor` ou colunas separadas de
+                        `credito` e `debito`.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Regras da importacao</CardTitle>
-                <CardDescription>
-                  {meta.requiredFieldSummary}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {target === "reserve_funds" ? (
-                  <div className="space-y-1.5">
-                    <Label>Tipo da reserva</Label>
-                    <Select
-                      value={reserveFundType}
-                      onValueChange={value => setReserveFundType(value as FinancialImportReserveType)}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Regras da importacao</CardTitle>
+                    <CardDescription>
+                      {meta.requiredFieldSummary}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {target === "reserve_funds" ? (
+                      <div className="space-y-1.5">
+                        <Label>Tipo da reserva</Label>
+                        <Select
+                          value={reserveFundType}
+                          onValueChange={value =>
+                            setReserveFundType(
+                              value as FinancialImportReserveType
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="empresa">Empresa</SelectItem>
+                            <SelectItem value="pessoal">Pessoal</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+
+                    {meta.supportsCategory ? (
+                      <div className="space-y-1.5">
+                        <Label>Categoria padrao</Label>
+                        <Input
+                          value={defaultCategory}
+                          onChange={event =>
+                            setDefaultCategory(event.target.value)
+                          }
+                          placeholder={meta.defaultCategory}
+                        />
+                      </div>
+                    ) : null}
+
+                    {meta.statusOptions.length > 1 ? (
+                      <div className="space-y-1.5">
+                        <Label>Status padrao</Label>
+                        <Select
+                          value={defaultStatus}
+                          onValueChange={value => setDefaultStatus(value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {meta.statusOptions.map(status => (
+                              <SelectItem key={status} value={status}>
+                                {status}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+                        Status aplicado:{" "}
+                        <span className="font-medium text-zinc-900">
+                          {defaultStatus}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-2xl border px-4 py-3">
+                        <p className="text-sm text-muted-foreground">
+                          Linhas lidas
+                        </p>
+                        <p className="mt-1 text-2xl font-semibold">
+                          {previewRows.length}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border px-4 py-3">
+                        <p className="text-sm text-muted-foreground">
+                          Prontas para importar
+                        </p>
+                        <p className="mt-1 text-2xl font-semibold text-emerald-700">
+                          {validRows.length}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border px-4 py-3">
+                        <p className="text-sm text-muted-foreground">
+                          Valor total
+                        </p>
+                        <p className="mt-1 text-2xl font-semibold">
+                          {formatCurrency(previewAmount)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+                      {invalidRows.length > 0
+                        ? `${invalidRows.length} linha(s) estao com erro e nao serao importadas.`
+                        : "Se a previa estiver correta, voce ja pode importar em lote."}
+                    </div>
+
+                    <Button
+                      className="w-full"
+                      onClick={handleImport}
+                      disabled={importMut.isPending || !validRows.length}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="empresa">Empresa</SelectItem>
-                        <SelectItem value="pessoal">Pessoal</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
+                      {importMut.isPending
+                        ? "Importando..."
+                        : `Importar ${validRows.length} registro(s)`}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
 
-                {meta.supportsCategory ? (
-                  <div className="space-y-1.5">
-                    <Label>Categoria padrao</Label>
-                    <Input
-                      value={defaultCategory}
-                      onChange={event => setDefaultCategory(event.target.value)}
-                      placeholder={meta.defaultCategory}
-                    />
-                  </div>
-                ) : null}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Mapeamento de colunas</CardTitle>
+                  <CardDescription>
+                    Ajuste so o que fizer sentido para este tipo de importacao.
+                    O resto pode ser inferido.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {mappingFields.map(field => (
+                    <div key={field.key} className="space-y-1.5">
+                      <Label>{field.label}</Label>
+                      <Select
+                        value={mapping[field.key] || "__none__"}
+                        onValueChange={value =>
+                          setMapping(current => ({
+                            ...current,
+                            [field.key]: value === "__none__" ? "" : value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecionar coluna" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Nao usar</SelectItem>
+                          {parsedCsv.headers.map(header => (
+                            <SelectItem
+                              key={`${field.key}-${header}`}
+                              value={header}
+                            >
+                              {header}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {field.helper ? (
+                        <p className="text-xs text-muted-foreground">
+                          {field.helper}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
 
-                {meta.statusOptions.length > 1 ? (
-                  <div className="space-y-1.5">
-                    <Label>Status padrao</Label>
-                    <Select value={defaultStatus} onValueChange={value => setDefaultStatus(value)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {meta.statusOptions.map(status => (
-                          <SelectItem key={status} value={status}>
-                            {status}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
-                    Status aplicado: <span className="font-medium text-zinc-900">{defaultStatus}</span>
-                  </div>
-                )}
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl border px-4 py-3">
-                    <p className="text-sm text-muted-foreground">Linhas lidas</p>
-                    <p className="mt-1 text-2xl font-semibold">{previewRows.length}</p>
-                  </div>
-                  <div className="rounded-2xl border px-4 py-3">
-                    <p className="text-sm text-muted-foreground">Prontas para importar</p>
-                    <p className="mt-1 text-2xl font-semibold text-emerald-700">{validRows.length}</p>
-                  </div>
-                  <div className="rounded-2xl border px-4 py-3">
-                    <p className="text-sm text-muted-foreground">Valor total</p>
-                    <p className="mt-1 text-2xl font-semibold">{formatCurrency(previewAmount)}</p>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
-                  {invalidRows.length > 0
-                    ? `${invalidRows.length} linha(s) estao com erro e nao serao importadas.`
-                    : "Se a previa estiver correta, voce ja pode importar em lote."}
-                </div>
-
-                <Button
-                  className="w-full"
-                  onClick={handleImport}
-                  disabled={importMut.isPending || !validRows.length}
-                >
-                  {importMut.isPending ? "Importando..." : `Importar ${validRows.length} registro(s)`}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Mapeamento de colunas</CardTitle>
-              <CardDescription>
-                Ajuste so o que fizer sentido para este tipo de importacao. O resto pode ser inferido.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {mappingFields.map(field => (
-                <div key={field.key} className="space-y-1.5">
-                  <Label>{field.label}</Label>
-                  <Select
-                    value={mapping[field.key] || "__none__"}
-                    onValueChange={value =>
-                      setMapping(current => ({
-                        ...current,
-                        [field.key]: value === "__none__" ? "" : value,
-                      }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecionar coluna" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Nao usar</SelectItem>
-                      {parsedCsv.headers.map(header => (
-                        <SelectItem key={`${field.key}-${header}`} value={header}>
-                          {header}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {field.helper ? (
-                    <p className="text-xs text-muted-foreground">{field.helper}</p>
-                  ) : null}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Previa da importacao</CardTitle>
-              <CardDescription>
-                A categoria ou tipo sugerido aparece direto na tabela quando o CSV nao trouxer isso pronto.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Descricao</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead>Classificacao</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Observacao</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {previewRows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-                        Carregue ou cole um CSV para ver a previa.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    previewRows.slice(0, 12).map(row => (
-                      <TableRow key={row.id}>
-                        <TableCell>{row.date || "-"}</TableCell>
-                        <TableCell>
-                          <div className="font-medium">{row.description}</div>
-                          {row.counterparty ? (
-                            <div className="text-xs text-muted-foreground">{row.counterparty}</div>
-                          ) : null}
-                          {row.extra ? (
-                            <div className="text-xs text-muted-foreground">{row.extra}</div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {row.error ? row.amount || "-" : formatCurrency(row.amount)}
-                        </TableCell>
-                        <TableCell>
-                          <div>{row.category || "-"}</div>
-                          {row.autoCategory ? (
-                            <div className="text-xs text-emerald-700">Sugerido automaticamente</div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell>{row.status || "-"}</TableCell>
-                        <TableCell className={row.error ? "text-destructive" : "text-muted-foreground"}>
-                          {row.error || "Pronto para importar"}
-                        </TableCell>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Previa da importacao</CardTitle>
+                  <CardDescription>
+                    A categoria ou tipo sugerido aparece direto na tabela quando
+                    o CSV nao trouxer isso pronto.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Data</TableHead>
+                        <TableHead>Descricao</TableHead>
+                        <TableHead className="text-right">Valor</TableHead>
+                        <TableHead>Classificacao</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Observacao</TableHead>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                    </TableHeader>
+                    <TableBody>
+                      {previewRows.length === 0 ? (
+                        <TableRow>
+                          <TableCell
+                            colSpan={6}
+                            className="py-10 text-center text-muted-foreground"
+                          >
+                            Carregue ou cole um CSV para ver a previa.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        previewRows.slice(0, 12).map(row => (
+                          <TableRow key={row.id}>
+                            <TableCell>{row.date || "-"}</TableCell>
+                            <TableCell>
+                              <div className="font-medium">
+                                {row.description}
+                              </div>
+                              {row.counterparty ? (
+                                <div className="text-xs text-muted-foreground">
+                                  {row.counterparty}
+                                </div>
+                              ) : null}
+                              {row.extra ? (
+                                <div className="text-xs text-muted-foreground">
+                                  {row.extra}
+                                </div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {row.error
+                                ? row.amount || "-"
+                                : formatCurrency(row.amount)}
+                            </TableCell>
+                            <TableCell>
+                              <div>{row.category || "-"}</div>
+                              {row.autoCategory ? (
+                                <div className="text-xs text-emerald-700">
+                                  Sugerido automaticamente
+                                </div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell>{row.status || "-"}</TableCell>
+                            <TableCell
+                              className={
+                                row.error
+                                  ? "text-destructive"
+                                  : "text-muted-foreground"
+                              }
+                            >
+                              {row.error || "Pronto para importar"}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
             </TabsContent>
           </Tabs>
         </>
@@ -2034,7 +2356,8 @@ export default function ImportadorFinanceiro() {
             <CardHeader>
               <CardTitle>Conciliador de extrato</CardTitle>
               <CardDescription>
-                Suba um extrato bancario ou uma fatura CSV/OFX e revise a sugestao de destino de cada linha antes de importar.
+                Suba um extrato bancario ou uma fatura CSV/OFX e revise a
+                sugestao de destino de cada linha antes de importar.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
@@ -2045,26 +2368,39 @@ export default function ImportadorFinanceiro() {
                     <Select
                       value={statementSourceKind}
                       onValueChange={value =>
-                        updateStatementSourceKind(value as FinancialStatementSourceKind)
+                        updateStatementSourceKind(
+                          value as FinancialStatementSourceKind
+                        )
                       }
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="bank_account">Extrato bancario</SelectItem>
-                        <SelectItem value="credit_card">Fatura de cartao</SelectItem>
+                        <SelectItem value="bank_account">
+                          Extrato bancario
+                        </SelectItem>
+                        <SelectItem value="credit_card">
+                          Fatura de cartao
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-1.5">
                     <Label>Escopo da conta</Label>
-                    <Select value={statementScope} onValueChange={value => updateStatementScope(value as FinancialStatementScope)}>
+                    <Select
+                      value={statementScope}
+                      onValueChange={value =>
+                        updateStatementScope(value as FinancialStatementScope)
+                      }
+                    >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="empresa">Conta da empresa</SelectItem>
+                        <SelectItem value="empresa">
+                          Conta da empresa
+                        </SelectItem>
                         <SelectItem value="pessoal">Conta pessoal</SelectItem>
                         <SelectItem value="misto">Extrato misto</SelectItem>
                       </SelectContent>
@@ -2112,15 +2448,21 @@ export default function ImportadorFinanceiro() {
                     Reaplicar sugestoes
                   </Button>
                   {fileName ? (
-                    <span className="text-sm text-muted-foreground">{fileName}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {fileName}
+                    </span>
                   ) : (
-                    <span className="text-sm text-muted-foreground">Nenhum arquivo carregado</span>
+                    <span className="text-sm text-muted-foreground">
+                      Nenhum arquivo carregado
+                    </span>
                   )}
                 </div>
 
                 <div className="space-y-1.5">
                   <Label>
-                    {statementSourceKind === "credit_card" ? "Conteudo da fatura" : "Conteudo do extrato"}
+                    {statementSourceKind === "credit_card"
+                      ? "Conteudo da fatura"
+                      : "Conteudo do extrato"}
                   </Label>
                   <Textarea
                     value={rawCsv}
@@ -2129,10 +2471,13 @@ export default function ImportadorFinanceiro() {
                       setSourceFormat("csv");
                     }}
                     rows={14}
-                    placeholder={"data;descricao;valor;saldo\n2026-04-01;PIX CLIENTE ACME;1500,00;12450,32\n2026-04-02;MERCADO DO BAIRRO;-245,90;12204,42"}
+                    placeholder={
+                      "data;descricao;valor;saldo\n2026-04-01;PIX CLIENTE ACME;1500,00;12450,32\n2026-04-02;MERCADO DO BAIRRO;-245,90;12204,42"
+                    }
                   />
                   <p className="text-xs text-muted-foreground">
-                    Pode vir com `valor` assinado, colunas separadas de `credito/debito` ou em arquivo OFX.
+                    Pode vir com `valor` assinado, colunas separadas de
+                    `credito/debito` ou em arquivo OFX.
                   </p>
                 </div>
               </div>
@@ -2146,7 +2491,8 @@ export default function ImportadorFinanceiro() {
                         Regras salvas por banco ou cartao
                       </p>
                       <p className="mt-1 text-sm text-zinc-600">
-                        Salve o mapeamento atual para reaplicar em um clique na proxima importacao.
+                        Salve o mapeamento atual para reaplicar em um clique na
+                        proxima importacao.
                       </p>
                     </div>
                     <div className="rounded-full border bg-white px-3 py-1 text-xs font-medium text-zinc-700">
@@ -2165,7 +2511,11 @@ export default function ImportadorFinanceiro() {
                       onChange={event => setProfileBankName(event.target.value)}
                       placeholder="Banco ou cartao"
                     />
-                    <Button type="button" variant="outline" onClick={saveCurrentStatementProfile}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={saveCurrentStatementProfile}
+                    >
                       <Save className="mr-2 size-4" />
                       Salvar regras atuais
                     </Button>
@@ -2173,15 +2523,20 @@ export default function ImportadorFinanceiro() {
 
                   {matchedStatementProfile ? (
                     <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                      <p className="text-sm font-medium text-emerald-950">Perfil sugerido</p>
+                      <p className="text-sm font-medium text-emerald-950">
+                        Perfil sugerido
+                      </p>
                       <p className="mt-1 text-sm text-emerald-900/80">
-                        {matchedStatementProfile.name} • {matchedStatementProfile.bankName}
+                        {matchedStatementProfile.name} •{" "}
+                        {matchedStatementProfile.bankName}
                       </p>
                       <Button
                         type="button"
                         size="sm"
                         className="mt-3"
-                        onClick={() => applyStatementProfile(matchedStatementProfile)}
+                        onClick={() =>
+                          applyStatementProfile(matchedStatementProfile)
+                        }
                       >
                         Aplicar perfil sugerido
                       </Button>
@@ -2194,91 +2549,128 @@ export default function ImportadorFinanceiro() {
                         Nenhum perfil salvo para este tipo de fonte ainda.
                       </div>
                     ) : (
-                      visibleStatementProfiles
-                        .slice(0, 4)
-                        .map(profile => (
-                          <div
-                            key={profile.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-white px-4 py-3"
-                          >
-                            <div>
-                              <p className="text-sm font-medium text-zinc-900">{profile.name}</p>
-                              <p className="text-xs text-zinc-500">
-                                {profile.bankName} • {profile.scope}
-                              </p>
-                            </div>
-                            <div className="flex gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => applyStatementProfile(profile)}
-                              >
-                                Aplicar
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => deleteStatementProfile(profile.id)}
-                              >
-                                <Trash2 className="size-4" />
-                              </Button>
-                            </div>
+                      visibleStatementProfiles.slice(0, 4).map(profile => (
+                        <div
+                          key={profile.id}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-white px-4 py-3"
+                        >
+                          <div>
+                            <p className="text-sm font-medium text-zinc-900">
+                              {profile.name}
+                            </p>
+                            <p className="text-xs text-zinc-500">
+                              {profile.bankName} • {profile.scope}
+                            </p>
                           </div>
-                        ))
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => applyStatementProfile(profile)}
+                            >
+                              Aplicar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => deleteStatementProfile(profile.id)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))
                     )}
                   </div>
                 </div>
 
                 <div className="rounded-2xl border bg-zinc-50 px-4 py-4">
-                  <p className="text-sm font-medium text-zinc-900">Resumo da conciliacao</p>
+                  <p className="text-sm font-medium text-zinc-900">
+                    Resumo da conciliacao
+                  </p>
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     <div className="rounded-2xl border bg-white px-4 py-3">
-                      <p className="text-xs uppercase text-muted-foreground">Linhas validas</p>
-                      <p className="mt-1 text-2xl font-semibold">{validStatementRows.length}</p>
+                      <p className="text-xs uppercase text-muted-foreground">
+                        Linhas validas
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {validStatementRows.length}
+                      </p>
                     </div>
                     <div className="rounded-2xl border bg-white px-4 py-3">
-                      <p className="text-xs uppercase text-muted-foreground">Prontas para importar</p>
-                      <p className="mt-1 text-2xl font-semibold text-emerald-700">{statementReadyRows.length}</p>
+                      <p className="text-xs uppercase text-muted-foreground">
+                        Prontas para importar
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold text-emerald-700">
+                        {statementReadyRows.length}
+                      </p>
                     </div>
                     <div className="rounded-2xl border bg-white px-4 py-3">
-                      <p className="text-xs uppercase text-muted-foreground">Conciliadas com existentes</p>
-                      <p className="mt-1 text-2xl font-semibold text-blue-700">{statementMatchedRows.length}</p>
+                      <p className="text-xs uppercase text-muted-foreground">
+                        Conciliadas com existentes
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold text-blue-700">
+                        {statementMatchedRows.length}
+                      </p>
                     </div>
                     <div className="rounded-2xl border bg-white px-4 py-3">
-                      <p className="text-xs uppercase text-muted-foreground">Ignoradas</p>
-                      <p className="mt-1 text-2xl font-semibold">{statementIgnoredRows.length}</p>
+                      <p className="text-xs uppercase text-muted-foreground">
+                        Ignoradas
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {statementIgnoredRows.length}
+                      </p>
                     </div>
                     <div className="rounded-2xl border bg-white px-4 py-3">
-                      <p className="text-xs uppercase text-muted-foreground">Valor conciliado</p>
-                      <p className="mt-1 text-2xl font-semibold">{formatCurrency(statementAmount)}</p>
+                      <p className="text-xs uppercase text-muted-foreground">
+                        Valor conciliado
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {formatCurrency(statementAmount)}
+                      </p>
                     </div>
                   </div>
                 </div>
 
                 <div className="rounded-2xl border bg-zinc-50 px-4 py-4 text-sm text-zinc-600">
-                  <p className="font-medium text-zinc-900">Leitura automatica</p>
+                  <p className="font-medium text-zinc-900">
+                    Leitura automatica
+                  </p>
                   <p className="mt-2">
-                    O conciliador sugere destino com base no sinal do valor, tipo da fonte, contexto da conta e palavras-chave da descricao.
+                    O conciliador sugere destino com base no sinal do valor,
+                    tipo da fonte, contexto da conta e palavras-chave da
+                    descricao.
                   </p>
                 </div>
 
                 <div className="rounded-2xl border bg-zinc-50 px-4 py-4">
-                  <p className="text-sm font-medium text-zinc-900">Distribuicao atual</p>
+                  <p className="text-sm font-medium text-zinc-900">
+                    Distribuicao atual
+                  </p>
                   <div className="mt-3 grid gap-2">
-                    {([
-                      "revenues",
-                      "company_variable_costs",
-                      "personal_variable_costs",
-                      "investments",
-                      "reserve_company",
-                      "reserve_personal",
-                      "skip",
-                    ] as FinancialStatementSelectableTarget[]).map(targetOption => (
-                      <div key={targetOption} className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">{getStatementTargetLabel(targetOption)}</span>
-                        <span className="font-medium text-zinc-900">{statementCounts[targetOption] ?? 0}</span>
+                    {(
+                      [
+                        "revenues",
+                        "company_variable_costs",
+                        "personal_variable_costs",
+                        "investments",
+                        "reserve_company",
+                        "reserve_personal",
+                        "skip",
+                      ] as FinancialStatementSelectableTarget[]
+                    ).map(targetOption => (
+                      <div
+                        key={targetOption}
+                        className="flex items-center justify-between text-sm"
+                      >
+                        <span className="text-muted-foreground">
+                          {getStatementTargetLabel(targetOption)}
+                        </span>
+                        <span className="font-medium text-zinc-900">
+                          {statementCounts[targetOption] ?? 0}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -2286,7 +2678,9 @@ export default function ImportadorFinanceiro() {
 
                 <Button
                   className="w-full"
-                  disabled={importMixedMut.isPending || !statementReadyRows.length}
+                  disabled={
+                    importMixedMut.isPending || !statementReadyRows.length
+                  }
                   onClick={handleStatementImport}
                 >
                   {importMixedMut.isPending
@@ -2301,19 +2695,23 @@ export default function ImportadorFinanceiro() {
             <CardHeader>
               <CardTitle>Mapeamento do extrato</CardTitle>
               <CardDescription>
-                Data e valor com sinal sao obrigatorios, mas voce tambem pode mapear credito/debito separados. Saldo e contraparte ajudam a melhorar a sugestao.
+                Data e valor com sinal sao obrigatorios, mas voce tambem pode
+                mapear credito/debito separados. Saldo e contraparte ajudam a
+                melhorar a sugestao.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
-              {([
-                ["date", "Data"],
-                ["description", "Descricao"],
-                ["amount", "Valor com sinal"],
-                ["credit", "Credito"],
-                ["debit", "Debito"],
-                ["counterparty", "Contraparte"],
-                ["balance", "Saldo"],
-              ] as Array<[FinancialImportColumnKey, string]>).map(([key, label]) => (
+              {(
+                [
+                  ["date", "Data"],
+                  ["description", "Descricao"],
+                  ["amount", "Valor com sinal"],
+                  ["credit", "Credito"],
+                  ["debit", "Debito"],
+                  ["counterparty", "Contraparte"],
+                  ["balance", "Saldo"],
+                ] as Array<[FinancialImportColumnKey, string]>
+              ).map(([key, label]) => (
                 <div key={key} className="space-y-1.5">
                   <Label>{label}</Label>
                   <Select
@@ -2346,7 +2744,8 @@ export default function ImportadorFinanceiro() {
             <CardHeader>
               <CardTitle>Previa conciliada</CardTitle>
               <CardDescription>
-                Revise o destino sugerido de cada linha e ajuste quando quiser antes de importar.
+                Revise o destino sugerido de cada linha e ajuste quando quiser
+                antes de importar.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -2365,7 +2764,10 @@ export default function ImportadorFinanceiro() {
                 <TableBody>
                   {statementRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                      <TableCell
+                        colSpan={7}
+                        className="py-10 text-center text-muted-foreground"
+                      >
                         Carregue ou cole um extrato para ver a conciliacao.
                       </TableCell>
                     </TableRow>
@@ -2381,9 +2783,12 @@ export default function ImportadorFinanceiro() {
                             </div>
                           ) : null}
                           {row.counterparty ? (
-                            <div className="text-xs text-muted-foreground">{row.counterparty}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {row.counterparty}
+                            </div>
                           ) : null}
-                          {row.originalDescription && row.originalDescription !== row.description ? (
+                          {row.originalDescription &&
+                          row.originalDescription !== row.description ? (
                             <div className="text-xs text-muted-foreground">
                               Original: {row.originalDescription}
                             </div>
@@ -2394,14 +2799,17 @@ export default function ImportadorFinanceiro() {
                             </div>
                           ) : null}
                         </TableCell>
-                        <TableCell className={`text-right font-medium ${row.signedAmount < 0 ? "text-rose-600" : "text-emerald-700"}`}>
+                        <TableCell
+                          className={`text-right font-medium ${row.signedAmount < 0 ? "text-rose-600" : "text-emerald-700"}`}
+                        >
                           {row.signedAmount < 0 ? "-" : "+"}
                           {formatCurrency(row.absoluteAmount)}
                         </TableCell>
                         <TableCell>
                           <div className="text-sm">{row.reason}</div>
                           <div className="text-xs text-muted-foreground">
-                            Confianca {row.confidence} • sugestao {getStatementTargetLabel(row.suggestedTarget)}
+                            Confianca {row.confidence} • sugestao{" "}
+                            {getStatementTargetLabel(row.suggestedTarget)}
                           </div>
                         </TableCell>
                         <TableCell className="min-w-[220px]">
@@ -2410,7 +2818,8 @@ export default function ImportadorFinanceiro() {
                             onValueChange={value =>
                               setStatementTargetOverrides(current => ({
                                 ...current,
-                                [row.id]: value as FinancialStatementSelectableTarget,
+                                [row.id]:
+                                  value as FinancialStatementSelectableTarget,
                               }))
                             }
                           >
@@ -2418,17 +2827,22 @@ export default function ImportadorFinanceiro() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {([
-                                "skip",
-                                "revenues",
-                                "company_variable_costs",
-                                "personal_variable_costs",
-                                "debts",
-                                "investments",
-                                "reserve_company",
-                                "reserve_personal",
-                              ] as FinancialStatementSelectableTarget[]).map(option => (
-                                <SelectItem key={`${row.id}-${option}`} value={option}>
+                              {(
+                                [
+                                  "skip",
+                                  "revenues",
+                                  "company_variable_costs",
+                                  "personal_variable_costs",
+                                  "debts",
+                                  "investments",
+                                  "reserve_company",
+                                  "reserve_personal",
+                                ] as FinancialStatementSelectableTarget[]
+                              ).map(option => (
+                                <SelectItem
+                                  key={`${row.id}-${option}`}
+                                  value={option}
+                                >
                                   {getStatementTargetLabel(option)}
                                 </SelectItem>
                               ))}
@@ -2444,22 +2858,29 @@ export default function ImportadorFinanceiro() {
                               <Select
                                 value={row.reconciliationMode || "create"}
                                 onValueChange={value =>
-                                  setStatementReconciliationOverrides(current => ({
-                                    ...current,
-                                    [row.id]: value as "create" | "update",
-                                  }))
+                                  setStatementReconciliationOverrides(
+                                    current => ({
+                                      ...current,
+                                      [row.id]: value as "create" | "update",
+                                    })
+                                  )
                                 }
                               >
                                 <SelectTrigger>
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="create">Criar novo</SelectItem>
-                                  <SelectItem value="update">Atualizar existente</SelectItem>
+                                  <SelectItem value="create">
+                                    Criar novo
+                                  </SelectItem>
+                                  <SelectItem value="update">
+                                    Atualizar existente
+                                  </SelectItem>
                                 </SelectContent>
                               </Select>
                               <div className="mt-2 text-xs text-muted-foreground">
-                                #{row.matchedExisting.id} • {row.matchedExisting.label}
+                                #{row.matchedExisting.id} •{" "}
+                                {row.matchedExisting.label}
                               </div>
                             </>
                           ) : (
@@ -2468,10 +2889,17 @@ export default function ImportadorFinanceiro() {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell className={row.error ? "text-destructive" : "text-muted-foreground"}>
+                        <TableCell
+                          className={
+                            row.error
+                              ? "text-destructive"
+                              : "text-muted-foreground"
+                          }
+                        >
                           {row.error
                             ? row.error
-                            : row.matchedExisting && row.reconciliationMode === "update"
+                            : row.matchedExisting &&
+                                row.reconciliationMode === "update"
                               ? `Pronto para atualizar o lancamento #${row.matchedExisting.id}`
                               : row.installmentNumber === 1 &&
                                   row.installmentCount &&

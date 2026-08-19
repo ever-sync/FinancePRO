@@ -1,11 +1,8 @@
 import { StatusBadge } from "@/components/StatusBadge";
+import { TablePagination } from "@/components/TablePagination";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +19,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
@@ -33,7 +37,9 @@ import { toast } from "sonner";
 
 export default function Dividas() {
   const utils = trpc.useUtils();
-  const { data: items = [], isLoading } = trpc.debts.list.useQuery();
+  const { page, limit, setPage, setLimit } = useTablePagination();
+  const { data: items, isLoading } = trpc.debts.list.useQuery({ page, limit });
+  const rows = items?.data ?? [];
   const createMut = trpc.debts.create.useMutation({
     onSuccess: () => {
       utils.debts.list.invalidate();
@@ -61,21 +67,32 @@ export default function Dividas() {
     createMut.mutate({
       creditor: fd.get("creditor") as string,
       description: fd.get("description") as string,
-      originalAmount: (parseFloat(fd.get("originalAmount") as string) || 0).toFixed(2),
-      currentBalance: (parseFloat(fd.get("currentBalance") as string) || 0).toFixed(2),
-      monthlyPayment: (parseFloat(fd.get("monthlyPayment") as string) || 0).toFixed(2),
-      interestRate: (parseFloat(fd.get("interestRate") as string) || 0).toFixed(2),
+      originalAmount: (
+        parseFloat(fd.get("originalAmount") as string) || 0
+      ).toFixed(2),
+      currentBalance: (
+        parseFloat(fd.get("currentBalance") as string) || 0
+      ).toFixed(2),
+      monthlyPayment: (
+        parseFloat(fd.get("monthlyPayment") as string) || 0
+      ).toFixed(2),
+      interestRate: (parseFloat(fd.get("interestRate") as string) || 0).toFixed(
+        2
+      ),
       totalInstallments: parseInt(fd.get("totalInstallments") as string) || 1,
       paidInstallments: parseInt(fd.get("paidInstallments") as string) || 0,
       dueDay: parseInt(fd.get("dueDay") as string) || 1,
       status:
-        (fd.get("status") as "ativa" | "atrasada" | "quitada" | "renegociada") ||
-        "ativa",
+        (fd.get("status") as
+          | "ativa"
+          | "atrasada"
+          | "quitada"
+          | "renegociada") || "ativa",
       priority: (fd.get("priority") as "alta" | "media" | "baixa") || "media",
     });
   };
 
-  const payInstallment = (item: typeof items[0]) => {
+  const payInstallment = (item: (typeof rows)[number]) => {
     const newPaid = item.paidInstallments + 1;
     const newBalance = Math.max(
       parseFloat(item.currentBalance) - parseFloat(item.monthlyPayment),
@@ -90,15 +107,9 @@ export default function Dividas() {
     });
   };
 
-  const openDebts = items.filter(item => item.status !== "quitada");
-  const totalBalance = openDebts.reduce(
-    (sum, item) => sum + parseFloat(item.currentBalance),
-    0
-  );
-  const totalMonthly = openDebts.reduce(
-    (sum, item) => sum + parseFloat(item.monthlyPayment),
-    0
-  );
+  const openDebts = rows.filter(item => item.status !== "quitada");
+  const totalBalance = Number(items?.summary.totalBalance ?? 0);
+  const totalMonthly = Number(items?.summary.totalMonthly ?? 0);
 
   const avalancheOrder = [...openDebts].sort(
     (a, b) => parseFloat(b.interestRate) - parseFloat(a.interestRate)
@@ -138,15 +149,30 @@ export default function Dividas() {
                 </div>
                 <div>
                   <Label>Valor Original (R$)</Label>
-                  <Input name="originalAmount" type="number" step="0.01" required />
+                  <Input
+                    name="originalAmount"
+                    type="number"
+                    step="0.01"
+                    required
+                  />
                 </div>
                 <div>
                   <Label>Saldo Atual (R$)</Label>
-                  <Input name="currentBalance" type="number" step="0.01" required />
+                  <Input
+                    name="currentBalance"
+                    type="number"
+                    step="0.01"
+                    required
+                  />
                 </div>
                 <div>
                   <Label>Parcela Mensal (R$)</Label>
-                  <Input name="monthlyPayment" type="number" step="0.01" required />
+                  <Input
+                    name="monthlyPayment"
+                    type="number"
+                    step="0.01"
+                    required
+                  />
                 </div>
                 <div>
                   <Label>Taxa Juros (% a.m.)</Label>
@@ -154,15 +180,31 @@ export default function Dividas() {
                 </div>
                 <div>
                   <Label>Total Parcelas</Label>
-                  <Input name="totalInstallments" type="number" min="1" required />
+                  <Input
+                    name="totalInstallments"
+                    type="number"
+                    min="1"
+                    required
+                  />
                 </div>
                 <div>
                   <Label>Parcelas Pagas</Label>
-                  <Input name="paidInstallments" type="number" min="0" defaultValue="0" />
+                  <Input
+                    name="paidInstallments"
+                    type="number"
+                    min="0"
+                    defaultValue="0"
+                  />
                 </div>
                 <div>
                   <Label>Dia Vencimento</Label>
-                  <Input name="dueDay" type="number" min="1" max="31" required />
+                  <Input
+                    name="dueDay"
+                    type="number"
+                    min="1"
+                    max="31"
+                    required
+                  />
                 </div>
                 <div>
                   <Label>Status</Label>
@@ -192,7 +234,11 @@ export default function Dividas() {
                   </Select>
                 </div>
               </div>
-              <Button type="submit" className="w-full" disabled={createMut.isPending}>
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={createMut.isPending}
+              >
                 {createMut.isPending ? "Salvando..." : "Adicionar"}
               </Button>
             </form>
@@ -204,7 +250,9 @@ export default function Dividas() {
         <Card>
           <CardContent className="flex items-center justify-between pt-6">
             <div>
-              <p className="text-xs uppercase text-muted-foreground">Dívida Total</p>
+              <p className="text-xs uppercase text-muted-foreground">
+                Dívida Total
+              </p>
               <p className="mt-1 text-2xl font-bold text-destructive">
                 {formatCurrency(totalBalance)}
               </p>
@@ -216,14 +264,22 @@ export default function Dividas() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs uppercase text-muted-foreground">Parcelas Mensais</p>
-            <p className="mt-1 text-2xl font-bold">{formatCurrency(totalMonthly)}</p>
+            <p className="text-xs uppercase text-muted-foreground">
+              Parcelas Mensais
+            </p>
+            <p className="mt-1 text-2xl font-bold">
+              {formatCurrency(totalMonthly)}
+            </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs uppercase text-muted-foreground">Dívidas em Aberto</p>
-            <p className="mt-1 text-2xl font-bold">{openDebts.length}</p>
+            <p className="text-xs uppercase text-muted-foreground">
+              Dívidas em Aberto
+            </p>
+            <p className="mt-1 text-2xl font-bold">
+              {items?.summary.openCount ?? 0}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -232,13 +288,14 @@ export default function Dividas() {
         <Card className="border-chart-3/30 bg-chart-3/5">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
-              <TrendingDown className="h-4 w-4" /> Método Avalanche - Ordem de Prioridade
+              <TrendingDown className="h-4 w-4" /> Método Avalanche - Ordem de
+              Prioridade
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-xs text-muted-foreground">
-              Pague primeiro as dívidas com maior taxa de juros para economizar mais no
-              longo prazo.
+              Pague primeiro as dívidas com maior taxa de juros para economizar
+              mais no longo prazo.
             </p>
             <div className="space-y-3">
               {avalancheOrder.map((debt, i) => {
@@ -263,9 +320,12 @@ export default function Dividas() {
                       <Progress value={progress} className="h-2" />
                       <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
                         <span>
-                          {debt.paidInstallments}/{debt.totalInstallments} parcelas
+                          {debt.paidInstallments}/{debt.totalInstallments}{" "}
+                          parcelas
                         </span>
-                        <span>Saldo: {formatCurrency(debt.currentBalance)}</span>
+                        <span>
+                          Saldo: {formatCurrency(debt.currentBalance)}
+                        </span>
                       </div>
                     </div>
                     <Button
@@ -304,18 +364,24 @@ export default function Dividas() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={10}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Carregando...
                   </TableCell>
                 </TableRow>
-              ) : items.length === 0 ? (
+              ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={10}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Nenhuma dívida cadastrada
                   </TableCell>
                 </TableRow>
               ) : (
-                items.map(item => (
+                rows.map(item => (
                   <TableRow
                     key={item.id}
                     className={cn(
@@ -323,7 +389,9 @@ export default function Dividas() {
                       item.status === "atrasada" && "bg-rose-50/50"
                     )}
                   >
-                    <TableCell className="font-medium">{item.creditor}</TableCell>
+                    <TableCell className="font-medium">
+                      {item.creditor}
+                    </TableCell>
                     <TableCell>{item.description}</TableCell>
                     <TableCell className="text-right">
                       {formatCurrency(item.originalAmount)}
@@ -359,6 +427,11 @@ export default function Dividas() {
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            pagination={items?.pagination}
+            onPageChange={setPage}
+            onPageSizeChange={setLimit}
+          />
         </CardContent>
       </Card>
     </div>

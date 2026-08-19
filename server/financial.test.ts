@@ -75,7 +75,21 @@ vi.mock("./db", () => {
   return {
     getSettings: vi.fn().mockResolvedValue(mockSettings),
     upsertSettings: vi.fn().mockResolvedValue(undefined),
-    getRevenues: vi.fn().mockResolvedValue([mockRevenue]),
+    getRevenues: vi.fn().mockResolvedValue({
+      data: [mockRevenue],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 1,
+        totalPages: 1,
+        hasMore: false,
+      },
+      summary: {
+        totalGross: "10000.00",
+        totalNet: "9400.00",
+        totalReceived: "0.00",
+      },
+    }),
     createRevenue: vi.fn().mockResolvedValue(mockRevenue),
     updateRevenue: vi.fn().mockResolvedValue(undefined),
     deleteRevenue: vi.fn().mockResolvedValue(undefined),
@@ -83,11 +97,35 @@ vi.mock("./db", () => {
     createCompanyFixedCost: vi.fn().mockResolvedValue({ id: 1 }),
     updateCompanyFixedCost: vi.fn().mockResolvedValue(undefined),
     deleteCompanyFixedCost: vi.fn().mockResolvedValue(undefined),
-    getCompanyVariableCosts: vi.fn().mockResolvedValue([]),
+    getCompanyVariableCosts: vi.fn().mockResolvedValue({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 1,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+      },
+      summary: { totalAmount: "0.00" },
+    }),
     createCompanyVariableCost: vi.fn().mockResolvedValue({ id: 1 }),
     updateCompanyVariableCost: vi.fn().mockResolvedValue(undefined),
     deleteCompanyVariableCost: vi.fn().mockResolvedValue(undefined),
-    getEmployees: vi.fn().mockResolvedValue([mockEmployee]),
+    getEmployees: vi.fn().mockResolvedValue({
+      data: [mockEmployee],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 1,
+        totalPages: 1,
+        hasMore: false,
+      },
+      summary: {
+        activeCount: 1,
+        totalActiveSalary: "3000.00",
+        totalActiveCost: "3823.33",
+      },
+    }),
     createEmployee: vi.fn().mockResolvedValue(mockEmployee),
     updateEmployee: vi.fn().mockResolvedValue(undefined),
     deleteEmployee: vi.fn().mockResolvedValue(undefined),
@@ -102,18 +140,91 @@ vi.mock("./db", () => {
     createPersonalFixedCost: vi.fn().mockResolvedValue({ id: 1 }),
     updatePersonalFixedCost: vi.fn().mockResolvedValue(undefined),
     deletePersonalFixedCost: vi.fn().mockResolvedValue(undefined),
-    getPersonalVariableCosts: vi.fn().mockResolvedValue([]),
+    getPersonalVariableCosts: vi.fn().mockResolvedValue({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 1,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+      },
+      summary: { totalAmount: "0.00" },
+    }),
     createPersonalVariableCost: vi.fn().mockResolvedValue({ id: 1 }),
     updatePersonalVariableCost: vi.fn().mockResolvedValue(undefined),
     deletePersonalVariableCost: vi.fn().mockResolvedValue(undefined),
     getDebts: vi.fn().mockResolvedValue([mockDebt]),
+    getDebtsPage: vi.fn().mockResolvedValue({
+      data: [mockDebt],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 1,
+        totalPages: 1,
+        hasMore: false,
+      },
+      summary: {
+        openCount: 1,
+        totalBalance: "30000.00",
+        totalMonthly: "2000.00",
+      },
+    }),
     createDebt: vi.fn().mockResolvedValue(mockDebt),
     updateDebt: vi.fn().mockResolvedValue(undefined),
     deleteDebt: vi.fn().mockResolvedValue(undefined),
     getInvestments: vi.fn().mockResolvedValue([]),
+    getInvestmentsPage: vi.fn().mockResolvedValue({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+      },
+      summary: {
+        totalDeposited: "0.00",
+        totalBalance: "0.00",
+        totalYield: "0.00",
+      },
+    }),
     createInvestment: vi.fn().mockResolvedValue({ id: 1 }),
     deleteInvestment: vi.fn().mockResolvedValue(undefined),
     getReserveFunds: vi.fn().mockResolvedValue([]),
+    getReserveFundsPage: vi.fn().mockResolvedValue({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+      },
+      summary: { totalAmount: "0.00" },
+    }),
+    getClientsPage: vi.fn().mockResolvedValue({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+      },
+      summary: { categoryCount: 0 },
+    }),
+    getServicesPage: vi.fn().mockResolvedValue({
+      data: [],
+      pagination: {
+        page: 1,
+        limit: 25,
+        total: 0,
+        totalPages: 0,
+        hasMore: false,
+      },
+      summary: { activeCount: 0, totalPortfolio: "0.00" },
+    }),
     createReserveFund: vi.fn().mockResolvedValue({ id: 1 }),
     deleteReserveFund: vi.fn().mockResolvedValue(undefined),
     getCalendarData: vi.fn().mockResolvedValue([]),
@@ -201,9 +312,13 @@ describe("Revenues Router", () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const result = await caller.revenues.list({ month: 3, year: 2026 });
-    expect(result).toHaveLength(1);
-    expect(result[0].grossAmount).toBe("10000.00");
-    expect(result[0].taxAmount).toBe("600.00");
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].grossAmount).toBe("10000.00");
+    expect(result.data[0].taxAmount).toBe("600.00");
+    expect(db.getRevenues).toHaveBeenCalledWith(1, 3, 2026, {
+      page: 1,
+      limit: 25,
+    });
   });
 
   it("creates a new revenue entry", async () => {
@@ -253,13 +368,26 @@ describe("Revenues Router", () => {
 });
 
 describe("Employees Router", () => {
-  it("lists all employees", async () => {
+  it("lists employees with bounded pagination", async () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const result = await caller.employees.list();
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("João Silva");
-    expect(result[0].totalCost).toBe("3823.33");
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].name).toBe("João Silva");
+    expect(result.data[0].totalCost).toBe("3823.33");
+    expect(result.summary.activeCount).toBe(1);
+    expect(db.getEmployees).toHaveBeenCalledWith(1, {
+      page: 1,
+      limit: 25,
+    });
+  });
+
+  it("rejects page sizes above the server limit", async () => {
+    const caller = appRouter.createCaller(createAuthContext());
+    await expect(
+      caller.employees.list({ page: 1, limit: 101 })
+    ).rejects.toThrow();
+    expect(db.getEmployees).not.toHaveBeenCalled();
   });
 
   it("creates a new employee", async () => {
@@ -329,14 +457,29 @@ describe("Variable Costs Router", () => {
   });
 });
 
+describe("Financial Imports Router", () => {
+  it("loads reconciliation data through one protected endpoint", async () => {
+    const caller = appRouter.createCaller(createAuthContext());
+    const result = await caller.financialImports.reconciliationData();
+
+    expect(result.revenues).toHaveLength(1);
+    expect(result.debts).toHaveLength(1);
+    expect(result.truncated).toBe(false);
+    expect(db.getRevenues).toHaveBeenCalledWith(1);
+    expect(db.getCompanyVariableCosts).toHaveBeenCalledWith(1);
+    expect(db.getPersonalVariableCosts).toHaveBeenCalledWith(1);
+  });
+});
+
 describe("Debts Router", () => {
-  it("lists all debts", async () => {
+  it("lists debts with global summary", async () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const result = await caller.debts.list();
-    expect(result).toHaveLength(1);
-    expect(result[0].creditor).toBe("Banco X");
-    expect(result[0].status).toBe("ativa");
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].creditor).toBe("Banco X");
+    expect(result.data[0].status).toBe("ativa");
+    expect(result.summary.totalBalance).toBe("30000.00");
   });
 
   it("creates a new debt", async () => {

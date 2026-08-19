@@ -37,7 +37,11 @@ import {
   InsertService,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
-import type { PaginationParams, PaginatedResult } from "./db/utils/pagination";
+import type {
+  PaginationParams,
+  PaginatedResult,
+  PaginatedResultWithSummary,
+} from "./db/utils/pagination";
 import { calculatePagination, resolvePagination } from "./db/utils/pagination";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -483,9 +487,27 @@ export async function getRevenues(
   month?: number,
   year?: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof revenues.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof revenues.$inferSelect,
+    {
+      totalGross: string;
+      totalNet: string;
+      totalReceived: string;
+    }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: {
+        totalGross: "0.00",
+        totalNet: "0.00",
+        totalReceived: "0.00",
+      },
+    };
 
   const conditions = [eq(revenues.userId, userId)];
   if (month !== undefined && year !== undefined) {
@@ -498,11 +520,16 @@ export async function getRevenues(
   }
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      totalGross: sql<string>`COALESCE(SUM(${revenues.grossAmount}), 0)`,
+      totalNet: sql<string>`COALESCE(SUM(${revenues.netAmount}), 0)`,
+      totalReceived: sql<string>`COALESCE(SUM(CASE WHEN ${revenues.status} = 'recebido' THEN ${revenues.grossAmount} ELSE 0 END), 0)`,
+    })
     .from(revenues)
     .where(and(...conditions));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -523,6 +550,11 @@ export async function getRevenues(
   return {
     data,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      totalGross: String(summaryResult[0]?.totalGross ?? "0.00"),
+      totalNet: String(summaryResult[0]?.totalNet ?? "0.00"),
+      totalReceived: String(summaryResult[0]?.totalReceived ?? "0.00"),
+    },
   };
 }
 
@@ -595,20 +627,34 @@ export async function getCompanyFixedCosts(
   month?: number,
   year?: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof companyFixedCosts.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof companyFixedCosts.$inferSelect,
+    { totalAmount: string; paidAmount: string }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: { totalAmount: "0.00", paidAmount: "0.00" },
+    };
 
   const conditions = [eq(companyFixedCosts.userId, userId)];
   if (month !== undefined) conditions.push(eq(companyFixedCosts.month, month));
   if (year !== undefined) conditions.push(eq(companyFixedCosts.year, year));
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${companyFixedCosts.amount}), 0)`,
+      paidAmount: sql<string>`COALESCE(SUM(CASE WHEN ${companyFixedCosts.status} = 'pago' THEN ${companyFixedCosts.amount} ELSE 0 END), 0)`,
+    })
     .from(companyFixedCosts)
     .where(and(...conditions));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -646,25 +692,27 @@ export async function getCompanyFixedCosts(
         const templates = allRecords.filter(
           r => r.year === srcYear && r.month === srcMonth
         );
-        await db
-          .insert(companyFixedCosts)
-          .values(
-            templates.map(t => ({
-              userId,
-              description: t.description,
-              category: t.category,
-              amount: t.amount,
-              dueDay: t.dueDay,
-              month,
-              year,
-              status: "pendente" as const,
-            }))
-          );
-        const newCountResult = await db
-          .select({ count: count() })
+        await db.insert(companyFixedCosts).values(
+          templates.map(t => ({
+            userId,
+            description: t.description,
+            category: t.category,
+            amount: t.amount,
+            dueDay: t.dueDay,
+            month,
+            year,
+            status: "pendente" as const,
+          }))
+        );
+        const newSummaryResult = await db
+          .select({
+            count: count(),
+            totalAmount: sql<string>`COALESCE(SUM(${companyFixedCosts.amount}), 0)`,
+            paidAmount: sql<string>`COALESCE(SUM(CASE WHEN ${companyFixedCosts.status} = 'pago' THEN ${companyFixedCosts.amount} ELSE 0 END), 0)`,
+          })
           .from(companyFixedCosts)
           .where(and(...conditions));
-        const newTotal = Number(newCountResult[0]?.count ?? 0);
+        const newTotal = Number(newSummaryResult[0]?.count ?? 0);
         const hydratedPagination = resolvePagination(pagination, newTotal);
         const newData = await db
           .select()
@@ -681,6 +729,10 @@ export async function getCompanyFixedCosts(
             hydratedPagination.limit,
             newTotal
           ),
+          summary: {
+            totalAmount: String(newSummaryResult[0]?.totalAmount ?? "0.00"),
+            paidAmount: String(newSummaryResult[0]?.paidAmount ?? "0.00"),
+          },
         };
       }
     }
@@ -689,6 +741,10 @@ export async function getCompanyFixedCosts(
   return {
     data: existing,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      totalAmount: String(summaryResult[0]?.totalAmount ?? "0.00"),
+      paidAmount: String(summaryResult[0]?.paidAmount ?? "0.00"),
+    },
   };
 }
 
@@ -733,9 +789,19 @@ export async function getCompanyVariableCosts(
   month?: number,
   year?: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof companyVariableCosts.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof companyVariableCosts.$inferSelect,
+    { totalAmount: string }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: { totalAmount: "0.00" },
+    };
 
   const conditions = [eq(companyVariableCosts.userId, userId)];
   if (month !== undefined && year !== undefined) {
@@ -748,11 +814,14 @@ export async function getCompanyVariableCosts(
   }
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${companyVariableCosts.amount}), 0)`,
+    })
     .from(companyVariableCosts)
     .where(and(...conditions));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -774,6 +843,9 @@ export async function getCompanyVariableCosts(
   return {
     data,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      totalAmount: String(summaryResult[0]?.totalAmount ?? "0.00"),
+    },
   };
 }
 
@@ -838,16 +910,39 @@ export async function deleteCompanyVariableCost(id: number, userId: number) {
 export async function getEmployees(
   userId: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof employees.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof employees.$inferSelect,
+    {
+      activeCount: number;
+      totalActiveSalary: string;
+      totalActiveCost: string;
+    }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: {
+        activeCount: 0,
+        totalActiveSalary: "0.00",
+        totalActiveCost: "0.00",
+      },
+    };
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      activeCount: sql<number>`COUNT(*) FILTER (WHERE ${employees.status} = 'ativo')`,
+      totalActiveSalary: sql<string>`COALESCE(SUM(CASE WHEN ${employees.status} = 'ativo' THEN ${employees.salary} ELSE 0 END), 0)`,
+      totalActiveCost: sql<string>`COALESCE(SUM(CASE WHEN ${employees.status} = 'ativo' THEN ${employees.totalCost} ELSE 0 END), 0)`,
+    })
     .from(employees)
     .where(eq(employees.userId, userId));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -868,6 +963,11 @@ export async function getEmployees(
   return {
     data,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      activeCount: Number(summaryResult[0]?.activeCount ?? 0),
+      totalActiveSalary: String(summaryResult[0]?.totalActiveSalary ?? "0.00"),
+      totalActiveCost: String(summaryResult[0]?.totalActiveCost ?? "0.00"),
+    },
   };
 }
 
@@ -906,16 +1006,29 @@ export async function deleteEmployee(id: number, userId: number) {
 export async function getSuppliers(
   userId: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof suppliers.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof suppliers.$inferSelect,
+    { categoryCount: number }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: { categoryCount: 0 },
+    };
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      categoryCount: sql<number>`COUNT(DISTINCT ${suppliers.category}) FILTER (WHERE ${suppliers.category} IS NOT NULL AND ${suppliers.category} <> '')`,
+    })
     .from(suppliers)
     .where(eq(suppliers.userId, userId));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -936,6 +1049,9 @@ export async function getSuppliers(
   return {
     data,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      categoryCount: Number(summaryResult[0]?.categoryCount ?? 0),
+    },
   };
 }
 
@@ -1075,20 +1191,34 @@ export async function getPersonalFixedCosts(
   month?: number,
   year?: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof personalFixedCosts.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof personalFixedCosts.$inferSelect,
+    { totalAmount: string; paidAmount: string }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: { totalAmount: "0.00", paidAmount: "0.00" },
+    };
 
   const conditions = [eq(personalFixedCosts.userId, userId)];
   if (month !== undefined) conditions.push(eq(personalFixedCosts.month, month));
   if (year !== undefined) conditions.push(eq(personalFixedCosts.year, year));
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${personalFixedCosts.amount}), 0)`,
+      paidAmount: sql<string>`COALESCE(SUM(CASE WHEN ${personalFixedCosts.status} = 'pago' THEN ${personalFixedCosts.amount} ELSE 0 END), 0)`,
+    })
     .from(personalFixedCosts)
     .where(and(...conditions));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -1126,25 +1256,27 @@ export async function getPersonalFixedCosts(
         const templates = allRecords.filter(
           r => r.year === srcYear && r.month === srcMonth
         );
-        await db
-          .insert(personalFixedCosts)
-          .values(
-            templates.map(t => ({
-              userId,
-              description: t.description,
-              category: t.category,
-              amount: t.amount,
-              dueDay: t.dueDay,
-              month,
-              year,
-              status: "pendente" as const,
-            }))
-          );
-        const newCountResult = await db
-          .select({ count: count() })
+        await db.insert(personalFixedCosts).values(
+          templates.map(t => ({
+            userId,
+            description: t.description,
+            category: t.category,
+            amount: t.amount,
+            dueDay: t.dueDay,
+            month,
+            year,
+            status: "pendente" as const,
+          }))
+        );
+        const newSummaryResult = await db
+          .select({
+            count: count(),
+            totalAmount: sql<string>`COALESCE(SUM(${personalFixedCosts.amount}), 0)`,
+            paidAmount: sql<string>`COALESCE(SUM(CASE WHEN ${personalFixedCosts.status} = 'pago' THEN ${personalFixedCosts.amount} ELSE 0 END), 0)`,
+          })
           .from(personalFixedCosts)
           .where(and(...conditions));
-        const newTotal = Number(newCountResult[0]?.count ?? 0);
+        const newTotal = Number(newSummaryResult[0]?.count ?? 0);
         const hydratedPagination = resolvePagination(pagination, newTotal);
         const newData = await db
           .select()
@@ -1161,6 +1293,10 @@ export async function getPersonalFixedCosts(
             hydratedPagination.limit,
             newTotal
           ),
+          summary: {
+            totalAmount: String(newSummaryResult[0]?.totalAmount ?? "0.00"),
+            paidAmount: String(newSummaryResult[0]?.paidAmount ?? "0.00"),
+          },
         };
       }
     }
@@ -1169,6 +1305,10 @@ export async function getPersonalFixedCosts(
   return {
     data: existing,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      totalAmount: String(summaryResult[0]?.totalAmount ?? "0.00"),
+      paidAmount: String(summaryResult[0]?.paidAmount ?? "0.00"),
+    },
   };
 }
 
@@ -1213,9 +1353,19 @@ export async function getPersonalVariableCosts(
   month?: number,
   year?: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof personalVariableCosts.$inferSelect>> {
+): Promise<
+  PaginatedResultWithSummary<
+    typeof personalVariableCosts.$inferSelect,
+    { totalAmount: string }
+  >
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      summary: { totalAmount: "0.00" },
+    };
 
   const conditions = [eq(personalVariableCosts.userId, userId)];
   if (month !== undefined && year !== undefined) {
@@ -1228,11 +1378,14 @@ export async function getPersonalVariableCosts(
   }
 
   // Contagem total
-  const countResult = await db
-    .select({ count: count() })
+  const summaryResult = await db
+    .select({
+      count: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${personalVariableCosts.amount}), 0)`,
+    })
     .from(personalVariableCosts)
     .where(and(...conditions));
-  const total = Number(countResult[0]?.count ?? 0);
+  const total = Number(summaryResult[0]?.count ?? 0);
 
   // Paginação e ordenação
   const { page, limit } = resolvePagination(pagination, total);
@@ -1254,6 +1407,9 @@ export async function getPersonalVariableCosts(
   return {
     data,
     pagination: calculatePagination(page, limit, total),
+    summary: {
+      totalAmount: String(summaryResult[0]?.totalAmount ?? "0.00"),
+    },
   };
 }
 
@@ -1325,6 +1481,53 @@ export async function getDebts(userId: number) {
     .orderBy(desc(debts.interestRate));
 }
 
+export async function getDebtsPage(
+  userId: number,
+  pagination: PaginationParams
+): Promise<
+  PaginatedResultWithSummary<
+    typeof debts.$inferSelect,
+    { openCount: number; totalBalance: string; totalMonthly: string }
+  >
+> {
+  const db = await getDb();
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, pagination.limit, 0),
+      summary: { openCount: 0, totalBalance: "0.00", totalMonthly: "0.00" },
+    };
+
+  const [summary] = await db
+    .select({
+      count: count(),
+      openCount: sql<number>`COUNT(*) FILTER (WHERE ${debts.status} <> 'quitada')`,
+      totalBalance: sql<string>`COALESCE(SUM(CASE WHEN ${debts.status} <> 'quitada' THEN ${debts.currentBalance} ELSE 0 END), 0)`,
+      totalMonthly: sql<string>`COALESCE(SUM(CASE WHEN ${debts.status} <> 'quitada' THEN ${debts.monthlyPayment} ELSE 0 END), 0)`,
+    })
+    .from(debts)
+    .where(eq(debts.userId, userId));
+  const total = Number(summary?.count ?? 0);
+  const { page, limit } = resolvePagination(pagination, total);
+  const data = await db
+    .select()
+    .from(debts)
+    .where(eq(debts.userId, userId))
+    .orderBy(desc(debts.interestRate), asc(debts.creditor))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return {
+    data,
+    pagination: calculatePagination(page, limit, total),
+    summary: {
+      openCount: Number(summary?.openCount ?? 0),
+      totalBalance: String(summary?.totalBalance ?? "0.00"),
+      totalMonthly: String(summary?.totalMonthly ?? "0.00"),
+    },
+  };
+}
+
 export async function createDebt(data: InsertDebt) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1363,6 +1566,57 @@ export async function getInvestments(userId: number) {
     .from(investments)
     .where(eq(investments.userId, userId))
     .orderBy(desc(investments.date));
+}
+
+export async function getInvestmentsPage(
+  userId: number,
+  pagination: PaginationParams
+): Promise<
+  PaginatedResultWithSummary<
+    typeof investments.$inferSelect,
+    { totalDeposited: string; totalBalance: string; totalYield: string }
+  >
+> {
+  const db = await getDb();
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, pagination.limit, 0),
+      summary: {
+        totalDeposited: "0.00",
+        totalBalance: "0.00",
+        totalYield: "0.00",
+      },
+    };
+
+  const [summary] = await db
+    .select({
+      count: count(),
+      totalDeposited: sql<string>`COALESCE(SUM(${investments.depositAmount}), 0)`,
+      totalBalance: sql<string>`COALESCE(SUM(${investments.currentBalance}), 0)`,
+      totalYield: sql<string>`COALESCE(SUM(${investments.yieldAmount}), 0)`,
+    })
+    .from(investments)
+    .where(eq(investments.userId, userId));
+  const total = Number(summary?.count ?? 0);
+  const { page, limit } = resolvePagination(pagination, total);
+  const data = await db
+    .select()
+    .from(investments)
+    .where(eq(investments.userId, userId))
+    .orderBy(desc(investments.date), asc(investments.description))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return {
+    data,
+    pagination: calculatePagination(page, limit, total),
+    summary: {
+      totalDeposited: String(summary?.totalDeposited ?? "0.00"),
+      totalBalance: String(summary?.totalBalance ?? "0.00"),
+      totalYield: String(summary?.totalYield ?? "0.00"),
+    },
+  };
 }
 
 export async function createInvestment(data: InsertInvestment) {
@@ -1412,6 +1666,50 @@ export async function getReserveFunds(
     .orderBy(desc(reserveFunds.date));
 }
 
+export async function getReserveFundsPage(
+  userId: number,
+  type: "empresa" | "pessoal" | undefined,
+  pagination: PaginationParams
+): Promise<
+  PaginatedResultWithSummary<
+    typeof reserveFunds.$inferSelect,
+    { totalAmount: string }
+  >
+> {
+  const db = await getDb();
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, pagination.limit, 0),
+      summary: { totalAmount: "0.00" },
+    };
+
+  const conditions = [eq(reserveFunds.userId, userId)];
+  if (type) conditions.push(eq(reserveFunds.type, type));
+  const [summary] = await db
+    .select({
+      count: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${reserveFunds.depositAmount}), 0)`,
+    })
+    .from(reserveFunds)
+    .where(and(...conditions));
+  const total = Number(summary?.count ?? 0);
+  const { page, limit } = resolvePagination(pagination, total);
+  const data = await db
+    .select()
+    .from(reserveFunds)
+    .where(and(...conditions))
+    .orderBy(desc(reserveFunds.date), desc(reserveFunds.id))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return {
+    data,
+    pagination: calculatePagination(page, limit, total),
+    summary: { totalAmount: String(summary?.totalAmount ?? "0.00") },
+  };
+}
+
 export async function createReserveFund(data: InsertReserveFund) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1454,6 +1752,47 @@ export async function getClients(userId: number) {
     .orderBy(asc(clients.name));
 }
 
+export async function getClientsPage(
+  userId: number,
+  pagination: PaginationParams
+): Promise<
+  PaginatedResultWithSummary<
+    typeof clients.$inferSelect,
+    { categoryCount: number }
+  >
+> {
+  const db = await getDb();
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, pagination.limit, 0),
+      summary: { categoryCount: 0 },
+    };
+
+  const [summary] = await db
+    .select({
+      count: count(),
+      categoryCount: sql<number>`COUNT(DISTINCT ${clients.category}) FILTER (WHERE ${clients.category} IS NOT NULL AND ${clients.category} <> '')`,
+    })
+    .from(clients)
+    .where(eq(clients.userId, userId));
+  const total = Number(summary?.count ?? 0);
+  const { page, limit } = resolvePagination(pagination, total);
+  const data = await db
+    .select()
+    .from(clients)
+    .where(eq(clients.userId, userId))
+    .orderBy(asc(clients.name), asc(clients.id))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return {
+    data,
+    pagination: calculatePagination(page, limit, total),
+    summary: { categoryCount: Number(summary?.categoryCount ?? 0) },
+  };
+}
+
 export async function createClient(data: InsertClient) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -1494,6 +1833,51 @@ export async function getServices(userId: number) {
     .from(services)
     .where(eq(services.userId, userId))
     .orderBy(asc(services.name));
+}
+
+export async function getServicesPage(
+  userId: number,
+  pagination: PaginationParams
+): Promise<
+  PaginatedResultWithSummary<
+    typeof services.$inferSelect,
+    { activeCount: number; totalPortfolio: string }
+  >
+> {
+  const db = await getDb();
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, pagination.limit, 0),
+      summary: { activeCount: 0, totalPortfolio: "0.00" },
+    };
+
+  const [summary] = await db
+    .select({
+      count: count(),
+      activeCount: sql<number>`COUNT(*) FILTER (WHERE ${services.status} = 'ativo')`,
+      totalPortfolio: sql<string>`COALESCE(SUM(${services.basePrice}), 0)`,
+    })
+    .from(services)
+    .where(eq(services.userId, userId));
+  const total = Number(summary?.count ?? 0);
+  const { page, limit } = resolvePagination(pagination, total);
+  const data = await db
+    .select()
+    .from(services)
+    .where(eq(services.userId, userId))
+    .orderBy(asc(services.name), asc(services.id))
+    .limit(limit)
+    .offset((page - 1) * limit);
+
+  return {
+    data,
+    pagination: calculatePagination(page, limit, total),
+    summary: {
+      activeCount: Number(summary?.activeCount ?? 0),
+      totalPortfolio: String(summary?.totalPortfolio ?? "0.00"),
+    },
+  };
 }
 
 export async function createService(data: InsertService) {

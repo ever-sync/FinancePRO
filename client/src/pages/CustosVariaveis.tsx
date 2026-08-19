@@ -1,30 +1,69 @@
 import { trpc } from "@/lib/trpc";
 import { useMonthYear } from "@/hooks/useMonthYear";
 import { MonthSelector } from "@/components/MonthSelector";
+import { TablePagination } from "@/components/TablePagination";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-const categories = ["Material", "Transporte", "Alimentacao", "Manutencao", "Combustivel", "Frete", "Comissao", "Outros"];
+const categories = [
+  "Material",
+  "Transporte",
+  "Alimentacao",
+  "Manutencao",
+  "Combustivel",
+  "Frete",
+  "Comissao",
+  "Outros",
+];
 
 export default function CustosVariaveis() {
-  const { month, year, monthName, goToPrevMonth, goToNextMonth } = useMonthYear();
+  const { month, year, monthName, goToPrevMonth, goToNextMonth } =
+    useMonthYear();
   const utils = trpc.useUtils();
-  const { data: items, isLoading } = trpc.companyVariableCosts.list.useQuery({ month, year });
+  const { page, limit, setPage, setLimit } = useTablePagination(
+    `${year}-${month}`
+  );
+  const { data: items, isLoading } = trpc.companyVariableCosts.list.useQuery({
+    month,
+    year,
+    page,
+    limit,
+  });
   const [open, setOpen] = useState(false);
   const [installmentMode, setInstallmentMode] = useState(false);
-  const rows = Array.isArray(items) ? items : items?.data ?? [];
+  const rows = items?.data ?? [];
 
   const createMut = trpc.companyVariableCosts.create.useMutation({
     onSuccess: () => {
@@ -55,7 +94,9 @@ export default function CustosVariaveis() {
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const installmentCount = installmentMode ? Math.max(2, parseInt(fd.get("installmentCount") as string) || 2) : 1;
+    const installmentCount = installmentMode
+      ? Math.max(2, parseInt(fd.get("installmentCount") as string) || 2)
+      : 1;
 
     createMut.mutate({
       description: fd.get("description") as string,
@@ -72,20 +113,29 @@ export default function CustosVariaveis() {
     updateMut.mutate({ id: item.id, status: next });
   };
 
-  const total = rows.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+  const total = Number(items?.summary.totalAmount ?? 0);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Custos Variaveis - Empresa</h1>
-          <p className="text-sm text-muted-foreground">Despesas pontuais, parceladas e variaveis da empresa</p>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Custos Variaveis - Empresa
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Despesas pontuais, parceladas e variaveis da empresa
+          </p>
         </div>
         <div className="flex items-center gap-3">
-          <MonthSelector monthName={monthName} year={year} onPrev={goToPrevMonth} onNext={goToNextMonth} />
+          <MonthSelector
+            monthName={monthName}
+            year={year}
+            onPrev={goToPrevMonth}
+            onNext={goToNextMonth}
+          />
           <Dialog
             open={open}
-            onOpenChange={(next) => {
+            onOpenChange={next => {
               setOpen(next);
               if (!next) setInstallmentMode(false);
             }}
@@ -112,7 +162,7 @@ export default function CustosVariaveis() {
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        {categories.map((category) => (
+                        {categories.map(category => (
                           <SelectItem key={category} value={category}>
                             {category}
                           </SelectItem>
@@ -121,7 +171,9 @@ export default function CustosVariaveis() {
                     </Select>
                   </div>
                   <div>
-                    <Label>{installmentMode ? "Valor total (R$)" : "Valor (R$)"}</Label>
+                    <Label>
+                      {installmentMode ? "Valor total (R$)" : "Valor (R$)"}
+                    </Label>
                     <Input name="amount" type="number" step="0.01" required />
                   </div>
                   <div>
@@ -131,18 +183,30 @@ export default function CustosVariaveis() {
                   <div className="md:col-span-2 rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3">
                     <div className="flex items-start justify-between gap-4">
                       <div>
-                        <p className="text-sm font-medium text-zinc-900">Compra parcelada</p>
+                        <p className="text-sm font-medium text-zinc-900">
+                          Compra parcelada
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           Cada parcela sera lancada no mes correspondente.
                         </p>
                       </div>
-                      <Switch checked={installmentMode} onCheckedChange={setInstallmentMode} />
+                      <Switch
+                        checked={installmentMode}
+                        onCheckedChange={setInstallmentMode}
+                      />
                     </div>
                   </div>
                   {installmentMode ? (
                     <div>
                       <Label>N de parcelas</Label>
-                      <Input name="installmentCount" type="number" min="2" max="120" defaultValue={2} required />
+                      <Input
+                        name="installmentCount"
+                        type="number"
+                        min="2"
+                        max="120"
+                        defaultValue={2}
+                        required
+                      />
                     </div>
                   ) : null}
                   <div>
@@ -150,7 +214,11 @@ export default function CustosVariaveis() {
                     <Input name="supplier" />
                   </div>
                 </div>
-                <Button type="submit" className="w-full" disabled={createMut.isPending}>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={createMut.isPending}
+                >
                   {createMut.isPending ? "Salvando..." : "Adicionar"}
                 </Button>
               </form>
@@ -161,7 +229,9 @@ export default function CustosVariaveis() {
 
       <Card>
         <CardContent className="pt-6">
-          <p className="text-xs uppercase text-muted-foreground">Total do Mes</p>
+          <p className="text-xs uppercase text-muted-foreground">
+            Total do Mes
+          </p>
           <p className="mt-1 text-xl font-bold">{formatCurrency(total)}</p>
         </CardContent>
       </Card>
@@ -184,39 +254,55 @@ export default function CustosVariaveis() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={8}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Carregando...
                   </TableCell>
                 </TableRow>
               ) : rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={8}
+                    className="py-8 text-center text-muted-foreground"
+                  >
                     Nenhum custo variavel neste mes
                   </TableCell>
                 </TableRow>
               ) : (
-                rows.map((item) => (
+                rows.map(item => (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">
                       <div>{item.description}</div>
                       {item.installmentCount > 1 ? (
-                        <p className="text-xs text-muted-foreground">Compra parcelada</p>
+                        <p className="text-xs text-muted-foreground">
+                          Compra parcelada
+                        </p>
                       ) : null}
                     </TableCell>
                     <TableCell>{item.category}</TableCell>
                     <TableCell>{item.supplier || "-"}</TableCell>
                     <TableCell className="text-right">
-                      <div className="font-medium">{formatCurrency(item.amount)}</div>
+                      <div className="font-medium">
+                        {formatCurrency(item.amount)}
+                      </div>
                       {item.installmentCount > 1 ? (
                         <p className="text-xs text-muted-foreground">
-                          Total estimado {formatCurrency(Number(item.amount) * item.installmentCount)}
+                          Total estimado{" "}
+                          {formatCurrency(
+                            Number(item.amount) * item.installmentCount
+                          )}
                         </p>
                       ) : null}
                     </TableCell>
                     <TableCell>{formatDate(item.date)}</TableCell>
                     <TableCell className="text-center">
                       {item.installmentCount > 1 ? (
-                        <Badge variant="outline" className="rounded-full border-orange-100 bg-orange-50 text-orange-600">
+                        <Badge
+                          variant="outline"
+                          className="rounded-full border-orange-100 bg-orange-50 text-orange-600"
+                        >
                           {item.installmentNumber}/{item.installmentCount}
                         </Badge>
                       ) : (
@@ -243,6 +329,11 @@ export default function CustosVariaveis() {
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            pagination={items?.pagination}
+            onPageChange={setPage}
+            onPageSizeChange={setLimit}
+          />
         </CardContent>
       </Card>
     </div>
