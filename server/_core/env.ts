@@ -20,6 +20,8 @@ export const ENV = {
     "",
   cronSecret: process.env.CRON_SECRET ?? "",
   whatsappWebhookSecret: process.env.WHATSAPP_WEBHOOK_SECRET ?? "",
+  baileysGatewayUrl: process.env.BAILEYS_GATEWAY_URL ?? "",
+  baileysGatewayApiKey: process.env.BAILEYS_GATEWAY_API_KEY ?? "",
   n8nAgentSecret: process.env.N8N_AGENT_SECRET ?? "",
   n8nAgentWebhookUrl: process.env.N8N_AGENT_WEBHOOK_URL ?? "",
   n8nAgentTimeoutMs: Number(process.env.N8N_AGENT_TIMEOUT_MS ?? "45000"),

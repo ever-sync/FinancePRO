@@ -23,7 +23,10 @@ export function createApp() {
   app.disable("x-powered-by");
   app.use(securityHeaders);
   app.use("/api/trpc", trpcRateLimiter);
-  app.use("/api/whatsapp/uazapi/webhook", whatsappWebhookRateLimiter);
+  app.use(
+    ["/api/whatsapp/uazapi/webhook", "/api/whatsapp/baileys/webhook"],
+    whatsappWebhookRateLimiter
+  );
   app.use("/api/n8n/finance", n8nAgentRateLimiter);
   app.use("/api/cron", assistantCronRateLimiter);
   app.use(["/health", "/ready", "/metrics"], healthRateLimiter);

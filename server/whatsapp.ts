@@ -17,6 +17,11 @@ import {
   normalizeUazapiBaseUrl,
   normalizeWhatsAppPhone,
 } from "./_core/uazapi";
+import {
+  BaileysGatewayClient,
+  BaileysGatewayError,
+  normalizeBaileysGatewayUrl,
+} from "./_core/baileysGateway";
 import { ENV } from "./_core/env";
 import { isStrongSecret } from "./_core/secrets";
 import {
@@ -25,6 +30,7 @@ import {
 } from "./_core/n8nAgentClient";
 
 type AnyRecord = Record<string, any>;
+type WhatsAppProvider = "uazapi" | "baileys";
 
 type AssistantIntent = FinancialAssistantIntent;
 
@@ -112,7 +118,20 @@ function getUazapiClient(integration: {
   });
 }
 
-function getWebhookUrl(origin?: string | null) {
+function getBaileysGatewayClient(integration: {
+  apiBaseUrl: string;
+  apiToken: string;
+}) {
+  return new BaileysGatewayClient({
+    apiBaseUrl: ENV.baileysGatewayUrl || integration.apiBaseUrl,
+    apiToken: ENV.baileysGatewayApiKey || integration.apiToken,
+  });
+}
+
+function getWebhookUrl(
+  origin?: string | null,
+  provider: WhatsAppProvider = "uazapi"
+) {
   if (!origin || !isStrongSecret(ENV.whatsappWebhookSecret)) return null;
   try {
     const url = new URL(origin);
@@ -124,8 +143,15 @@ function getWebhookUrl(origin?: string | null) {
     ) {
       return null;
     }
-    const webhookUrl = new URL("/api/whatsapp/uazapi/webhook", url.origin);
-    webhookUrl.searchParams.set("secret", ENV.whatsappWebhookSecret);
+    const webhookUrl = new URL(
+      provider === "baileys"
+        ? "/api/whatsapp/baileys/webhook"
+        : "/api/whatsapp/uazapi/webhook",
+      url.origin
+    );
+    if (provider === "uazapi") {
+      webhookUrl.searchParams.set("secret", ENV.whatsappWebhookSecret);
+    }
     return webhookUrl.toString();
   } catch {
     return null;
@@ -384,6 +410,56 @@ function extractUazapiMessages(payload: AnyRecord): ExtractedInboundMessage[] {
     .filter(Boolean) as ExtractedInboundMessage[];
 }
 
+function extractBaileysMessages(payload: AnyRecord): ExtractedInboundMessage[] {
+  const candidates = Array.isArray(payload?.messages)
+    ? payload.messages
+    : [payload];
+
+  return candidates
+    .map((candidate: AnyRecord) => {
+      const instanceId = String(
+        candidate?.instanceId || payload?.instanceId || ""
+      )
+        .trim()
+        .slice(0, 120);
+      const rawProviderMessageId = String(
+        candidate?.providerMessageId || candidate?.messageId || ""
+      ).trim();
+      const providerMessageId =
+        rawProviderMessageId.length <= 255
+          ? rawProviderMessageId
+          : `provider-${createHash("sha256")
+              .update(rawProviderMessageId)
+              .digest("hex")}`;
+      const phoneNumber = normalizeWhatsAppPhone(
+        String(candidate?.phoneNumber || "")
+      ).slice(0, 32);
+      const text = String(candidate?.text || "")
+        .trim()
+        .slice(0, 12_000);
+      const displayName = candidate?.displayName
+        ? String(candidate.displayName).slice(0, 255)
+        : null;
+
+      if (!instanceId || !providerMessageId || !phoneNumber || !text) {
+        return null;
+      }
+      return {
+        instanceId,
+        instanceToken: null,
+        providerMessageId,
+        phoneNumber,
+        displayName,
+        text,
+        rawPayload:
+          candidate?.rawPayload && typeof candidate.rawPayload === "object"
+            ? candidate.rawPayload
+            : { source: "baileys" },
+      } satisfies ExtractedInboundMessage;
+    })
+    .filter(Boolean) as ExtractedInboundMessage[];
+}
+
 function mapUazapiErrorMessage(error: unknown) {
   if (!(error instanceof UazapiRequestError)) {
     return error instanceof Error
@@ -407,6 +483,33 @@ function mapUazapiErrorMessage(error: unknown) {
   }
 
   return message;
+}
+
+function mapBaileysErrorMessage(error: unknown) {
+  const rawMessage =
+    error instanceof BaileysGatewayError || error instanceof Error
+      ? error.message
+      : "Falha ao acessar o gateway Baileys.";
+  const normalized = rawMessage.toLowerCase();
+  if (normalized.includes("already linked")) {
+    return "A sessao do WhatsApp ja esta vinculada.";
+  }
+  if (
+    normalized.includes("not connected") ||
+    normalized.includes("not available")
+  ) {
+    return "O WhatsApp ainda nao esta conectado ao gateway Baileys.";
+  }
+  if (normalized.includes("wait before requesting")) {
+    return "Aguarde alguns segundos antes de gerar outro codigo de vinculacao.";
+  }
+  return rawMessage || "Falha ao acessar o gateway Baileys.";
+}
+
+function mapProviderErrorMessage(provider: WhatsAppProvider, error: unknown) {
+  return provider === "baileys"
+    ? mapBaileysErrorMessage(error)
+    : mapUazapiErrorMessage(error);
 }
 
 async function buildFinancialContext(
@@ -708,8 +811,13 @@ async function sendOutgoingMessage(params: {
     throw new Error("Integracao WhatsApp nao encontrada.");
   }
 
-  const client = getUazapiClient(integration);
-  const response = await client.sendTextMessage(phoneNumber, text);
+  const response =
+    integration.provider === "baileys"
+      ? await getBaileysGatewayClient(integration).sendTextMessage(
+          phoneNumber,
+          text
+        )
+      : await getUazapiClient(integration).sendTextMessage(phoneNumber, text);
   const responsePayload = response as AnyRecord | null;
   const providerMessageId = String(
     responsePayload?.id ||
@@ -778,7 +886,14 @@ export async function getWhatsAppIntegration(
   const integration = await whatsappDb.getWhatsAppIntegration(userId);
   if (!integration) return null;
 
-  const webhookUrl = getWebhookUrl(origin);
+  const configuredWebhookUrl = getWebhookUrl(origin, integration.provider);
+  const webhookUrl = configuredWebhookUrl
+    ? (() => {
+        const value = new URL(configuredWebhookUrl);
+        value.search = "";
+        return value.toString();
+      })()
+    : null;
   return {
     ...integration,
     apiToken: undefined,
@@ -788,10 +903,20 @@ export async function getWhatsAppIntegration(
   };
 }
 
+export function getWhatsAppGatewayConfig() {
+  return {
+    baileysAvailable: Boolean(
+      ENV.baileysGatewayUrl && isStrongSecret(ENV.baileysGatewayApiKey)
+    ),
+    baileysGatewayUrl: ENV.baileysGatewayUrl || null,
+    defaultSessionId: "financepro",
+  };
+}
+
 export async function upsertWhatsAppIntegration(
   userId: number,
   input: {
-    provider?: "uazapi";
+    provider?: WhatsAppProvider;
     instanceId: string;
     apiBaseUrl: string;
     apiToken?: string;
@@ -811,27 +936,43 @@ export async function upsertWhatsAppIntegration(
   }
 
   const existing = await whatsappDb.getWhatsAppIntegration(userId);
-  const apiToken = input.apiToken?.trim() || existing?.apiToken || "";
+  const provider = input.provider ?? existing?.provider ?? "uazapi";
+  const apiToken =
+    input.apiToken?.trim() ||
+    (existing?.provider === provider ? existing.apiToken : "") ||
+    (provider === "baileys" && isStrongSecret(ENV.baileysGatewayApiKey)
+      ? "managed-by-railway"
+      : "");
   if (!apiToken) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Informe o token da API Uazapi.",
+      message:
+        provider === "baileys"
+          ? "Informe a chave de API do gateway Baileys."
+          : "Informe o token da API Uazapi.",
     });
   }
 
   let apiBaseUrl: string;
   try {
-    apiBaseUrl = normalizeUazapiBaseUrl(input.apiBaseUrl);
+    apiBaseUrl =
+      provider === "baileys"
+        ? normalizeBaileysGatewayUrl(input.apiBaseUrl)
+        : normalizeUazapiBaseUrl(input.apiBaseUrl);
   } catch (error) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
-        error instanceof Error ? error.message : "URL base da Uazapi invalida.",
+        error instanceof Error
+          ? error.message
+          : provider === "baileys"
+            ? "URL do gateway Baileys invalida."
+            : "URL base da Uazapi invalida.",
     });
   }
 
   const record = await whatsappDb.upsertWhatsAppIntegration(userId, {
-    provider: input.provider ?? "uazapi",
+    provider,
     instanceId: input.instanceId.trim(),
     apiBaseUrl,
     apiToken,
@@ -839,7 +980,7 @@ export async function upsertWhatsAppIntegration(
     enabled: input.enabled ?? true,
     automationHour: input.automationHour ?? 8,
     timezone: normalizeTimeZone(input.timezone),
-    webhookUrl: getWebhookUrl(origin),
+    webhookUrl: getWebhookUrl(origin, provider),
   });
 
   return getWhatsAppIntegration(userId, origin) ?? record;
@@ -849,34 +990,42 @@ export async function testWhatsAppConnection(
   userId: number,
   origin?: string | null,
   override?: {
+    provider?: WhatsAppProvider;
     instanceId?: string;
     apiBaseUrl?: string;
     apiToken?: string;
   }
 ) {
   const savedIntegration = await whatsappDb.getWhatsAppIntegration(userId);
+  const provider = override?.provider ?? savedIntegration?.provider ?? "uazapi";
   const integration = savedIntegration
     ? {
         ...savedIntegration,
+        provider,
         instanceId: override?.instanceId?.trim() || savedIntegration.instanceId,
         apiBaseUrl: override?.apiBaseUrl?.trim() || savedIntegration.apiBaseUrl,
-        apiToken: override?.apiToken?.trim() || savedIntegration.apiToken,
+        apiToken:
+          override?.apiToken?.trim() ||
+          (provider === savedIntegration.provider
+            ? savedIntegration.apiToken
+            : ""),
       }
     : override?.instanceId?.trim() &&
         override?.apiBaseUrl?.trim() &&
-        override?.apiToken?.trim()
+        (override?.apiToken?.trim() ||
+          (provider === "baileys" && isStrongSecret(ENV.baileysGatewayApiKey)))
       ? {
           id: 0,
           userId,
-          provider: "uazapi" as const,
+          provider,
           instanceId: override.instanceId.trim(),
           apiBaseUrl: override.apiBaseUrl.trim(),
-          apiToken: override.apiToken.trim(),
+          apiToken: override.apiToken?.trim() || "managed-by-railway",
           authorizedPhone: "",
           enabled: true,
           automationHour: 8,
           timezone: DEFAULT_TIMEZONE,
-          webhookUrl: getWebhookUrl(origin),
+          webhookUrl: getWebhookUrl(origin, provider),
           lastConnectionStatus: "pendente",
           lastConnectionMessage: null,
           lastConnectionCheckedAt: null,
@@ -899,7 +1048,11 @@ export async function testWhatsAppConnection(
   if (
     !integration.instanceId ||
     !integration.apiBaseUrl ||
-    !integration.apiToken
+    (!integration.apiToken &&
+      !(
+        integration.provider === "baileys" &&
+        isStrongSecret(ENV.baileysGatewayApiKey)
+      ))
   ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -909,6 +1062,31 @@ export async function testWhatsAppConnection(
   }
 
   try {
+    if (integration.provider === "baileys") {
+      const client = getBaileysGatewayClient(integration);
+      const status = await client.getStatus();
+      const connectionStatus = status.ready
+        ? "sincronizado"
+        : "aguardando_vinculo";
+      const connectionMessage = status.ready
+        ? "Gateway Baileys conectado ao WhatsApp."
+        : "Gateway Baileys online e aguardando o codigo de vinculacao.";
+      if (savedIntegration) {
+        await whatsappDb.markWhatsAppConnection(
+          savedIntegration.id,
+          connectionStatus,
+          connectionMessage
+        );
+      }
+      return {
+        success: true,
+        instanceId: status.sessionId || integration.instanceId,
+        message: connectionMessage,
+        status,
+        webhookConfigured: true,
+      };
+    }
+
     const client = getUazapiClient(integration);
     const status = await client.getInstanceStatus();
     const connectedInstanceId = String(
@@ -916,7 +1094,7 @@ export async function testWhatsAppConnection(
         (status as AnyRecord)?.instanceId ||
         ""
     ).trim();
-    const webhookUrl = getWebhookUrl(origin);
+    const webhookUrl = getWebhookUrl(origin, "uazapi");
     let webhookConfigured = false;
 
     if (webhookUrl) {
@@ -950,7 +1128,7 @@ export async function testWhatsAppConnection(
       webhookConfigured,
     };
   } catch (error) {
-    const message = mapUazapiErrorMessage(error);
+    const message = mapProviderErrorMessage(integration.provider, error);
     if (savedIntegration) {
       await whatsappDb.markWhatsAppConnection(
         savedIntegration.id,
@@ -958,6 +1136,36 @@ export async function testWhatsAppConnection(
         message
       );
     }
+    throw new TRPCError({ code: "BAD_REQUEST", message });
+  }
+}
+
+export async function requestBaileysPairingCode(
+  userId: number,
+  pairingPhone: string
+) {
+  const integration = await whatsappDb.getWhatsAppIntegration(userId);
+  if (!integration || integration.provider !== "baileys") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Salve a integracao com o provedor Baileys antes de vincular.",
+    });
+  }
+
+  try {
+    const response =
+      await getBaileysGatewayClient(integration).requestPairingCode(
+        pairingPhone
+      );
+    await whatsappDb.markWhatsAppConnection(
+      integration.id,
+      "aguardando_vinculo",
+      "Codigo gerado. Digite-o em Aparelhos conectados no WhatsApp."
+    );
+    return { success: true, pairingCode: response.pairingCode };
+  } catch (error) {
+    const message = mapBaileysErrorMessage(error);
+    await whatsappDb.markWhatsAppConnection(integration.id, "erro", message);
     throw new TRPCError({ code: "BAD_REQUEST", message });
   }
 }
@@ -999,7 +1207,7 @@ export async function sendWhatsAppTestMessage(userId: number) {
 
     return { success: true, messageId: message.id };
   } catch (error) {
-    const message = mapUazapiErrorMessage(error);
+    const message = mapProviderErrorMessage(integration.provider, error);
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
@@ -1095,7 +1303,7 @@ export async function sendFinancialAdvisorPreviewMessage(
       decisionInstallments: advisorReply.decisionInstallments,
     };
   } catch (error) {
-    const message = mapUazapiErrorMessage(error);
+    const message = mapProviderErrorMessage(integration.provider, error);
     throw new TRPCError({
       code: "BAD_REQUEST",
       message:
@@ -1747,8 +1955,10 @@ async function processSnooze(params: {
   return { success: true };
 }
 
-export async function handleUazapiWebhook(payload: AnyRecord) {
-  const messages = extractUazapiMessages(payload);
+async function processInboundMessages(
+  messages: ExtractedInboundMessage[],
+  provider: WhatsAppProvider
+) {
   if (messages.length === 0) {
     return { success: true, processed: 0 };
   }
@@ -1766,7 +1976,11 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
             incoming.instanceToken
           )
         : undefined);
-    if (!integration || !integration.enabled) {
+    if (
+      !integration ||
+      !integration.enabled ||
+      integration.provider !== provider
+    ) {
       continue;
     }
 
@@ -2033,6 +2247,14 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
   }
 
   return { success: true, processed };
+}
+
+export function handleUazapiWebhook(payload: AnyRecord) {
+  return processInboundMessages(extractUazapiMessages(payload), "uazapi");
+}
+
+export function handleBaileysWebhook(payload: AnyRecord) {
+  return processInboundMessages(extractBaileysMessages(payload), "baileys");
 }
 
 async function runDailyDigestForIntegration(

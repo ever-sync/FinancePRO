@@ -1025,13 +1025,16 @@ export const appRouter = router({
   }),
 
   whatsappIntegration: router({
+    gatewayConfig: protectedProcedure.query(() =>
+      whatsapp.getWhatsAppGatewayConfig()
+    ),
     get: protectedProcedure.query(({ ctx }) =>
       whatsapp.getWhatsAppIntegration(ctx.user.id, getConfiguredAppOrigin())
     ),
     upsert: protectedProcedure
       .input(
         z.object({
-          provider: z.literal("uazapi").optional(),
+          provider: z.enum(["uazapi", "baileys"]).optional(),
           instanceId: z.string().trim().min(1).max(120),
           apiBaseUrl: z.string().url().max(255),
           apiToken: z.string().trim().max(4096).optional(),
@@ -1052,6 +1055,7 @@ export const appRouter = router({
       .input(
         z
           .object({
+            provider: z.enum(["uazapi", "baileys"]).optional(),
             instanceId: z.string().trim().min(1).max(120).optional(),
             apiBaseUrl: z.string().url().max(255).optional(),
             apiToken: z.string().trim().max(4096).optional(),
@@ -1071,6 +1075,15 @@ export const appRouter = router({
     sendTestMessage: protectedProcedure.mutation(({ ctx }) =>
       whatsapp.sendWhatsAppTestMessage(ctx.user.id)
     ),
+    requestPairingCode: protectedProcedure
+      .input(
+        z.object({
+          phoneNumber: z.string().trim().min(8).max(32),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        whatsapp.requestBaileysPairingCode(ctx.user.id, input.phoneNumber)
+      ),
     sendAdvisorPreview: protectedProcedure
       .input(
         z.object({

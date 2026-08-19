@@ -51,7 +51,10 @@ export const asaasSyncStatusEnum = pgEnum("asaas_sync_status", [
   "sincronizado",
   "erro",
 ]);
-export const whatsappProviderEnum = pgEnum("whatsapp_provider", ["uazapi"]);
+export const whatsappProviderEnum = pgEnum("whatsapp_provider", [
+  "uazapi",
+  "baileys",
+]);
 export const whatsappDirectionEnum = pgEnum("whatsapp_direction", [
   "inbound",
   "outbound",
