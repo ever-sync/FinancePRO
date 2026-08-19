@@ -12,13 +12,26 @@ import {
   getBankConnectionSyncModeLabel,
 } from "@/lib/bankConnections";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 
 type ConnectionForm = {
   label: string;
@@ -68,8 +81,10 @@ function normalizeBankConnectionProfile(profile: any): BankConnectionProfile {
 export default function IntegracoesBancarias() {
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
-  const { data: rawProfiles = [], isLoading } = trpc.bankConnections.list.useQuery();
-  const { data: providerReadiness = [] } = trpc.bankConnections.providers.useQuery();
+  const { data: rawProfiles = [], isLoading } =
+    trpc.bankConnections.list.useQuery();
+  const { data: providerReadiness = [] } =
+    trpc.bankConnections.providers.useQuery();
   const profiles = useMemo(
     () => rawProfiles.map(profile => normalizeBankConnectionProfile(profile)),
     [rawProfiles]
@@ -77,7 +92,10 @@ export default function IntegracoesBancarias() {
   const providerReadinessMap = useMemo(
     () =>
       new Map(
-        providerReadiness.map((item: BankProviderReadiness) => [item.provider, item])
+        providerReadiness.map((item: BankProviderReadiness) => [
+          item.provider,
+          item,
+        ])
       ),
     [providerReadiness]
   );
@@ -126,7 +144,6 @@ export default function IntegracoesBancarias() {
       resetForm();
       toast.success("Conexao removida.");
     },
-    onError: error => toast.error(error.message),
   });
 
   const requestSyncMut = trpc.bankConnections.requestSync.useMutation({
@@ -161,10 +178,6 @@ export default function IntegracoesBancarias() {
     setForm(DEFAULT_FORM);
   };
 
-  const deleteProfile = (profileId: number) => {
-    removeProfileMut.mutate({ connectionId: profileId });
-  };
-
   const openImporter = (profile: BankConnectionProfile) => {
     const params = new URLSearchParams({
       mode: "statement",
@@ -176,26 +189,41 @@ export default function IntegracoesBancarias() {
     setLocation(`/importador?${params.toString()}`);
   };
 
-  const bankCount = profiles.filter(profile => profile.sourceKind === "bank_account").length;
-  const cardCount = profiles.filter(profile => profile.sourceKind === "credit_card").length;
-  const readyCount = profiles.filter(profile => profile.status === "pronta").length;
+  const bankCount = profiles.filter(
+    profile => profile.sourceKind === "bank_account"
+  ).length;
+  const cardCount = profiles.filter(
+    profile => profile.sourceKind === "credit_card"
+  ).length;
+  const readyCount = profiles.filter(
+    profile => profile.status === "pronta"
+  ).length;
   const selectedProviderReadiness = providerReadinessMap.get(form.provider);
 
   if (isLoading) {
-    return <div className="text-sm text-muted-foreground">Carregando integracoes bancarias...</div>;
+    return (
+      <div className="text-sm text-muted-foreground">
+        Carregando integracoes bancarias...
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Integracoes bancarias</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Integracoes bancarias
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Cadastre contas e cartoes para abrir o conciliador ja no contexto certo e preparar o
-            produto para Open Finance real.
+            Cadastre contas e cartoes para abrir o conciliador ja no contexto
+            certo e preparar o produto para Open Finance real.
           </p>
         </div>
-        <Button variant="outline" onClick={() => setLocation("/importador?mode=statement")}>
+        <Button
+          variant="outline"
+          onClick={() => setLocation("/importador?mode=statement")}
+        >
           Abrir conciliador
         </Button>
       </div>
@@ -233,9 +261,12 @@ export default function IntegracoesBancarias() {
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Card>
           <CardHeader>
-            <CardTitle>{editingProfile ? "Editar conexao" : "Nova conexao"}</CardTitle>
+            <CardTitle>
+              {editingProfile ? "Editar conexao" : "Nova conexao"}
+            </CardTitle>
             <CardDescription>
-              Defina provider, tipo e escopo. Depois o importador abre com essa configuracao.
+              Defina provider, tipo e escopo. Depois o importador abre com essa
+              configuracao.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -244,7 +275,12 @@ export default function IntegracoesBancarias() {
                 <Label>Nome da conexao</Label>
                 <Input
                   value={form.label}
-                  onChange={event => setForm(current => ({ ...current, label: event.target.value }))}
+                  onChange={event =>
+                    setForm(current => ({
+                      ...current,
+                      label: event.target.value,
+                    }))
+                  }
                   placeholder="Banco principal PJ"
                 />
               </div>
@@ -253,7 +289,10 @@ export default function IntegracoesBancarias() {
                 <Input
                   value={form.institution}
                   onChange={event =>
-                    setForm(current => ({ ...current, institution: event.target.value }))
+                    setForm(current => ({
+                      ...current,
+                      institution: event.target.value,
+                    }))
                   }
                   placeholder="Itau, Nubank, Inter..."
                 />
@@ -266,7 +305,10 @@ export default function IntegracoesBancarias() {
                 <Select
                   value={form.provider}
                   onValueChange={value =>
-                    setForm(current => ({ ...current, provider: value as BankConnectionProvider }))
+                    setForm(current => ({
+                      ...current,
+                      provider: value as BankConnectionProvider,
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -285,7 +327,10 @@ export default function IntegracoesBancarias() {
                 <Select
                   value={form.syncMode}
                   onValueChange={value =>
-                    setForm(current => ({ ...current, syncMode: value as BankConnectionSyncMode }))
+                    setForm(current => ({
+                      ...current,
+                      syncMode: value as BankConnectionSyncMode,
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -325,7 +370,10 @@ export default function IntegracoesBancarias() {
                 <Select
                   value={form.scope}
                   onValueChange={value =>
-                    setForm(current => ({ ...current, scope: value as ConnectionForm["scope"] }))
+                    setForm(current => ({
+                      ...current,
+                      scope: value as ConnectionForm["scope"],
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -343,7 +391,10 @@ export default function IntegracoesBancarias() {
                 <Select
                   value={form.status}
                   onValueChange={value =>
-                    setForm(current => ({ ...current, status: value as ConnectionForm["status"] }))
+                    setForm(current => ({
+                      ...current,
+                      status: value as ConnectionForm["status"],
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -362,7 +413,12 @@ export default function IntegracoesBancarias() {
               <Label>Observacoes</Label>
               <Textarea
                 value={form.notes}
-                onChange={event => setForm(current => ({ ...current, notes: event.target.value }))}
+                onChange={event =>
+                  setForm(current => ({
+                    ...current,
+                    notes: event.target.value,
+                  }))
+                }
                 rows={4}
                 placeholder="Ex.: conta operacional da empresa, usar no fechamento semanal, cartao principal..."
               />
@@ -372,7 +428,8 @@ export default function IntegracoesBancarias() {
               {form.syncMode === "api" ? (
                 <>
                   <p>
-                    Esse perfil usa contrato de provider no backend. O estado real depende da configuracao do provider escolhido.
+                    Esse perfil usa contrato de provider no backend. O estado
+                    real depende da configuracao do provider escolhido.
                   </p>
                   {selectedProviderReadiness ? (
                     <div className="mt-3 flex items-center gap-2">
@@ -394,13 +451,23 @@ export default function IntegracoesBancarias() {
                 Nova conexao
               </Button>
               {editingProfile ? (
-                <Button
-                  variant="ghost"
-                  onClick={() => deleteProfile(editingProfile.id)}
-                  disabled={removeProfileMut.isPending}
-                >
-                  {removeProfileMut.isPending ? "Removendo..." : "Remover"}
-                </Button>
+                <ConfirmDeleteButton
+                  title="Remover conexão bancária?"
+                  description={
+                    <>
+                      A conexão <strong>{editingProfile.label}</strong> com{" "}
+                      {editingProfile.institution} será removida. Os lançamentos
+                      já importados permanecerão no sistema.
+                    </>
+                  }
+                  triggerLabel="Remover"
+                  confirmLabel="Remover conexão"
+                  onConfirm={() =>
+                    removeProfileMut.mutateAsync({
+                      connectionId: editingProfile.id,
+                    })
+                  }
+                />
               ) : null}
             </div>
           </CardContent>
@@ -410,7 +477,8 @@ export default function IntegracoesBancarias() {
           <CardHeader>
             <CardTitle>Perfis bancarios</CardTitle>
             <CardDescription>
-              Cada perfil abre o conciliador com provider, escopo e tipo ja definidos.
+              Cada perfil abre o conciliador com provider, escopo e tipo ja
+              definidos.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -431,28 +499,50 @@ export default function IntegracoesBancarias() {
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
                           <ProfileIcon className="size-4 text-zinc-500" />
-                          <p className="font-medium text-zinc-900">{profile.label}</p>
+                          <p className="font-medium text-zinc-900">
+                            {profile.label}
+                          </p>
                           <StatusBadge status={profile.status} />
                         </div>
-                        <p className="text-sm text-muted-foreground">{profile.institution}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {profile.institution}
+                        </p>
                         <div className="flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.16em] text-zinc-400">
-                          <span>{getBankConnectionProviderLabel(profile.provider)}</span>
-                          <span>{getBankConnectionSourceKindLabel(profile.sourceKind)}</span>
+                          <span>
+                            {getBankConnectionProviderLabel(profile.provider)}
+                          </span>
+                          <span>
+                            {getBankConnectionSourceKindLabel(
+                              profile.sourceKind
+                            )}
+                          </span>
                           <span>{profile.scope}</span>
-                          <span>{getBankConnectionSyncModeLabel(profile.syncMode)}</span>
+                          <span>
+                            {getBankConnectionSyncModeLabel(profile.syncMode)}
+                          </span>
                         </div>
                         <p className="text-xs text-zinc-500">
-                          Ultima importacao: {formatDateTime(profile.lastImportedAt)}
+                          Ultima importacao:{" "}
+                          {formatDateTime(profile.lastImportedAt)}
                         </p>
                         <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                          <span>Ultimo sync: {profile.lastSyncStatus ? "" : "Nunca solicitado"}</span>
-                          {profile.lastSyncStatus ? <StatusBadge status={profile.lastSyncStatus} /> : null}
+                          <span>
+                            Ultimo sync:{" "}
+                            {profile.lastSyncStatus ? "" : "Nunca solicitado"}
+                          </span>
+                          {profile.lastSyncStatus ? (
+                            <StatusBadge status={profile.lastSyncStatus} />
+                          ) : null}
                         </div>
                         {profile.lastSyncError ? (
-                          <p className="text-xs text-amber-700">{profile.lastSyncError}</p>
+                          <p className="text-xs text-amber-700">
+                            {profile.lastSyncError}
+                          </p>
                         ) : null}
                         {profile.notes ? (
-                          <p className="text-sm leading-6 text-zinc-600">{profile.notes}</p>
+                          <p className="text-sm leading-6 text-zinc-600">
+                            {profile.notes}
+                          </p>
                         ) : null}
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -463,13 +553,23 @@ export default function IntegracoesBancarias() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => requestSyncMut.mutate({ connectionId: profile.id })}
+                            onClick={() =>
+                              requestSyncMut.mutate({
+                                connectionId: profile.id,
+                              })
+                            }
                             disabled={requestSyncMut.isPending}
                           >
-                            {requestSyncMut.isPending ? "Sincronizando..." : "Solicitar sync"}
+                            {requestSyncMut.isPending
+                              ? "Sincronizando..."
+                              : "Solicitar sync"}
                           </Button>
                         ) : null}
-                        <Button size="sm" variant="outline" onClick={() => setEditingId(profile.id)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditingId(profile.id)}
+                        >
                           Editar
                         </Button>
                       </div>
@@ -479,8 +579,8 @@ export default function IntegracoesBancarias() {
               })
             ) : (
               <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">
-                Nenhuma conexao cadastrada ainda. Crie um perfil para conta ou cartao e abra o
-                importador no contexto certo.
+                Nenhuma conexao cadastrada ainda. Crie um perfil para conta ou
+                cartao e abra o importador no contexto certo.
               </div>
             )}
 
@@ -490,8 +590,9 @@ export default function IntegracoesBancarias() {
                 Camada Open Finance assistida
               </div>
               <p className="mt-2 leading-6">
-                Os perfis ja deixam o produto pronto para Open Finance, Pluggy ou Belvo. Quando a
-                integracao real entrar no backend, esse cadastro vira a base da conexao automatica.
+                Os perfis ja deixam o produto pronto para Open Finance, Pluggy
+                ou Belvo. Quando a integracao real entrar no backend, esse
+                cadastro vira a base da conexao automatica.
               </p>
               {providerReadiness.length ? (
                 <div className="mt-4 grid gap-2">

@@ -1,5 +1,6 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { AlertTriangle, Plus, Trash2, TrendingDown } from "lucide-react";
+import { AlertTriangle, Plus, TrendingDown } from "lucide-react";
 import { useState } from "react";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
@@ -413,14 +414,18 @@ export default function Dividas() {
                       <StatusBadge status={item.status} />
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
+                      <ConfirmDeleteButton
                         className="h-8 w-8 text-destructive"
-                        onClick={() => deleteMut.mutate({ id: item.id })}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        title={`Excluir dívida de ${item.creditor}?`}
+                        description={
+                          <>
+                            A dívida <strong>{item.description}</strong> será
+                            removida definitivamente. Esta ação não pode ser
+                            desfeita.
+                          </>
+                        }
+                        onConfirm={() => deleteMut.mutateAsync({ id: item.id })}
+                      />
                     </TableCell>
                   </TableRow>
                 ))

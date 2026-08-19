@@ -3,6 +3,7 @@ import {
   TablePagination,
   type TablePaginationMeta,
 } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,7 +34,7 @@ import {
 } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, PiggyBank, Building2, User } from "lucide-react";
+import { Plus, PiggyBank, Building2, User } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -151,14 +152,19 @@ export default function FundoReserva() {
                   </TableCell>
                   <TableCell>{formatDate(item.date)}</TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                    <ConfirmDeleteButton
                       className="h-8 w-8 text-destructive"
-                      onClick={() => deleteMut.mutate({ id: item.id })}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                      title="Excluir depósito da reserva?"
+                      description={
+                        <>
+                          O depósito{" "}
+                          <strong>{item.description || "Depósito"}</strong> de{" "}
+                          {formatCurrency(item.depositAmount)} será removido
+                          definitivamente e o saldo da reserva será recalculado.
+                        </>
+                      }
+                      onConfirm={() => deleteMut.mutateAsync({ id: item.id })}
+                    />
                   </TableCell>
                 </TableRow>
               ))

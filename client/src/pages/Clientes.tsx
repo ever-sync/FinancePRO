@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,6 @@ import {
 } from "@/components/ui/table";
 import {
   Plus,
-  Trash2,
   Pencil,
   Search,
   Loader2,
@@ -507,14 +507,20 @@ export default function Clientes() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
+                        <ConfirmDeleteButton
                           className="h-8 w-8 text-destructive"
-                          onClick={() => deleteClient.mutate({ id: item.id })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                          title="Excluir cliente?"
+                          description={
+                            <>
+                              O cliente <strong>{item.name}</strong> será
+                              removido definitivamente. Os lançamentos
+                              financeiros já registrados não serão excluídos.
+                            </>
+                          }
+                          onConfirm={() =>
+                            deleteClient.mutateAsync({ id: item.id })
+                          }
+                        />
                       </div>
                     </TableCell>
                   </TableRow>

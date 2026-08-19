@@ -71,7 +71,7 @@
 - [ ] Optimistic updates nas mutations
 - [ ] Skeletons específicos por página
 - [ ] Validação em tempo real
-- [ ] Confirmação para delete
+- [x] Confirmação para delete
 - [ ] Toast notifications melhorados
 - [ ] Busca global (Ctrl+K)
 - [ ] Atalhos de teclado
@@ -149,7 +149,7 @@
 Prioridade máxima para entrega rápida de valor:
 
 1. [x] Paginação em listas (4h)
-2. [ ] Confirmação de delete (2h)
+2. [x] Confirmação de delete (2h)
 3. [ ] Skeletons específicos (4h)
 4. [ ] Validação em tempo real (5h)
 5. [x] Índices no banco (3h)

@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,7 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Trash2, TrendingUp } from "lucide-react";
+import { Plus, TrendingUp } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -246,14 +247,17 @@ export default function Investimentos() {
                     </TableCell>
                     <TableCell>{formatDate(item.date)}</TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
+                      <ConfirmDeleteButton
                         className="h-8 w-8 text-destructive"
-                        onClick={() => deleteMut.mutate({ id: item.id })}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        title="Excluir investimento?"
+                        description={
+                          <>
+                            O investimento <strong>{item.description}</strong>{" "}
+                            em {item.institution} será removido definitivamente.
+                          </>
+                        }
+                        onConfirm={() => deleteMut.mutateAsync({ id: item.id })}
+                      />
                     </TableCell>
                   </TableRow>
                 ))

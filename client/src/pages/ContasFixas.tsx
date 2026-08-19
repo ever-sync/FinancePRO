@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useMonthYear } from "@/hooks/useMonthYear";
 import { MonthSelector } from "@/components/MonthSelector";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency } from "@/lib/format";
@@ -31,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -250,14 +251,18 @@ export default function ContasFixas() {
                       </button>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
+                      <ConfirmDeleteButton
                         className="h-8 w-8 text-destructive"
-                        onClick={() => deleteMut.mutate({ id: item.id })}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        title="Excluir conta fixa?"
+                        description={
+                          <>
+                            A conta <strong>{item.description}</strong> de{" "}
+                            {monthName.toLowerCase()} será removida
+                            definitivamente.
+                          </>
+                        }
+                        onConfirm={() => deleteMut.mutateAsync({ id: item.id })}
+                      />
                     </TableCell>
                   </TableRow>
                 ))

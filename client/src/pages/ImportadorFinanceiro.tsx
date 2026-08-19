@@ -11,7 +11,6 @@ import {
   PiggyBank,
   Save,
   TrendingUp,
-  Trash2,
   Upload,
   Wallet,
 } from "lucide-react";
@@ -55,6 +54,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -2571,14 +2571,22 @@ export default function ImportadorFinanceiro() {
                             >
                               Aplicar
                             </Button>
-                            <Button
-                              type="button"
+                            <ConfirmDeleteButton
                               variant="outline"
                               size="sm"
-                              onClick={() => deleteStatementProfile(profile.id)}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
+                              title="Excluir perfil de importação?"
+                              description={
+                                <>
+                                  O perfil <strong>{profile.name}</strong> do{" "}
+                                  {profile.bankName} será removido deste
+                                  navegador. Os lançamentos já importados não
+                                  serão alterados.
+                                </>
+                              }
+                              onConfirm={() =>
+                                deleteStatementProfile(profile.id)
+                              }
+                            />
                           </div>
                         </div>
                       ))

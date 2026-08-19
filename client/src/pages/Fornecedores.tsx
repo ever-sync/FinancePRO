@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useMonthYear } from "@/hooks/useMonthYear";
 import { MonthSelector } from "@/components/MonthSelector";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -32,14 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Plus,
-  Trash2,
-  Truck,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-} from "lucide-react";
+import { Plus, Truck, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -364,16 +358,20 @@ export default function Fornecedores() {
                             </button>
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
+                            <ConfirmDeleteButton
                               className="h-8 w-8 text-destructive"
-                              onClick={() =>
-                                deletePurchase.mutate({ id: item.id })
+                              title="Excluir compra?"
+                              description={
+                                <>
+                                  A compra <strong>{item.description}</strong>{" "}
+                                  de {formatCurrency(item.amount)} será removida
+                                  definitivamente.
+                                </>
                               }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                              onConfirm={() =>
+                                deletePurchase.mutateAsync({ id: item.id })
+                              }
+                            />
                           </TableCell>
                         </TableRow>
                       );
@@ -484,16 +482,20 @@ export default function Fornecedores() {
                         <TableCell>{item.contact || "-"}</TableCell>
                         <TableCell>{item.phone || "-"}</TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
+                          <ConfirmDeleteButton
                             className="h-8 w-8 text-destructive"
-                            onClick={() =>
-                              deleteSupplier.mutate({ id: item.id })
+                            title="Excluir fornecedor?"
+                            description={
+                              <>
+                                O fornecedor <strong>{item.name}</strong> será
+                                removido do cadastro. Compras já registradas não
+                                serão excluídas.
+                              </>
                             }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                            onConfirm={() =>
+                              deleteSupplier.mutateAsync({ id: item.id })
+                            }
+                          />
                         </TableCell>
                       </TableRow>
                     ))

@@ -126,6 +126,7 @@ export default function Receitas() {
       toast.success("Receita removida");
       setDeleteDialog(null);
     },
+    onError: error => toast.error(error.message),
   });
   const deleteSeriesMut = trpc.revenues.deleteSeries.useMutation({
     onSuccess: () => {
@@ -133,6 +134,7 @@ export default function Receitas() {
       toast.success("Série removida");
       setDeleteDialog(null);
     },
+    onError: error => toast.error(error.message),
   });
 
   // ── form state ──
@@ -292,11 +294,7 @@ export default function Receitas() {
   };
 
   const handleDelete = (item: (typeof rows)[number]) => {
-    if (item.seriesId) {
-      setDeleteDialog(item);
-      return;
-    }
-    deleteMutation.mutate({ id: item.id });
+    setDeleteDialog(item);
   };
 
   const toggleStatus = (item: (typeof rows)[number]) => {
@@ -633,43 +631,78 @@ export default function Receitas() {
       {/* ────── Dialog: escopo de exclusão de série ────── */}
       <Dialog
         open={!!deleteDialog}
-        onOpenChange={v => !v && setDeleteDialog(null)}
+        onOpenChange={v => {
+          if (!v && !deleteMutation.isPending && !deleteSeriesMut.isPending) {
+            setDeleteDialog(null);
+          }
+        }}
       >
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Apagar receita da série</DialogTitle>
+            <DialogTitle>
+              {deleteDialog?.seriesId
+                ? "Excluir receita recorrente?"
+                : "Excluir receita?"}
+            </DialogTitle>
             <DialogDescription>
-              Esta receita faz parte de uma série vinculada. O que deseja
-              apagar?
+              {deleteDialog?.seriesId ? (
+                <>
+                  <strong>{deleteDialog.description}</strong> faz parte de uma
+                  série. Escolha se deseja excluir este lançamento ou toda a
+                  série. Esta ação não pode ser desfeita.
+                </>
+              ) : (
+                <>
+                  A receita <strong>{deleteDialog?.description}</strong> será
+                  removida definitivamente. Esta ação não pode ser desfeita.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col gap-2 sm:flex-col">
             <Button
-              variant="destructive"
+              variant={deleteDialog?.seriesId ? "outline" : "destructive"}
               className="w-full"
               onClick={() => {
                 if (deleteDialog)
                   deleteMutation.mutate({ id: deleteDialog.id });
               }}
-              disabled={deleteMutation.isPending}
+              disabled={deleteMutation.isPending || deleteSeriesMut.isPending}
             >
-              Somente esta receita
+              {deleteMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : null}
+              {deleteMutation.isPending
+                ? "Excluindo..."
+                : deleteDialog?.seriesId
+                  ? "Excluir somente esta receita"
+                  : "Excluir receita"}
             </Button>
-            <Button
-              variant="outline"
-              className="w-full border-destructive text-destructive hover:bg-destructive/10"
-              onClick={() => {
-                if (deleteDialog?.seriesId)
-                  deleteSeriesMut.mutate({ seriesId: deleteDialog.seriesId });
-              }}
-              disabled={deleteSeriesMut.isPending}
-            >
-              Apagar toda a série
-            </Button>
+            {deleteDialog?.seriesId ? (
+              <Button
+                variant="destructive"
+                className="w-full"
+                onClick={() => {
+                  if (deleteDialog.seriesId)
+                    deleteSeriesMut.mutate({
+                      seriesId: deleteDialog.seriesId,
+                    });
+                }}
+                disabled={deleteSeriesMut.isPending || deleteMutation.isPending}
+              >
+                {deleteSeriesMut.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : null}
+                {deleteSeriesMut.isPending
+                  ? "Excluindo série..."
+                  : "Excluir toda a série"}
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               className="w-full"
               onClick={() => setDeleteDialog(null)}
+              disabled={deleteMutation.isPending || deleteSeriesMut.isPending}
             >
               Cancelar
             </Button>

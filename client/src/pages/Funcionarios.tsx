@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,7 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Pencil, Users, Loader2 } from "lucide-react";
+import { Plus, Pencil, Users, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -489,14 +490,20 @@ export default function Funcionarios() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
+                        <ConfirmDeleteButton
                           className="h-8 w-8 text-destructive"
-                          onClick={() => deleteMut.mutate({ id: item.id })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                          title="Excluir funcionário?"
+                          description={
+                            <>
+                              O funcionário <strong>{item.name}</strong> e seu
+                              custo mensal serão removidos dos cálculos
+                              financeiros. Esta ação não pode ser desfeita.
+                            </>
+                          }
+                          onConfirm={() =>
+                            deleteMut.mutateAsync({ id: item.id })
+                          }
+                        />
                       </div>
                     </TableCell>
                   </TableRow>

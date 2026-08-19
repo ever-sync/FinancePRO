@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { TablePagination } from "@/components/TablePagination";
+import { ConfirmDeleteButton } from "@/components/ConfirmDeleteDialog";
 import { useTablePagination } from "@/hooks/useTablePagination";
 import { formatCurrency } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,7 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Pencil, Loader2 } from "lucide-react";
+import { Plus, Pencil, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -476,14 +477,20 @@ export default function Servicos() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
+                        <ConfirmDeleteButton
                           className="h-8 w-8 text-destructive"
-                          onClick={() => deleteService.mutate({ id: item.id })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                          title="Excluir serviço?"
+                          description={
+                            <>
+                              O serviço <strong>{item.name}</strong> será
+                              removido do catálogo. As receitas já criadas não
+                              serão excluídas.
+                            </>
+                          }
+                          onConfirm={() =>
+                            deleteService.mutateAsync({ id: item.id })
+                          }
+                        />
                       </div>
                     </TableCell>
                   </TableRow>
