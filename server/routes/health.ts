@@ -1,6 +1,12 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
+import { ENV } from "../_core/env";
+import { isStrongSecret, secretsMatch } from "../_core/secrets";
+import {
+  checkSupabaseAuthConnection,
+  type SupabaseAuthHealth,
+} from "../_core/supabaseHealth";
 
 const router = Router();
 
@@ -14,6 +20,43 @@ async function checkDatabaseConnection() {
   return { connected: true as const };
 }
 
+const AUTH_SUCCESS_CACHE_MS = 30_000;
+const AUTH_FAILURE_CACHE_MS = 5_000;
+let cachedAuthHealth: { value: SupabaseAuthHealth; expiresAt: number } | null =
+  null;
+
+async function checkAuthenticationConnection() {
+  const now = Date.now();
+  if (cachedAuthHealth && cachedAuthHealth.expiresAt > now) {
+    return cachedAuthHealth.value;
+  }
+
+  const value = await checkSupabaseAuthConnection({
+    supabaseUrl: ENV.supabaseUrl,
+    supabaseAuthKey: ENV.supabaseAuthKey,
+  });
+  cachedAuthHealth = {
+    value,
+    expiresAt:
+      now + (value.connected ? AUTH_SUCCESS_CACHE_MS : AUTH_FAILURE_CACHE_MS),
+  };
+  return value;
+}
+
+function safeHealthError(error: unknown) {
+  if (ENV.isProduction) return "Dependency check failed";
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
+function isMetricsAuthorized(req: Request) {
+  if (!isStrongSecret(ENV.cronSecret)) return false;
+  const bearer = req.header("authorization")?.replace(/^Bearer\s+/i, "") || "";
+  const header = req.header("x-cron-secret") || "";
+  return (
+    secretsMatch(bearer, ENV.cronSecret) || secretsMatch(header, ENV.cronSecret)
+  );
+}
+
 router.get("/health", async (_req, res) => {
   const healthcheck = {
     uptime: process.uptime(),
@@ -25,22 +68,33 @@ router.get("/health", async (_req, res) => {
 
   try {
     const dbStatus = await checkDatabaseConnection();
-    if (!dbStatus.connected) {
+    const authStatus = await checkAuthenticationConnection();
+    if (!dbStatus.connected || !authStatus.connected) {
+      const dependencyError = !dbStatus.connected
+        ? dbStatus.error
+        : authStatus.connected
+          ? "Dependency check failed"
+          : authStatus.error;
       return res.status(503).json({
         ...healthcheck,
         status: "ERROR",
-        database: "disconnected",
-        error: dbStatus.error,
+        database: dbStatus.connected ? "connected" : "disconnected",
+        authentication: authStatus.connected ? "connected" : "disconnected",
+        error: dependencyError,
       });
     }
 
-    return res.json({ ...healthcheck, database: "connected" });
+    return res.json({
+      ...healthcheck,
+      database: "connected",
+      authentication: "connected",
+    });
   } catch (error) {
     return res.status(503).json({
       ...healthcheck,
       status: "ERROR",
       database: "disconnected",
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: safeHealthError(error),
     });
   }
 });
@@ -54,14 +108,21 @@ router.get("/ready", async (_req, res) => {
 
   try {
     const dbStatus = await checkDatabaseConnection();
-    if (!dbStatus.connected) {
+    const authStatus = await checkAuthenticationConnection();
+    if (!dbStatus.connected || !authStatus.connected) {
+      const dependencyError = !dbStatus.connected
+        ? dbStatus.error
+        : authStatus.connected
+          ? "Dependency check failed"
+          : authStatus.error;
       return res.status(503).json({
         ...readiness,
         status: "NOT_READY",
         checks: {
           ...readiness.checks,
-          database: "disconnected",
-          error: dbStatus.error,
+          database: dbStatus.connected ? "connected" : "disconnected",
+          authentication: authStatus.connected ? "connected" : "disconnected",
+          error: dependencyError,
         },
       });
     }
@@ -71,6 +132,7 @@ router.get("/ready", async (_req, res) => {
       checks: {
         ...readiness.checks,
         database: "connected",
+        authentication: "connected",
       },
     });
   } catch (error) {
@@ -80,13 +142,16 @@ router.get("/ready", async (_req, res) => {
       checks: {
         ...readiness.checks,
         database: "disconnected",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: safeHealthError(error),
       },
     });
   }
 });
 
-router.get("/metrics", async (_req, res) => {
+router.get("/metrics", async (req, res) => {
+  if (!isMetricsAuthorized(req)) {
+    return res.status(401).json({ error: "Metrics not authorized" });
+  }
   try {
     const memoryUsage = process.memoryUsage();
     const uptime = process.uptime();

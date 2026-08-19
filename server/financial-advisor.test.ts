@@ -56,9 +56,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [
-        { status: "PENDING", dueDate: "2026-03-30" },
-      ],
+      receivables: [{ id: 1, status: "pendente", dueDate: "2026-03-30" }],
     });
 
     expect(snapshot.cashRiskLevel).toBe("healthy");
@@ -120,9 +118,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [
-        { status: "OVERDUE", dueDate: "2026-03-12" },
-      ],
+      receivables: [{ id: 1, status: "atrasado", dueDate: "2026-03-12" }],
     });
 
     expect(snapshot.cashRiskLevel).toBe("critical");
@@ -182,7 +178,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [],
+      receivables: [],
     });
 
     const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
@@ -192,7 +188,9 @@ describe("financial advisor governance snapshot", () => {
     expect(scenarios.headrooms.company).toBeGreaterThan(0);
     expect(scenarios.scenarios.withdrawal.amount).toBe(3000);
     expect(scenarios.scenarios.withdrawal.tone).not.toBe("critical");
-    expect(scenarios.scenarios.withdrawal.metrics[0]?.label).toBe("Folga operacional atual");
+    expect(scenarios.scenarios.withdrawal.metrics[0]?.label).toBe(
+      "Folga operacional atual"
+    );
   });
 
   it("flags a new monthly cost as critical when the company has no real room left", () => {
@@ -235,7 +233,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [{ status: "OVERDUE", dueDate: "2026-03-12" }],
+      receivables: [{ id: 1, status: "atrasado", dueDate: "2026-03-12" }],
     });
 
     const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
@@ -286,7 +284,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [],
+      receivables: [],
     });
 
     const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
@@ -295,8 +293,12 @@ describe("financial advisor governance snapshot", () => {
     });
 
     expect(scenarios.scenarios.hiring.consumptionPercent).toBeGreaterThan(0);
-    expect(scenarios.scenarios.hiring.metrics[0]?.label).toBe("Custo mensal da contratacao");
-    expect(["attention", "critical"]).toContain(scenarios.scenarios.hiring.tone);
+    expect(scenarios.scenarios.hiring.metrics[0]?.label).toBe(
+      "Custo mensal da contratacao"
+    );
+    expect(["attention", "critical"]).toContain(
+      scenarios.scenarios.hiring.tone
+    );
   });
 
   it("evaluates installment purchases by the monthly parcel instead of the full amount", () => {
@@ -339,7 +341,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [],
+      receivables: [],
     });
 
     const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
@@ -348,8 +350,12 @@ describe("financial advisor governance snapshot", () => {
     });
 
     expect(scenarios.scenarios.installmentPurchase.amount).toBe(1000);
-    expect(scenarios.scenarios.installmentPurchase.metrics[1]?.label).toBe("Parcela mensal");
-    expect(scenarios.scenarios.installmentPurchase.metadata?.installments).toBe(12);
+    expect(scenarios.scenarios.installmentPurchase.metrics[1]?.label).toBe(
+      "Parcela mensal"
+    );
+    expect(scenarios.scenarios.installmentPurchase.metadata?.installments).toBe(
+      12
+    );
   });
 
   it("distinguishes recurring withdrawal from a one-off withdrawal", () => {
@@ -392,7 +398,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [],
+      receivables: [],
     });
 
     const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
@@ -403,7 +409,9 @@ describe("financial advisor governance snapshot", () => {
     expect(scenarios.scenarios.recurringWithdrawal.metrics[0]?.label).toBe(
       "Folga apos retirada recorrente"
     );
-    expect(scenarios.scenarios.recurringWithdrawal.summary).toContain("recorrente");
+    expect(scenarios.scenarios.recurringWithdrawal.summary).toContain(
+      "recorrente"
+    );
     expect(scenarios.scenarios.withdrawal.summary).not.toContain("recorrente");
   });
 
@@ -462,7 +470,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [{ id: 1 }],
       reserveFunds: [{ id: 1 }],
-      asaasCharges: [{ status: "PENDING", dueDate: "2026-03-30" }],
+      receivables: [{ id: 1, status: "pendente", dueDate: "2026-03-30" }],
     };
 
     const snapshot = calculateFinancialGovernanceSnapshot(context);
@@ -498,7 +506,7 @@ describe("financial advisor governance snapshot", () => {
       debts: [],
       investments: [],
       reserveFunds: [],
-      asaasCharges: [],
+      receivables: [],
     };
 
     const onboarding = calculateFinancialAdvisorOnboarding({
@@ -523,7 +531,7 @@ describe("financial advisor governance snapshot", () => {
         },
         {
           kind: "charge_follow_up",
-          title: "Atuar nas cobrancas abertas do Asaas",
+          title: "Cobrar recebimentos em aberto",
           description: "Existem cobrancas em aberto.",
         },
         {
@@ -543,8 +551,12 @@ describe("financial advisor governance snapshot", () => {
     const personalized = personalizeFinancialRecommendations(snapshot, memory);
     expect(personalized[0]?.kind).toBe("pay_priority_items");
     expect(personalized[1]?.kind).toBe("charge_follow_up");
-    expect(personalized[0]?.description).toContain("Foque em executar esta unica frente");
-    expect(personalizeFinancialAdvisorSummary(snapshot, memory)).toContain("passos menores");
+    expect(personalized[0]?.description).toContain(
+      "Foque em executar esta unica frente"
+    );
+    expect(personalizeFinancialAdvisorSummary(snapshot, memory)).toContain(
+      "passos menores"
+    );
   });
 
   it("raises the strategic level when memory shows consistent execution", () => {
@@ -572,6 +584,8 @@ describe("financial advisor governance snapshot", () => {
     const personalized = personalizeFinancialRecommendations(snapshot, memory);
     expect(personalized[0]?.kind).toBe("transfer_personal_reserve");
     expect(personalized[0]?.description).toContain("subir o nivel");
-    expect(personalizeFinancialAdvisorSummary(snapshot, memory)).toContain("subir o foco");
+    expect(personalizeFinancialAdvisorSummary(snapshot, memory)).toContain(
+      "subir o foco"
+    );
   });
 });

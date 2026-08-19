@@ -3,26 +3,42 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { randomUUID } from "crypto";
 import postgres from "postgres";
 import {
-  InsertUser, users,
-  settings, InsertSettings,
-  bankConnections, InsertBankConnection,
-  revenues, InsertRevenue,
-  companyFixedCosts, InsertCompanyFixedCost,
-  companyVariableCosts, InsertCompanyVariableCost,
-  employees, InsertEmployee,
-  suppliers, InsertSupplier,
-  supplierPurchases, InsertSupplierPurchase,
-  personalFixedCosts, InsertPersonalFixedCost,
-  personalVariableCosts, InsertPersonalVariableCost,
-  debts, InsertDebt,
-  investments, InsertInvestment,
-  reserveFunds, InsertReserveFund,
-  clients, InsertClient,
-  services, InsertService,
+  InsertUser,
+  users,
+  settings,
+  InsertSettings,
+  bankConnections,
+  InsertBankConnection,
+  revenues,
+  InsertRevenue,
+  companyFixedCosts,
+  InsertCompanyFixedCost,
+  companyVariableCosts,
+  InsertCompanyVariableCost,
+  employees,
+  InsertEmployee,
+  suppliers,
+  InsertSupplier,
+  supplierPurchases,
+  InsertSupplierPurchase,
+  personalFixedCosts,
+  InsertPersonalFixedCost,
+  personalVariableCosts,
+  InsertPersonalVariableCost,
+  debts,
+  InsertDebt,
+  investments,
+  InsertInvestment,
+  reserveFunds,
+  InsertReserveFund,
+  clients,
+  InsertClient,
+  services,
+  InsertService,
 } from "../drizzle/schema";
-import { ENV } from './_core/env';
-import type { PaginationParams, PaginatedResult } from './db/utils/pagination';
-import { calculatePagination, getDefaultPagination } from './db/utils/pagination';
+import { ENV } from "./_core/env";
+import type { PaginationParams, PaginatedResult } from "./db/utils/pagination";
+import { calculatePagination, resolvePagination } from "./db/utils/pagination";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -45,9 +61,14 @@ function normalizeInstallmentCount(value?: number | null) {
   return Math.floor(count);
 }
 
-function splitAmountIntoInstallments(totalAmount: string, installmentCount: number) {
+function splitAmountIntoInstallments(
+  totalAmount: string,
+  installmentCount: number
+) {
   const parsed = Number(totalAmount);
-  const totalCents = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : 0;
+  const totalCents = Number.isFinite(parsed)
+    ? Math.max(0, Math.round(parsed * 100))
+    : 0;
   const baseCents = Math.floor(totalCents / installmentCount);
   const remainder = totalCents % installmentCount;
 
@@ -64,7 +85,9 @@ function addMonthsToIsoDate(dateStr: string, offset: number) {
   const monthIndex = monthPart - 1 + offset;
   const targetYear = yearPart + Math.floor(monthIndex / 12);
   const targetMonthIndex = ((monthIndex % 12) + 12) % 12;
-  const lastDay = new Date(Date.UTC(targetYear, targetMonthIndex + 1, 0)).getUTCDate();
+  const lastDay = new Date(
+    Date.UTC(targetYear, targetMonthIndex + 1, 0)
+  ).getUTCDate();
   const targetDay = Math.min(dayPart, lastDay);
 
   return `${String(targetYear).padStart(4, "0")}-${String(targetMonthIndex + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
@@ -86,11 +109,14 @@ const DASHBOARD_MONTH_LABELS = [
 ];
 
 function toNumber(value: string | number | null | undefined) {
-  const parsed = typeof value === "string" ? Number.parseFloat(value) : Number(value ?? 0);
+  const parsed =
+    typeof value === "string" ? Number.parseFloat(value) : Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function rowsFromResult<T>(value: T[] | PaginatedResult<T> | null | undefined): T[] {
+function rowsFromResult<T>(
+  value: T[] | PaginatedResult<T> | null | undefined
+): T[] {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.data)) return value.data;
   return [];
@@ -139,14 +165,24 @@ function buildYearMonths(year: number) {
   }));
 }
 
-function isSameMonthYear(value: string | null | undefined, month: number, year: number) {
+function isSameMonthYear(
+  value: string | null | undefined,
+  month: number,
+  year: number
+) {
   const parts = parseDateParts(value);
   return parts ? parts.month === month && parts.year === year : false;
 }
 
-function isOnOrBeforeMonthYear(value: string | null | undefined, month: number, year: number) {
+function isOnOrBeforeMonthYear(
+  value: string | null | undefined,
+  month: number,
+  year: number
+) {
   const parts = parseDateParts(value);
-  return parts ? monthSerial(parts.year, parts.month) <= monthSerial(year, month) : false;
+  return parts
+    ? monthSerial(parts.year, parts.month) <= monthSerial(year, month)
+    : false;
 }
 
 function formatDashboardDate(month: number, year: number, day: number) {
@@ -168,7 +204,13 @@ type DashboardActivity = {
   price: number;
   status: "Concluído" | "Pendente" | "Em andamento";
   date: string;
-  kind: "revenue" | "fixedCost" | "variableCost" | "purchase" | "payroll" | "reserve";
+  kind:
+    | "revenue"
+    | "fixedCost"
+    | "variableCost"
+    | "purchase"
+    | "payroll"
+    | "reserve";
   tone: "emerald" | "rose" | "amber" | "blue";
   sortKey: number;
 };
@@ -181,7 +223,10 @@ function getActivitySortKey(year: number, month: number, day: number) {
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
-  if (!db) { console.warn("[Database] Cannot upsert user: database not available"); return; }
+  if (!db) {
+    console.warn("[Database] Cannot upsert user: database not available");
+    return;
+  }
   try {
     const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
@@ -195,61 +240,50 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet[field] = normalized;
     };
     textFields.forEach(assignNullable);
-    if (user.lastSignedIn !== undefined) { values.lastSignedIn = user.lastSignedIn; updateSet.lastSignedIn = user.lastSignedIn; }
-    if (user.role !== undefined) { values.role = user.role; updateSet.role = user.role; } else if (user.openId === ENV.ownerOpenId) { values.role = 'admin'; updateSet.role = 'admin'; }
+    if (user.lastSignedIn !== undefined) {
+      values.lastSignedIn = user.lastSignedIn;
+      updateSet.lastSignedIn = user.lastSignedIn;
+    }
+    if (user.role !== undefined) {
+      values.role = user.role;
+      updateSet.role = user.role;
+    } else if (user.openId === ENV.ownerOpenId) {
+      values.role = "admin";
+      updateSet.role = "admin";
+    }
     if (!values.lastSignedIn) values.lastSignedIn = new Date();
-    if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
-    await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
-  } catch (error) { console.error("[Database] Failed to upsert user:", error); throw error; }
+    if (Object.keys(updateSet).length === 0)
+      updateSet.lastSignedIn = new Date();
+    await db
+      .insert(users)
+      .values(values)
+      .onConflictDoUpdate({ target: users.openId, set: updateSet });
+  } catch (error) {
+    console.error("[Database] Failed to upsert user:", error);
+    throw error;
+  }
 }
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
-}
-
-/**
- * Returns the first legacy (non-Supabase) user in the DB.
- */
-export async function getLegacyUser() {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(users)
-    .where(ne(users.loginMethod, "supabase"))
-    .limit(1);
-  if (result.length > 0) return result[0];
-  const nullResult = await db.select().from(users)
-    .where(sql`${users.loginMethod} IS NULL`)
-    .limit(1);
-  return nullResult.length > 0 ? nullResult[0] : undefined;
-}
-
-/**
- * Migrates a legacy user to a new Supabase openId.
- * If a Supabase user record already exists (empty), it gets deleted first
- * so the legacy user can take its openId without unique constraint violation.
- */
-export async function migrateLegacyUserToSupabase(legacyUserId: number, supabaseOpenId: string) {
-  const db = await getDb();
-  if (!db) return;
-  // Remove any empty Supabase user that was auto-created
-  await db.delete(users).where(
-    and(eq(users.openId, supabaseOpenId), ne(users.id, legacyUserId))
-  );
-  // Now update the legacy user to use the Supabase openId
-  await db.update(users).set({
-    openId: supabaseOpenId,
-    loginMethod: "supabase",
-  }).where(eq(users.id, legacyUserId));
 }
 
 // ==================== SETTINGS ====================
 export async function getSettings(userId: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(settings).where(eq(settings.userId, userId)).limit(1);
+  const result = await db
+    .select()
+    .from(settings)
+    .where(eq(settings.userId, userId))
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -277,27 +311,38 @@ export async function listBankConnections(userId: number) {
     .orderBy(desc(bankConnections.updatedAt));
 }
 
-export async function getBankConnectionById(userId: number, connectionId: number) {
+export async function getBankConnectionById(
+  userId: number,
+  connectionId: number
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
     .select()
     .from(bankConnections)
-    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)))
+    .where(
+      and(
+        eq(bankConnections.userId, userId),
+        eq(bankConnections.id, connectionId)
+      )
+    )
     .limit(1);
   return record;
 }
 
-export async function upsertBankConnection(userId: number, data: Partial<InsertBankConnection> & {
-  id?: number;
-  label: string;
-  institution: string;
-  provider: string;
-  sourceKind: string;
-  scope: string;
-  syncMode: string;
-  status: string;
-}) {
+export async function upsertBankConnection(
+  userId: number,
+  data: Partial<InsertBankConnection> & {
+    id?: number;
+    label: string;
+    institution: string;
+    provider: string;
+    sourceKind: string;
+    scope: string;
+    syncMode: string;
+    status: string;
+  }
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -316,7 +361,9 @@ export async function upsertBankConnection(userId: number, data: Partial<InsertB
         lastSyncStatus: data.lastSyncStatus ?? undefined,
         lastSyncError: data.lastSyncError ?? undefined,
       })
-      .where(and(eq(bankConnections.id, data.id), eq(bankConnections.userId, userId)));
+      .where(
+        and(eq(bankConnections.id, data.id), eq(bankConnections.userId, userId))
+      );
     return getBankConnectionById(userId, data.id);
   }
 
@@ -339,12 +386,20 @@ export async function upsertBankConnection(userId: number, data: Partial<InsertB
   return created;
 }
 
-export async function deleteBankConnection(userId: number, connectionId: number) {
+export async function deleteBankConnection(
+  userId: number,
+  connectionId: number
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db
     .delete(bankConnections)
-    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+    .where(
+      and(
+        eq(bankConnections.userId, userId),
+        eq(bankConnections.id, connectionId)
+      )
+    );
 }
 
 export async function markBankConnectionImported(
@@ -362,11 +417,19 @@ export async function markBankConnectionImported(
       lastSyncStatus: "imported",
       lastSyncError: null,
     })
-    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+    .where(
+      and(
+        eq(bankConnections.userId, userId),
+        eq(bankConnections.id, connectionId)
+      )
+    );
   return getBankConnectionById(userId, connectionId);
 }
 
-export async function requestBankConnectionSync(userId: number, connectionId: number) {
+export async function requestBankConnectionSync(
+  userId: number,
+  connectionId: number
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db
@@ -376,7 +439,12 @@ export async function requestBankConnectionSync(userId: number, connectionId: nu
       lastSyncStatus: "pending_provider_setup",
       lastSyncError: null,
     })
-    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+    .where(
+      and(
+        eq(bankConnections.userId, userId),
+        eq(bankConnections.id, connectionId)
+      )
+    );
   return getBankConnectionById(userId, connectionId);
 }
 
@@ -400,7 +468,12 @@ export async function updateBankConnectionSyncState(
       lastSyncError: data.lastSyncError ?? undefined,
       lastSyncRequestedAt: data.lastSyncRequestedAt ?? undefined,
     })
-    .where(and(eq(bankConnections.userId, userId), eq(bankConnections.id, connectionId)));
+    .where(
+      and(
+        eq(bankConnections.userId, userId),
+        eq(bankConnections.id, connectionId)
+      )
+    );
   return getBankConnectionById(userId, connectionId);
 }
 
@@ -413,67 +486,107 @@ export async function getRevenues(
 ): Promise<PaginatedResult<typeof revenues.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   const conditions = [eq(revenues.userId, userId)];
   if (month !== undefined && year !== undefined) {
-    conditions.push(sql`EXTRACT(MONTH FROM ${revenues.dueDate}::date) = ${month}`);
-    conditions.push(sql`EXTRACT(YEAR FROM ${revenues.dueDate}::date) = ${year}`);
+    conditions.push(
+      sql`EXTRACT(MONTH FROM ${revenues.dueDate}::date) = ${month}`
+    );
+    conditions.push(
+      sql`EXTRACT(YEAR FROM ${revenues.dueDate}::date) = ${year}`
+    );
   }
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(revenues).where(and(...conditions));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(revenues)
+    .where(and(...conditions));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'dueDate';
-  const sortOrder = pagination?.sortOrder ?? 'desc';
-  
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "dueDate";
+  const sortOrder = pagination?.sortOrder ?? "desc";
+
   const orderByColumn = (revenues as any)[sortBy] || revenues.dueDate;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const data = await db.select().from(revenues)
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const data = await db
+    .select()
+    .from(revenues)
     .where(and(...conditions))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
-  
+
   return {
     data,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
+}
+
+export async function getRevenueById(userId: number, revenueId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [record] = await db
+    .select()
+    .from(revenues)
+    .where(and(eq(revenues.userId, userId), eq(revenues.id, revenueId)))
+    .limit(1);
+  return record;
 }
 
 export async function createRevenue(data: InsertRevenue) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(revenues).values(data).returning({ id: revenues.id });
+  const [inserted] = await db
+    .insert(revenues)
+    .values(data)
+    .returning({ id: revenues.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateRevenue(id: number, userId: number, data: Partial<InsertRevenue>) {
+export async function updateRevenue(
+  id: number,
+  userId: number,
+  data: Partial<InsertRevenue>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(revenues).set(data).where(and(eq(revenues.id, id), eq(revenues.userId, userId)));
+  await db
+    .update(revenues)
+    .set(data)
+    .where(and(eq(revenues.id, id), eq(revenues.userId, userId)));
 }
 
 export async function deleteRevenue(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(revenues).where(and(eq(revenues.id, id), eq(revenues.userId, userId)));
+  await db
+    .delete(revenues)
+    .where(and(eq(revenues.id, id), eq(revenues.userId, userId)));
 }
 
 export async function deleteRevenueSeries(seriesId: string, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(revenues).where(and(eq(revenues.seriesId, seriesId), eq(revenues.userId, userId)));
+  await db
+    .delete(revenues)
+    .where(and(eq(revenues.seriesId, seriesId), eq(revenues.userId, userId)));
 }
 
-export async function updateRevenueSeries(seriesId: string, userId: number, data: Partial<InsertRevenue>) {
+export async function updateRevenueSeries(
+  seriesId: string,
+  userId: number,
+  data: Partial<InsertRevenue>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(revenues).set(data).where(and(eq(revenues.seriesId, seriesId), eq(revenues.userId, userId)));
+  await db
+    .update(revenues)
+    .set(data)
+    .where(and(eq(revenues.seriesId, seriesId), eq(revenues.userId, userId)));
 }
 
 // ==================== COMPANY FIXED COSTS ====================
@@ -485,81 +598,133 @@ export async function getCompanyFixedCosts(
 ): Promise<PaginatedResult<typeof companyFixedCosts.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   const conditions = [eq(companyFixedCosts.userId, userId)];
   if (month !== undefined) conditions.push(eq(companyFixedCosts.month, month));
   if (year !== undefined) conditions.push(eq(companyFixedCosts.year, year));
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(companyFixedCosts).where(and(...conditions));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(companyFixedCosts)
+    .where(and(...conditions));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'dueDay';
-  const sortOrder = pagination?.sortOrder ?? 'asc';
-  
-  const orderByColumn = (companyFixedCosts as any)[sortBy] || companyFixedCosts.dueDay;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const existing = await db.select().from(companyFixedCosts)
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "dueDay";
+  const sortOrder = pagination?.sortOrder ?? "asc";
+
+  const orderByColumn =
+    (companyFixedCosts as any)[sortBy] || companyFixedCosts.dueDay;
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const existing = await db
+    .select()
+    .from(companyFixedCosts)
     .where(and(...conditions))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
 
   // Auto-propagate: if querying a specific month with no records, copy from most recent month
-  if (existing.length === 0 && month !== undefined && year !== undefined && page === 1) {
-    const allRecords = await db.select().from(companyFixedCosts)
+  if (
+    existing.length === 0 &&
+    month !== undefined &&
+    year !== undefined &&
+    page === 1
+  ) {
+    const allRecords = await db
+      .select()
+      .from(companyFixedCosts)
       .where(eq(companyFixedCosts.userId, userId))
       .orderBy(desc(companyFixedCosts.year), desc(companyFixedCosts.month));
     if (allRecords.length > 0) {
       const srcYear = allRecords[0].year;
       const srcMonth = allRecords[0].month;
       if (year * 12 + month > srcYear * 12 + srcMonth) {
-        const templates = allRecords.filter(r => r.year === srcYear && r.month === srcMonth);
-        await db.insert(companyFixedCosts).values(
-          templates.map(t => ({ userId, description: t.description, category: t.category, amount: t.amount, dueDay: t.dueDay, month, year, status: "pendente" as const }))
+        const templates = allRecords.filter(
+          r => r.year === srcYear && r.month === srcMonth
         );
-        const newData = await db.select().from(companyFixedCosts)
+        await db
+          .insert(companyFixedCosts)
+          .values(
+            templates.map(t => ({
+              userId,
+              description: t.description,
+              category: t.category,
+              amount: t.amount,
+              dueDay: t.dueDay,
+              month,
+              year,
+              status: "pendente" as const,
+            }))
+          );
+        const newCountResult = await db
+          .select({ count: count() })
+          .from(companyFixedCosts)
+          .where(and(...conditions));
+        const newTotal = Number(newCountResult[0]?.count ?? 0);
+        const hydratedPagination = resolvePagination(pagination, newTotal);
+        const newData = await db
+          .select()
+          .from(companyFixedCosts)
           .where(and(...conditions))
           .orderBy(orderFunc(orderByColumn))
-          .limit(limit)
-          .offset((page - 1) * limit);
-        
-        const newCountResult = await db.select({ count: count() }).from(companyFixedCosts).where(and(...conditions));
+          .limit(hydratedPagination.limit)
+          .offset((hydratedPagination.page - 1) * hydratedPagination.limit);
+
         return {
           data: newData,
-          pagination: calculatePagination(page, limit, Number(newCountResult[0]?.count ?? 0)),
+          pagination: calculatePagination(
+            hydratedPagination.page,
+            hydratedPagination.limit,
+            newTotal
+          ),
         };
       }
     }
   }
-  
+
   return {
     data: existing,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
 }
 
 export async function createCompanyFixedCost(data: InsertCompanyFixedCost) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(companyFixedCosts).values(data).returning({ id: companyFixedCosts.id });
+  const [inserted] = await db
+    .insert(companyFixedCosts)
+    .values(data)
+    .returning({ id: companyFixedCosts.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateCompanyFixedCost(id: number, userId: number, data: Partial<InsertCompanyFixedCost>) {
+export async function updateCompanyFixedCost(
+  id: number,
+  userId: number,
+  data: Partial<InsertCompanyFixedCost>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(companyFixedCosts).set(data).where(and(eq(companyFixedCosts.id, id), eq(companyFixedCosts.userId, userId)));
+  await db
+    .update(companyFixedCosts)
+    .set(data)
+    .where(
+      and(eq(companyFixedCosts.id, id), eq(companyFixedCosts.userId, userId))
+    );
 }
 
 export async function deleteCompanyFixedCost(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(companyFixedCosts).where(and(eq(companyFixedCosts.id, id), eq(companyFixedCosts.userId, userId)));
+  await db
+    .delete(companyFixedCosts)
+    .where(
+      and(eq(companyFixedCosts.id, id), eq(companyFixedCosts.userId, userId))
+    );
 }
 
 // ==================== COMPANY VARIABLE COSTS ====================
@@ -571,44 +736,58 @@ export async function getCompanyVariableCosts(
 ): Promise<PaginatedResult<typeof companyVariableCosts.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   const conditions = [eq(companyVariableCosts.userId, userId)];
   if (month !== undefined && year !== undefined) {
-    conditions.push(sql`EXTRACT(MONTH FROM ${companyVariableCosts.date}::date) = ${month}`);
-    conditions.push(sql`EXTRACT(YEAR FROM ${companyVariableCosts.date}::date) = ${year}`);
+    conditions.push(
+      sql`EXTRACT(MONTH FROM ${companyVariableCosts.date}::date) = ${month}`
+    );
+    conditions.push(
+      sql`EXTRACT(YEAR FROM ${companyVariableCosts.date}::date) = ${year}`
+    );
   }
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(companyVariableCosts).where(and(...conditions));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(companyVariableCosts)
+    .where(and(...conditions));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'date';
-  const sortOrder = pagination?.sortOrder ?? 'desc';
-  
-  const orderByColumn = (companyVariableCosts as any)[sortBy] || companyVariableCosts.date;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const data = await db.select().from(companyVariableCosts)
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "date";
+  const sortOrder = pagination?.sortOrder ?? "desc";
+
+  const orderByColumn =
+    (companyVariableCosts as any)[sortBy] || companyVariableCosts.date;
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const data = await db
+    .select()
+    .from(companyVariableCosts)
     .where(and(...conditions))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
-  
+
   return {
     data,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
 }
 
-export async function createCompanyVariableCost(data: InsertCompanyVariableCost) {
+export async function createCompanyVariableCost(
+  data: InsertCompanyVariableCost
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const installmentCount = normalizeInstallmentCount(data.installmentCount);
   const installmentSeriesId = installmentCount > 1 ? randomUUID() : null;
-  const installmentAmounts = splitAmountIntoInstallments(data.amount, installmentCount);
+  const installmentAmounts = splitAmountIntoInstallments(
+    data.amount,
+    installmentCount
+  );
   const rows = installmentAmounts.map((amount, index) => ({
     ...data,
     amount,
@@ -617,20 +796,42 @@ export async function createCompanyVariableCost(data: InsertCompanyVariableCost)
     installmentCount,
     installmentNumber: index + 1,
   }));
-  const inserted = await db.insert(companyVariableCosts).values(rows).returning({ id: companyVariableCosts.id });
+  const inserted = await db
+    .insert(companyVariableCosts)
+    .values(rows)
+    .returning({ id: companyVariableCosts.id });
   return { id: inserted[0].id, ...rows[0] };
 }
 
-export async function updateCompanyVariableCost(id: number, userId: number, data: Partial<InsertCompanyVariableCost>) {
+export async function updateCompanyVariableCost(
+  id: number,
+  userId: number,
+  data: Partial<InsertCompanyVariableCost>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(companyVariableCosts).set(data).where(and(eq(companyVariableCosts.id, id), eq(companyVariableCosts.userId, userId)));
+  await db
+    .update(companyVariableCosts)
+    .set(data)
+    .where(
+      and(
+        eq(companyVariableCosts.id, id),
+        eq(companyVariableCosts.userId, userId)
+      )
+    );
 }
 
 export async function deleteCompanyVariableCost(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(companyVariableCosts).where(and(eq(companyVariableCosts.id, id), eq(companyVariableCosts.userId, userId)));
+  await db
+    .delete(companyVariableCosts)
+    .where(
+      and(
+        eq(companyVariableCosts.id, id),
+        eq(companyVariableCosts.userId, userId)
+      )
+    );
 }
 
 // ==================== EMPLOYEES ====================
@@ -640,49 +841,65 @@ export async function getEmployees(
 ): Promise<PaginatedResult<typeof employees.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(employees).where(eq(employees.userId, userId));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(employees)
+    .where(eq(employees.userId, userId));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'name';
-  const sortOrder = pagination?.sortOrder ?? 'asc';
-  
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "name";
+  const sortOrder = pagination?.sortOrder ?? "asc";
+
   const orderByColumn = (employees as any)[sortBy] || employees.name;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const data = await db.select().from(employees)
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const data = await db
+    .select()
+    .from(employees)
     .where(eq(employees.userId, userId))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
-  
+
   return {
     data,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
 }
 
 export async function createEmployee(data: InsertEmployee) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(employees).values(data).returning({ id: employees.id });
+  const [inserted] = await db
+    .insert(employees)
+    .values(data)
+    .returning({ id: employees.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateEmployee(id: number, userId: number, data: Partial<InsertEmployee>) {
+export async function updateEmployee(
+  id: number,
+  userId: number,
+  data: Partial<InsertEmployee>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(employees).set(data).where(and(eq(employees.id, id), eq(employees.userId, userId)));
+  await db
+    .update(employees)
+    .set(data)
+    .where(and(eq(employees.id, id), eq(employees.userId, userId)));
 }
 
 export async function deleteEmployee(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(employees).where(and(eq(employees.id, id), eq(employees.userId, userId)));
+  await db
+    .delete(employees)
+    .where(and(eq(employees.id, id), eq(employees.userId, userId)));
 }
 
 // ==================== SUPPLIERS ====================
@@ -692,49 +909,65 @@ export async function getSuppliers(
 ): Promise<PaginatedResult<typeof suppliers.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(suppliers).where(eq(suppliers.userId, userId));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(suppliers)
+    .where(eq(suppliers.userId, userId));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'name';
-  const sortOrder = pagination?.sortOrder ?? 'asc';
-  
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "name";
+  const sortOrder = pagination?.sortOrder ?? "asc";
+
   const orderByColumn = (suppliers as any)[sortBy] || suppliers.name;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const data = await db.select().from(suppliers)
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const data = await db
+    .select()
+    .from(suppliers)
     .where(eq(suppliers.userId, userId))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
-  
+
   return {
     data,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
 }
 
 export async function createSupplier(data: InsertSupplier) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(suppliers).values(data).returning({ id: suppliers.id });
+  const [inserted] = await db
+    .insert(suppliers)
+    .values(data)
+    .returning({ id: suppliers.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateSupplier(id: number, userId: number, data: Partial<InsertSupplier>) {
+export async function updateSupplier(
+  id: number,
+  userId: number,
+  data: Partial<InsertSupplier>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(suppliers).set(data).where(and(eq(suppliers.id, id), eq(suppliers.userId, userId)));
+  await db
+    .update(suppliers)
+    .set(data)
+    .where(and(eq(suppliers.id, id), eq(suppliers.userId, userId)));
 }
 
 export async function deleteSupplier(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(suppliers).where(and(eq(suppliers.id, id), eq(suppliers.userId, userId)));
+  await db
+    .delete(suppliers)
+    .where(and(eq(suppliers.id, id), eq(suppliers.userId, userId)));
 }
 
 // ==================== SUPPLIER PURCHASES ====================
@@ -743,58 +976,97 @@ export async function getSupplierPurchases(
   month?: number,
   year?: number,
   pagination?: PaginationParams
-): Promise<PaginatedResult<typeof supplierPurchases.$inferSelect>> {
+): Promise<
+  PaginatedResult<typeof supplierPurchases.$inferSelect> & {
+    totalAmount: string;
+  }
+> {
   const db = await getDb();
-  if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+  if (!db)
+    return {
+      data: [],
+      pagination: calculatePagination(1, 20, 0),
+      totalAmount: "0.00",
+    };
+
   const conditions = [eq(supplierPurchases.userId, userId)];
   if (month !== undefined && year !== undefined) {
-    conditions.push(sql`EXTRACT(MONTH FROM ${supplierPurchases.dueDate}::date) = ${month}`);
-    conditions.push(sql`EXTRACT(YEAR FROM ${supplierPurchases.dueDate}::date) = ${year}`);
+    conditions.push(
+      sql`EXTRACT(MONTH FROM ${supplierPurchases.dueDate}::date) = ${month}`
+    );
+    conditions.push(
+      sql`EXTRACT(YEAR FROM ${supplierPurchases.dueDate}::date) = ${year}`
+    );
   }
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(supplierPurchases).where(and(...conditions));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({
+      count: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${supplierPurchases.amount}), 0)`,
+    })
+    .from(supplierPurchases)
+    .where(and(...conditions));
+  const total = Number(countResult[0]?.count ?? 0);
+  const totalAmount = String(countResult[0]?.totalAmount ?? "0.00");
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'dueDate';
-  const sortOrder = pagination?.sortOrder ?? 'desc';
-  
-  const orderByColumn = (supplierPurchases as any)[sortBy] || supplierPurchases.dueDate;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const data = await db.select().from(supplierPurchases)
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "dueDate";
+  const sortOrder = pagination?.sortOrder ?? "desc";
+
+  const orderByColumn =
+    (supplierPurchases as any)[sortBy] || supplierPurchases.dueDate;
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const data = await db
+    .select()
+    .from(supplierPurchases)
     .where(and(...conditions))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
-  
+
   return {
     data,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
+    totalAmount,
   };
 }
 
 export async function createSupplierPurchase(data: InsertSupplierPurchase) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(supplierPurchases).values(data).returning({ id: supplierPurchases.id });
+  const [inserted] = await db
+    .insert(supplierPurchases)
+    .values(data)
+    .returning({ id: supplierPurchases.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateSupplierPurchase(id: number, userId: number, data: Partial<InsertSupplierPurchase>) {
+export async function updateSupplierPurchase(
+  id: number,
+  userId: number,
+  data: Partial<InsertSupplierPurchase>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(supplierPurchases).set(data).where(and(eq(supplierPurchases.id, id), eq(supplierPurchases.userId, userId)));
+  await db
+    .update(supplierPurchases)
+    .set(data)
+    .where(
+      and(eq(supplierPurchases.id, id), eq(supplierPurchases.userId, userId))
+    );
 }
 
 export async function deleteSupplierPurchase(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(supplierPurchases).where(and(eq(supplierPurchases.id, id), eq(supplierPurchases.userId, userId)));
+  await db
+    .delete(supplierPurchases)
+    .where(
+      and(eq(supplierPurchases.id, id), eq(supplierPurchases.userId, userId))
+    );
 }
 
 // ==================== PERSONAL FIXED COSTS ====================
@@ -806,81 +1078,133 @@ export async function getPersonalFixedCosts(
 ): Promise<PaginatedResult<typeof personalFixedCosts.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   const conditions = [eq(personalFixedCosts.userId, userId)];
   if (month !== undefined) conditions.push(eq(personalFixedCosts.month, month));
   if (year !== undefined) conditions.push(eq(personalFixedCosts.year, year));
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(personalFixedCosts).where(and(...conditions));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(personalFixedCosts)
+    .where(and(...conditions));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'dueDay';
-  const sortOrder = pagination?.sortOrder ?? 'asc';
-  
-  const orderByColumn = (personalFixedCosts as any)[sortBy] || personalFixedCosts.dueDay;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const existing = await db.select().from(personalFixedCosts)
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "dueDay";
+  const sortOrder = pagination?.sortOrder ?? "asc";
+
+  const orderByColumn =
+    (personalFixedCosts as any)[sortBy] || personalFixedCosts.dueDay;
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const existing = await db
+    .select()
+    .from(personalFixedCosts)
     .where(and(...conditions))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
 
   // Auto-propagate: if querying a specific month with no records, copy from most recent month
-  if (existing.length === 0 && month !== undefined && year !== undefined && page === 1) {
-    const allRecords = await db.select().from(personalFixedCosts)
+  if (
+    existing.length === 0 &&
+    month !== undefined &&
+    year !== undefined &&
+    page === 1
+  ) {
+    const allRecords = await db
+      .select()
+      .from(personalFixedCosts)
       .where(eq(personalFixedCosts.userId, userId))
       .orderBy(desc(personalFixedCosts.year), desc(personalFixedCosts.month));
     if (allRecords.length > 0) {
       const srcYear = allRecords[0].year;
       const srcMonth = allRecords[0].month;
       if (year * 12 + month > srcYear * 12 + srcMonth) {
-        const templates = allRecords.filter(r => r.year === srcYear && r.month === srcMonth);
-        await db.insert(personalFixedCosts).values(
-          templates.map(t => ({ userId, description: t.description, category: t.category, amount: t.amount, dueDay: t.dueDay, month, year, status: "pendente" as const }))
+        const templates = allRecords.filter(
+          r => r.year === srcYear && r.month === srcMonth
         );
-        const newData = await db.select().from(personalFixedCosts)
+        await db
+          .insert(personalFixedCosts)
+          .values(
+            templates.map(t => ({
+              userId,
+              description: t.description,
+              category: t.category,
+              amount: t.amount,
+              dueDay: t.dueDay,
+              month,
+              year,
+              status: "pendente" as const,
+            }))
+          );
+        const newCountResult = await db
+          .select({ count: count() })
+          .from(personalFixedCosts)
+          .where(and(...conditions));
+        const newTotal = Number(newCountResult[0]?.count ?? 0);
+        const hydratedPagination = resolvePagination(pagination, newTotal);
+        const newData = await db
+          .select()
+          .from(personalFixedCosts)
           .where(and(...conditions))
           .orderBy(orderFunc(orderByColumn))
-          .limit(limit)
-          .offset((page - 1) * limit);
-        
-        const newCountResult = await db.select({ count: count() }).from(personalFixedCosts).where(and(...conditions));
+          .limit(hydratedPagination.limit)
+          .offset((hydratedPagination.page - 1) * hydratedPagination.limit);
+
         return {
           data: newData,
-          pagination: calculatePagination(page, limit, Number(newCountResult[0]?.count ?? 0)),
+          pagination: calculatePagination(
+            hydratedPagination.page,
+            hydratedPagination.limit,
+            newTotal
+          ),
         };
       }
     }
   }
-  
+
   return {
     data: existing,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
 }
 
 export async function createPersonalFixedCost(data: InsertPersonalFixedCost) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(personalFixedCosts).values(data).returning({ id: personalFixedCosts.id });
+  const [inserted] = await db
+    .insert(personalFixedCosts)
+    .values(data)
+    .returning({ id: personalFixedCosts.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updatePersonalFixedCost(id: number, userId: number, data: Partial<InsertPersonalFixedCost>) {
+export async function updatePersonalFixedCost(
+  id: number,
+  userId: number,
+  data: Partial<InsertPersonalFixedCost>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(personalFixedCosts).set(data).where(and(eq(personalFixedCosts.id, id), eq(personalFixedCosts.userId, userId)));
+  await db
+    .update(personalFixedCosts)
+    .set(data)
+    .where(
+      and(eq(personalFixedCosts.id, id), eq(personalFixedCosts.userId, userId))
+    );
 }
 
 export async function deletePersonalFixedCost(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(personalFixedCosts).where(and(eq(personalFixedCosts.id, id), eq(personalFixedCosts.userId, userId)));
+  await db
+    .delete(personalFixedCosts)
+    .where(
+      and(eq(personalFixedCosts.id, id), eq(personalFixedCosts.userId, userId))
+    );
 }
 
 // ==================== PERSONAL VARIABLE COSTS ====================
@@ -892,44 +1216,58 @@ export async function getPersonalVariableCosts(
 ): Promise<PaginatedResult<typeof personalVariableCosts.$inferSelect>> {
   const db = await getDb();
   if (!db) return { data: [], pagination: calculatePagination(1, 20, 0) };
-  
+
   const conditions = [eq(personalVariableCosts.userId, userId)];
   if (month !== undefined && year !== undefined) {
-    conditions.push(sql`EXTRACT(MONTH FROM ${personalVariableCosts.date}::date) = ${month}`);
-    conditions.push(sql`EXTRACT(YEAR FROM ${personalVariableCosts.date}::date) = ${year}`);
+    conditions.push(
+      sql`EXTRACT(MONTH FROM ${personalVariableCosts.date}::date) = ${month}`
+    );
+    conditions.push(
+      sql`EXTRACT(YEAR FROM ${personalVariableCosts.date}::date) = ${year}`
+    );
   }
-  
+
   // Contagem total
-  const countResult = await db.select({ count: count() }).from(personalVariableCosts).where(and(...conditions));
-  const total = countResult[0]?.count ?? 0;
-  
+  const countResult = await db
+    .select({ count: count() })
+    .from(personalVariableCosts)
+    .where(and(...conditions));
+  const total = Number(countResult[0]?.count ?? 0);
+
   // Paginação e ordenação
-  const page = pagination?.page ?? 1;
-  const limit = pagination?.limit ?? 20;
-  const sortBy = pagination?.sortBy ?? 'date';
-  const sortOrder = pagination?.sortOrder ?? 'desc';
-  
-  const orderByColumn = (personalVariableCosts as any)[sortBy] || personalVariableCosts.date;
-  const orderFunc = sortOrder === 'asc' ? asc : desc;
-  
-  const data = await db.select().from(personalVariableCosts)
+  const { page, limit } = resolvePagination(pagination, total);
+  const sortBy = pagination?.sortBy ?? "date";
+  const sortOrder = pagination?.sortOrder ?? "desc";
+
+  const orderByColumn =
+    (personalVariableCosts as any)[sortBy] || personalVariableCosts.date;
+  const orderFunc = sortOrder === "asc" ? asc : desc;
+
+  const data = await db
+    .select()
+    .from(personalVariableCosts)
     .where(and(...conditions))
     .orderBy(orderFunc(orderByColumn))
     .limit(limit)
     .offset((page - 1) * limit);
-  
+
   return {
     data,
-    pagination: calculatePagination(page, limit, Number(total)),
+    pagination: calculatePagination(page, limit, total),
   };
 }
 
-export async function createPersonalVariableCost(data: InsertPersonalVariableCost) {
+export async function createPersonalVariableCost(
+  data: InsertPersonalVariableCost
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const installmentCount = normalizeInstallmentCount(data.installmentCount);
   const installmentSeriesId = installmentCount > 1 ? randomUUID() : null;
-  const installmentAmounts = splitAmountIntoInstallments(data.amount, installmentCount);
+  const installmentAmounts = splitAmountIntoInstallments(
+    data.amount,
+    installmentCount
+  );
   const rows = installmentAmounts.map((amount, index) => ({
     ...data,
     amount,
@@ -938,40 +1276,76 @@ export async function createPersonalVariableCost(data: InsertPersonalVariableCos
     installmentCount,
     installmentNumber: index + 1,
   }));
-  const inserted = await db.insert(personalVariableCosts).values(rows).returning({ id: personalVariableCosts.id });
+  const inserted = await db
+    .insert(personalVariableCosts)
+    .values(rows)
+    .returning({ id: personalVariableCosts.id });
   return { id: inserted[0].id, ...rows[0] };
 }
 
-export async function updatePersonalVariableCost(id: number, userId: number, data: Partial<InsertPersonalVariableCost>) {
+export async function updatePersonalVariableCost(
+  id: number,
+  userId: number,
+  data: Partial<InsertPersonalVariableCost>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(personalVariableCosts).set(data).where(and(eq(personalVariableCosts.id, id), eq(personalVariableCosts.userId, userId)));
+  await db
+    .update(personalVariableCosts)
+    .set(data)
+    .where(
+      and(
+        eq(personalVariableCosts.id, id),
+        eq(personalVariableCosts.userId, userId)
+      )
+    );
 }
 
 export async function deletePersonalVariableCost(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(personalVariableCosts).where(and(eq(personalVariableCosts.id, id), eq(personalVariableCosts.userId, userId)));
+  await db
+    .delete(personalVariableCosts)
+    .where(
+      and(
+        eq(personalVariableCosts.id, id),
+        eq(personalVariableCosts.userId, userId)
+      )
+    );
 }
 
 // ==================== DEBTS ====================
 export async function getDebts(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(debts).where(eq(debts.userId, userId)).orderBy(desc(debts.interestRate));
+  return db
+    .select()
+    .from(debts)
+    .where(eq(debts.userId, userId))
+    .orderBy(desc(debts.interestRate));
 }
 
 export async function createDebt(data: InsertDebt) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(debts).values(data).returning({ id: debts.id });
+  const [inserted] = await db
+    .insert(debts)
+    .values(data)
+    .returning({ id: debts.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateDebt(id: number, userId: number, data: Partial<InsertDebt>) {
+export async function updateDebt(
+  id: number,
+  userId: number,
+  data: Partial<InsertDebt>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(debts).set(data).where(and(eq(debts.id, id), eq(debts.userId, userId)));
+  await db
+    .update(debts)
+    .set(data)
+    .where(and(eq(debts.id, id), eq(debts.userId, userId)));
 }
 
 export async function deleteDebt(id: number, userId: number) {
@@ -984,115 +1358,188 @@ export async function deleteDebt(id: number, userId: number) {
 export async function getInvestments(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(investments).where(eq(investments.userId, userId)).orderBy(desc(investments.date));
+  return db
+    .select()
+    .from(investments)
+    .where(eq(investments.userId, userId))
+    .orderBy(desc(investments.date));
 }
 
 export async function createInvestment(data: InsertInvestment) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(investments).values(data).returning({ id: investments.id });
+  const [inserted] = await db
+    .insert(investments)
+    .values(data)
+    .returning({ id: investments.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateInvestment(id: number, userId: number, data: Partial<InsertInvestment>) {
+export async function updateInvestment(
+  id: number,
+  userId: number,
+  data: Partial<InsertInvestment>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(investments).set(data).where(and(eq(investments.id, id), eq(investments.userId, userId)));
+  await db
+    .update(investments)
+    .set(data)
+    .where(and(eq(investments.id, id), eq(investments.userId, userId)));
 }
 
 export async function deleteInvestment(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(investments).where(and(eq(investments.id, id), eq(investments.userId, userId)));
+  await db
+    .delete(investments)
+    .where(and(eq(investments.id, id), eq(investments.userId, userId)));
 }
 
 // ==================== RESERVE FUNDS ====================
-export async function getReserveFunds(userId: number, type?: "empresa" | "pessoal") {
+export async function getReserveFunds(
+  userId: number,
+  type?: "empresa" | "pessoal"
+) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [eq(reserveFunds.userId, userId)];
   if (type) conditions.push(eq(reserveFunds.type, type));
-  return db.select().from(reserveFunds).where(and(...conditions)).orderBy(desc(reserveFunds.date));
+  return db
+    .select()
+    .from(reserveFunds)
+    .where(and(...conditions))
+    .orderBy(desc(reserveFunds.date));
 }
 
 export async function createReserveFund(data: InsertReserveFund) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(reserveFunds).values(data).returning({ id: reserveFunds.id });
+  const [inserted] = await db
+    .insert(reserveFunds)
+    .values(data)
+    .returning({ id: reserveFunds.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateReserveFund(id: number, userId: number, data: Partial<InsertReserveFund>) {
+export async function updateReserveFund(
+  id: number,
+  userId: number,
+  data: Partial<InsertReserveFund>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(reserveFunds).set(data).where(and(eq(reserveFunds.id, id), eq(reserveFunds.userId, userId)));
+  await db
+    .update(reserveFunds)
+    .set(data)
+    .where(and(eq(reserveFunds.id, id), eq(reserveFunds.userId, userId)));
 }
 
 export async function deleteReserveFund(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(reserveFunds).where(and(eq(reserveFunds.id, id), eq(reserveFunds.userId, userId)));
+  await db
+    .delete(reserveFunds)
+    .where(and(eq(reserveFunds.id, id), eq(reserveFunds.userId, userId)));
 }
 
 // ==================== CLIENTS ====================
 export async function getClients(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(clients).where(eq(clients.userId, userId)).orderBy(asc(clients.name));
+  return db
+    .select()
+    .from(clients)
+    .where(eq(clients.userId, userId))
+    .orderBy(asc(clients.name));
 }
 
 export async function createClient(data: InsertClient) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(clients).values(data).returning({ id: clients.id });
+  const [inserted] = await db
+    .insert(clients)
+    .values(data)
+    .returning({ id: clients.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateClient(id: number, userId: number, data: Partial<InsertClient>) {
+export async function updateClient(
+  id: number,
+  userId: number,
+  data: Partial<InsertClient>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(clients).set(data).where(and(eq(clients.id, id), eq(clients.userId, userId)));
+  await db
+    .update(clients)
+    .set(data)
+    .where(and(eq(clients.id, id), eq(clients.userId, userId)));
 }
 
 export async function deleteClient(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(clients).where(and(eq(clients.id, id), eq(clients.userId, userId)));
+  await db
+    .delete(clients)
+    .where(and(eq(clients.id, id), eq(clients.userId, userId)));
 }
 
 // ==================== SERVICES ====================
 export async function getServices(userId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(services).where(eq(services.userId, userId)).orderBy(asc(services.name));
+  return db
+    .select()
+    .from(services)
+    .where(eq(services.userId, userId))
+    .orderBy(asc(services.name));
 }
 
 export async function createService(data: InsertService) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [inserted] = await db.insert(services).values(data).returning({ id: services.id });
+  const [inserted] = await db
+    .insert(services)
+    .values(data)
+    .returning({ id: services.id });
   return { id: inserted.id, ...data };
 }
 
-export async function updateService(id: number, userId: number, data: Partial<InsertService>) {
+export async function updateService(
+  id: number,
+  userId: number,
+  data: Partial<InsertService>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(services).set(data).where(and(eq(services.id, id), eq(services.userId, userId)));
+  await db
+    .update(services)
+    .set(data)
+    .where(and(eq(services.id, id), eq(services.userId, userId)));
 }
 
 export async function deleteService(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(services).where(and(eq(services.id, id), eq(services.userId, userId)));
+  await db
+    .delete(services)
+    .where(and(eq(services.id, id), eq(services.userId, userId)));
 }
 
 // ==================== DASHBOARD SUMMARIES ====================
-export async function getCompanyDashboardData(userId: number, month: number, year: number) {
+export async function getCompanyDashboardData(
+  userId: number,
+  month: number,
+  year: number
+) {
   const db = await getDb();
   if (!db) return null;
 
   // Ensure month-specific fixed costs are hydrated before we read the broader timeline.
-  const currentFixedCosts = rowsFromResult(await getCompanyFixedCosts(userId, month, year));
+  const currentFixedCosts = rowsFromResult(
+    await getCompanyFixedCosts(userId, month, year)
+  );
 
   const [
     revenueData,
@@ -1122,9 +1569,14 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
 
   const selectedSerial = monthSerial(year, month);
   const currentDate = new Date();
-  const currentSerial = monthSerial(currentDate.getFullYear(), currentDate.getMonth() + 1);
+  const currentSerial = monthSerial(
+    currentDate.getFullYear(),
+    currentDate.getMonth() + 1
+  );
   const proLabore = toNumber(userSettings?.proLaboreGross);
-  const supplierById = new Map(supplierRows.map(supplier => [supplier.id, supplier.name]));
+  const supplierById = new Map(
+    supplierRows.map(supplier => [supplier.id, supplier.name])
+  );
 
   const activeEmployees = employeeRows
     .filter(employee => employee.status === "ativo")
@@ -1132,33 +1584,79 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       const admissionParts = parseDateParts(employee.admissionDate);
       return {
         employee,
-        admissionSerial: admissionParts ? monthSerial(admissionParts.year, admissionParts.month) : null,
+        admissionSerial: admissionParts
+          ? monthSerial(admissionParts.year, admissionParts.month)
+          : null,
       };
     });
 
-  const summarizeMonth = (targetMonth: number, targetYear: number, label: string) => {
+  const summarizeMonth = (
+    targetMonth: number,
+    targetYear: number,
+    label: string
+  ) => {
     const targetSerial = monthSerial(targetYear, targetMonth);
     const monthRevenueRows = revenueRows.filter(
-      row => isSameMonthYear(row.dueDate, targetMonth, targetYear) && row.status !== "cancelado"
+      row =>
+        isSameMonthYear(row.dueDate, targetMonth, targetYear) &&
+        row.status !== "cancelado"
     );
-    const monthFixedRows = allFixedCosts.filter(row => row.month === targetMonth && row.year === targetYear);
-    const monthVariableRows = variableCostRows.filter(row => isSameMonthYear(row.date, targetMonth, targetYear));
-    const monthPurchaseRows = purchaseRows.filter(row => isSameMonthYear(row.dueDate, targetMonth, targetYear));
-    const employeesForMonth = activeEmployees.filter(snapshot => snapshot.admissionSerial === null || snapshot.admissionSerial <= targetSerial);
+    const monthFixedRows = allFixedCosts.filter(
+      row => row.month === targetMonth && row.year === targetYear
+    );
+    const monthVariableRows = variableCostRows.filter(row =>
+      isSameMonthYear(row.date, targetMonth, targetYear)
+    );
+    const monthPurchaseRows = purchaseRows.filter(row =>
+      isSameMonthYear(row.dueDate, targetMonth, targetYear)
+    );
+    const employeesForMonth = activeEmployees.filter(
+      snapshot =>
+        snapshot.admissionSerial === null ||
+        snapshot.admissionSerial <= targetSerial
+    );
     const reserveBalance = reserveRows.reduce((sum, row) => {
       const parts = parseDateParts(row.date);
       if (!parts) return sum;
-      return monthSerial(parts.year, parts.month) <= targetSerial ? sum + toNumber(row.depositAmount) : sum;
+      return monthSerial(parts.year, parts.month) <= targetSerial
+        ? sum + toNumber(row.depositAmount)
+        : sum;
     }, 0);
 
-    const grossRevenue = monthRevenueRows.reduce((sum, row) => sum + toNumber(row.grossAmount), 0);
-    const taxAmount = monthRevenueRows.reduce((sum, row) => sum + toNumber(row.taxAmount), 0);
-    const netRevenue = monthRevenueRows.reduce((sum, row) => sum + toNumber(row.netAmount), 0);
-    const fixedCostsTotal = monthFixedRows.reduce((sum, row) => sum + toNumber(row.amount), 0);
-    const variableCostsTotal = monthVariableRows.reduce((sum, row) => sum + toNumber(row.amount), 0);
-    const employeeCosts = employeesForMonth.reduce((sum, snapshot) => sum + toNumber(snapshot.employee.totalCost), 0);
-    const purchaseCosts = monthPurchaseRows.reduce((sum, row) => sum + toNumber(row.amount), 0);
-    const spending = fixedCostsTotal + variableCostsTotal + employeeCosts + purchaseCosts + proLabore;
+    const grossRevenue = monthRevenueRows.reduce(
+      (sum, row) => sum + toNumber(row.grossAmount),
+      0
+    );
+    const taxAmount = monthRevenueRows.reduce(
+      (sum, row) => sum + toNumber(row.taxAmount),
+      0
+    );
+    const netRevenue = monthRevenueRows.reduce(
+      (sum, row) => sum + toNumber(row.netAmount),
+      0
+    );
+    const fixedCostsTotal = monthFixedRows.reduce(
+      (sum, row) => sum + toNumber(row.amount),
+      0
+    );
+    const variableCostsTotal = monthVariableRows.reduce(
+      (sum, row) => sum + toNumber(row.amount),
+      0
+    );
+    const employeeCosts = employeesForMonth.reduce(
+      (sum, snapshot) => sum + toNumber(snapshot.employee.totalCost),
+      0
+    );
+    const purchaseCosts = monthPurchaseRows.reduce(
+      (sum, row) => sum + toNumber(row.amount),
+      0
+    );
+    const spending =
+      fixedCostsTotal +
+      variableCostsTotal +
+      employeeCosts +
+      purchaseCosts +
+      proLabore;
     const profit = netRevenue - spending;
     const balance = profit + reserveBalance;
 
@@ -1179,20 +1677,24 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
     };
   };
 
-  const monthlySnapshots = buildRollingMonths(month, year, 8).map(({ year: targetYear, month: targetMonth, label }) =>
-    summarizeMonth(targetMonth, targetYear, label)
+  const monthlySnapshots = buildRollingMonths(month, year, 8).map(
+    ({ year: targetYear, month: targetMonth, label }) =>
+      summarizeMonth(targetMonth, targetYear, label)
   );
 
-  const resultSeries = buildYearMonths(year).reduce<Array<{
-    key: string;
-    month: string;
-    monthlyResult: number;
-    previousAccumulatedResult: number;
-    accumulatedResult: number;
-    passiveCarryResult: number;
-  }>>((series, { year: targetYear, month: targetMonth, label, key }) => {
+  const resultSeries = buildYearMonths(year).reduce<
+    Array<{
+      key: string;
+      month: string;
+      monthlyResult: number;
+      previousAccumulatedResult: number;
+      accumulatedResult: number;
+      passiveCarryResult: number;
+    }>
+  >((series, { year: targetYear, month: targetMonth, label, key }) => {
     const snapshot = summarizeMonth(targetMonth, targetYear, label);
-    const previousAccumulated = series[series.length - 1]?.accumulatedResult ?? 0;
+    const previousAccumulated =
+      series[series.length - 1]?.accumulatedResult ?? 0;
     const accumulatedResult = previousAccumulated + snapshot.profit;
 
     series.push({
@@ -1208,37 +1710,79 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
   }, []);
 
   const currentSnapshot = monthlySnapshots[monthlySnapshots.length - 1];
-  const previousSnapshot = monthlySnapshots[monthlySnapshots.length - 2] ?? currentSnapshot;
+  const previousSnapshot =
+    monthlySnapshots[monthlySnapshots.length - 2] ?? currentSnapshot;
 
   const currentRevenueRows = revenueRows.filter(
-    row => isSameMonthYear(row.dueDate, month, year) && row.status !== "cancelado"
+    row =>
+      isSameMonthYear(row.dueDate, month, year) && row.status !== "cancelado"
   );
-  const currentVariableRows = variableCostRows.filter(row => isSameMonthYear(row.date, month, year));
-  const currentPurchaseRows = purchaseRows.filter(row => isSameMonthYear(row.dueDate, month, year));
-  const currentReserveRows = reserveRows.filter(row => isSameMonthYear(row.date, month, year));
-  const currentEmployees = activeEmployees.filter(snapshot => snapshot.admissionSerial === null || snapshot.admissionSerial <= selectedSerial);
+  const currentVariableRows = variableCostRows.filter(row =>
+    isSameMonthYear(row.date, month, year)
+  );
+  const currentPurchaseRows = purchaseRows.filter(row =>
+    isSameMonthYear(row.dueDate, month, year)
+  );
+  const currentReserveRows = reserveRows.filter(row =>
+    isSameMonthYear(row.date, month, year)
+  );
+  const currentEmployees = activeEmployees.filter(
+    snapshot =>
+      snapshot.admissionSerial === null ||
+      snapshot.admissionSerial <= selectedSerial
+  );
 
-  const currentFixedCostsTotal = currentFixedCosts.reduce((sum, row) => sum + toNumber(row.amount), 0);
+  const currentFixedCostsTotal = currentFixedCosts.reduce(
+    (sum, row) => sum + toNumber(row.amount),
+    0
+  );
   const currentFixedCostsPaid = currentFixedCosts.reduce(
     (sum, row) => sum + (row.status === "pago" ? toNumber(row.amount) : 0),
     0
   );
-  const currentRevenueGross = currentRevenueRows.reduce((sum, row) => sum + toNumber(row.grossAmount), 0);
-  const currentRevenueTax = currentRevenueRows.reduce((sum, row) => sum + toNumber(row.taxAmount), 0);
-  const currentRevenueNet = currentRevenueRows.reduce((sum, row) => sum + toNumber(row.netAmount), 0);
-  const currentVariableCostsTotal = currentVariableRows.reduce((sum, row) => sum + toNumber(row.amount), 0);
-  const currentEmployeeTotalCost = currentEmployees.reduce((sum, snapshot) => sum + toNumber(snapshot.employee.totalCost), 0);
-  const currentPurchaseTotal = currentPurchaseRows.reduce((sum, row) => sum + toNumber(row.amount), 0);
+  const currentRevenueGross = currentRevenueRows.reduce(
+    (sum, row) => sum + toNumber(row.grossAmount),
+    0
+  );
+  const currentRevenueTax = currentRevenueRows.reduce(
+    (sum, row) => sum + toNumber(row.taxAmount),
+    0
+  );
+  const currentRevenueNet = currentRevenueRows.reduce(
+    (sum, row) => sum + toNumber(row.netAmount),
+    0
+  );
+  const currentVariableCostsTotal = currentVariableRows.reduce(
+    (sum, row) => sum + toNumber(row.amount),
+    0
+  );
+  const currentEmployeeTotalCost = currentEmployees.reduce(
+    (sum, snapshot) => sum + toNumber(snapshot.employee.totalCost),
+    0
+  );
+  const currentPurchaseTotal = currentPurchaseRows.reduce(
+    (sum, row) => sum + toNumber(row.amount),
+    0
+  );
   const currentReserveBalance = currentSnapshot?.reserve ?? 0;
-  const currentSpending = currentFixedCostsTotal + currentVariableCostsTotal + currentEmployeeTotalCost + currentPurchaseTotal + proLabore;
+  const currentSpending =
+    currentFixedCostsTotal +
+    currentVariableCostsTotal +
+    currentEmployeeTotalCost +
+    currentPurchaseTotal +
+    proLabore;
   const currentProfit = currentRevenueNet - currentSpending;
   const currentBalance = currentProfit + currentReserveBalance;
   const currentAccumulatedResult =
-    resultSeries.find(snapshot => snapshot.month === (DASHBOARD_MONTH_LABELS[month - 1] ?? `M${month}`))
-      ?.accumulatedResult ?? currentProfit;
+    resultSeries.find(
+      snapshot =>
+        snapshot.month === (DASHBOARD_MONTH_LABELS[month - 1] ?? `M${month}`)
+    )?.accumulatedResult ?? currentProfit;
   const currentPassiveCarryResult =
-    resultSeries.find(snapshot => snapshot.month === (DASHBOARD_MONTH_LABELS[month - 1] ?? `M${month}`))
-      ?.passiveCarryResult ?? 0;
+    resultSeries.find(
+      snapshot =>
+        snapshot.month === (DASHBOARD_MONTH_LABELS[month - 1] ?? `M${month}`)
+    )?.passiveCarryResult ?? 0;
 
   const previousRevenueGross = previousSnapshot?.grossRevenue ?? 0;
   const previousRevenueTax = previousSnapshot?.taxAmount ?? 0;
@@ -1256,9 +1800,7 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       ? (resultSeries[month - 2]?.accumulatedResult ?? previousProfit)
       : 0;
   const previousPassiveCarryResult =
-    month > 1
-      ? (resultSeries[month - 2]?.passiveCarryResult ?? 0)
-      : 0;
+    month > 1 ? (resultSeries[month - 2]?.passiveCarryResult ?? 0) : 0;
 
   const walletBase: DashboardWallet[] = [
     {
@@ -1286,7 +1828,10 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       progress: 0,
     },
   ];
-  const walletScale = Math.max(...walletBase.map(wallet => Math.abs(wallet.amount)), 1);
+  const walletScale = Math.max(
+    ...walletBase.map(wallet => Math.abs(wallet.amount)),
+    1
+  );
   const wallets = walletBase.map(wallet => ({
     ...wallet,
     progress: Math.min((Math.abs(wallet.amount) / walletScale) * 100, 100),
@@ -1302,7 +1847,9 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
   };
   const activities: DashboardActivity[] = [];
 
-  const toStatus = (status: string | null | undefined): DashboardActivity["status"] => {
+  const toStatus = (
+    status: string | null | undefined
+  ): DashboardActivity["status"] => {
     if (status === "pago" || status === "recebido") return "Concluído";
     if (status === "atrasado") return "Em andamento";
     return "Pendente";
@@ -1314,17 +1861,33 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
     activities.push({
       orderId: `REV-${String(row.id).padStart(6, "0")}`,
       kind: "revenue",
-      activity: row.client ? `${row.description} - ${row.client}` : row.description,
+      activity: row.client
+        ? `${row.description} - ${row.client}`
+        : row.description,
       price: toNumber(row.netAmount),
       status: toStatus(row.status),
       date: formatDashboardDate(parts.month, parts.year, parts.day),
-      tone: row.status === "atrasado" ? "amber" : row.status === "recebido" ? "emerald" : "emerald",
-      sortKey: getActivitySortKey(parts.year, parts.month, parts.day) * 10 + activityPriority.revenue,
+      tone:
+        row.status === "atrasado"
+          ? "amber"
+          : row.status === "recebido"
+            ? "emerald"
+            : "emerald",
+      sortKey:
+        getActivitySortKey(parts.year, parts.month, parts.day) * 10 +
+        activityPriority.revenue,
     });
   }
 
   for (const row of currentFixedCosts) {
-    const parts = { year, month, day: Math.min(row.dueDay, new Date(Date.UTC(year, month, 0)).getUTCDate()) };
+    const parts = {
+      year,
+      month,
+      day: Math.min(
+        row.dueDay,
+        new Date(Date.UTC(year, month, 0)).getUTCDate()
+      ),
+    };
     activities.push({
       orderId: `FIX-${String(row.id).padStart(6, "0")}`,
       kind: "fixedCost",
@@ -1332,15 +1895,25 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       price: toNumber(row.amount),
       status: toStatus(row.status),
       date: formatDashboardDate(parts.month, parts.year, parts.day),
-      tone: row.status === "atrasado" ? "amber" : row.status === "pago" ? "blue" : "blue",
-      sortKey: getActivitySortKey(parts.year, parts.month, parts.day) * 10 + activityPriority.fixedCost,
+      tone:
+        row.status === "atrasado"
+          ? "amber"
+          : row.status === "pago"
+            ? "blue"
+            : "blue",
+      sortKey:
+        getActivitySortKey(parts.year, parts.month, parts.day) * 10 +
+        activityPriority.fixedCost,
     });
   }
 
   for (const row of currentVariableRows) {
     const parts = parseDateParts(row.date);
     if (!parts) continue;
-    const installmentSuffix = row.installmentCount > 1 ? ` (${row.installmentNumber}/${row.installmentCount})` : "";
+    const installmentSuffix =
+      row.installmentCount > 1
+        ? ` (${row.installmentNumber}/${row.installmentCount})`
+        : "";
     activities.push({
       orderId: `VAR-${String(row.id).padStart(6, "0")}`,
       kind: "variableCost",
@@ -1348,8 +1921,15 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       price: toNumber(row.amount),
       status: toStatus(row.status),
       date: formatDashboardDate(parts.month, parts.year, parts.day),
-      tone: row.status === "atrasado" ? "amber" : row.status === "pago" ? "amber" : "amber",
-      sortKey: getActivitySortKey(parts.year, parts.month, parts.day) * 10 + activityPriority.variableCost,
+      tone:
+        row.status === "atrasado"
+          ? "amber"
+          : row.status === "pago"
+            ? "amber"
+            : "amber",
+      sortKey:
+        getActivitySortKey(parts.year, parts.month, parts.day) * 10 +
+        activityPriority.variableCost,
     });
   }
 
@@ -1361,17 +1941,29 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
     activities.push({
       orderId: `PUR-${String(row.id).padStart(6, "0")}`,
       kind: "purchase",
-      activity: supplierName ? `${supplierName} - ${row.description}` : row.description,
+      activity: supplierName
+        ? `${supplierName} - ${row.description}`
+        : row.description,
       price: toNumber(row.amount),
       status: toStatus(row.status),
       date: formatDashboardDate(parts.month, parts.year, parts.day),
-      tone: row.status === "atrasado" ? "amber" : row.status === "pago" ? "rose" : "rose",
-      sortKey: getActivitySortKey(parts.year, parts.month, parts.day) * 10 + activityPriority.purchase,
+      tone:
+        row.status === "atrasado"
+          ? "amber"
+          : row.status === "pago"
+            ? "rose"
+            : "rose",
+      sortKey:
+        getActivitySortKey(parts.year, parts.month, parts.day) * 10 +
+        activityPriority.purchase,
     });
   }
 
   for (const snapshot of currentEmployees) {
-    const paymentDay = Math.min(snapshot.employee.paymentDay ?? 5, new Date(Date.UTC(year, month, 0)).getUTCDate());
+    const paymentDay = Math.min(
+      snapshot.employee.paymentDay ?? 5,
+      new Date(Date.UTC(year, month, 0)).getUTCDate()
+    );
     const payrollStatus =
       selectedSerial < currentSerial
         ? "Concluído"
@@ -1388,7 +1980,9 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       status: payrollStatus,
       date: formatDashboardDate(year, month, paymentDay),
       tone: payrollStatus === "Concluído" ? "emerald" : "amber",
-      sortKey: getActivitySortKey(year, month, paymentDay) * 10 + activityPriority.payroll,
+      sortKey:
+        getActivitySortKey(year, month, paymentDay) * 10 +
+        activityPriority.payroll,
     });
   }
 
@@ -1403,7 +1997,9 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
       status: "Concluído",
       date: formatDashboardDate(parts.month, parts.year, parts.day),
       tone: "emerald",
-      sortKey: getActivitySortKey(parts.year, parts.month, parts.day) * 10 + activityPriority.reserve,
+      sortKey:
+        getActivitySortKey(parts.year, parts.month, parts.day) * 10 +
+        activityPriority.reserve,
     });
   }
 
@@ -1418,10 +2014,14 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
     loss: snapshot.spending,
   }));
 
-  const currentTotalFixedCosts = currentSnapshot?.fixedCosts ?? currentFixedCostsTotal;
-  const currentTotalVariableCosts = currentSnapshot?.variableCosts ?? currentVariableCostsTotal;
-  const currentTotalEmployees = currentSnapshot?.employeeCosts ?? currentEmployeeTotalCost;
-  const currentTotalPurchases = currentSnapshot?.purchases ?? currentPurchaseTotal;
+  const currentTotalFixedCosts =
+    currentSnapshot?.fixedCosts ?? currentFixedCostsTotal;
+  const currentTotalVariableCosts =
+    currentSnapshot?.variableCosts ?? currentVariableCostsTotal;
+  const currentTotalEmployees =
+    currentSnapshot?.employeeCosts ?? currentEmployeeTotalCost;
+  const currentTotalPurchases =
+    currentSnapshot?.purchases ?? currentPurchaseTotal;
 
   return {
     revenue: {
@@ -1459,7 +2059,9 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
     },
     resultSeries,
     wallets,
-    activities: activities.slice(0, 6).map(({ sortKey, ...activity }) => activity),
+    activities: activities
+      .slice(0, 6)
+      .map(({ sortKey, ...activity }) => activity),
     chartSeries,
     summary: {
       current: {
@@ -1497,47 +2099,66 @@ export async function getCompanyDashboardData(userId: number, month: number, yea
   };
 }
 
-export async function getPersonalDashboardData(userId: number, month: number, year: number) {
+export async function getPersonalDashboardData(
+  userId: number,
+  month: number,
+  year: number
+) {
   const db = await getDb();
   if (!db) return null;
 
-  const [fixedCostsData] = await db.select({
-    total: sql<string>`COALESCE(SUM(${personalFixedCosts.amount}), 0)`,
-    paid: sql<string>`COALESCE(SUM(CASE WHEN ${personalFixedCosts.status} = 'pago' THEN ${personalFixedCosts.amount} ELSE 0 END), 0)`,
-  }).from(personalFixedCosts).where(and(
-    eq(personalFixedCosts.userId, userId),
-    eq(personalFixedCosts.month, month),
-    eq(personalFixedCosts.year, year)
-  ));
+  const [fixedCostsData] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${personalFixedCosts.amount}), 0)`,
+      paid: sql<string>`COALESCE(SUM(CASE WHEN ${personalFixedCosts.status} = 'pago' THEN ${personalFixedCosts.amount} ELSE 0 END), 0)`,
+    })
+    .from(personalFixedCosts)
+    .where(
+      and(
+        eq(personalFixedCosts.userId, userId),
+        eq(personalFixedCosts.month, month),
+        eq(personalFixedCosts.year, year)
+      )
+    );
 
-  const [varCostsData] = await db.select({
-    total: sql<string>`COALESCE(SUM(${personalVariableCosts.amount}), 0)`,
-  }).from(personalVariableCosts).where(and(
-    eq(personalVariableCosts.userId, userId),
-    sql`EXTRACT(MONTH FROM ${personalVariableCosts.date}::date) = ${month}`,
-    sql`EXTRACT(YEAR FROM ${personalVariableCosts.date}::date) = ${year}`
-  ));
+  const [varCostsData] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${personalVariableCosts.amount}), 0)`,
+    })
+    .from(personalVariableCosts)
+    .where(
+      and(
+        eq(personalVariableCosts.userId, userId),
+        sql`EXTRACT(MONTH FROM ${personalVariableCosts.date}::date) = ${month}`,
+        sql`EXTRACT(YEAR FROM ${personalVariableCosts.date}::date) = ${year}`
+      )
+    );
 
-  const [debtsData] = await db.select({
-    totalBalance: sql<string>`COALESCE(SUM(${debts.currentBalance}), 0)`,
-    totalMonthly: sql<string>`COALESCE(SUM(${debts.monthlyPayment}), 0)`,
-    count: sql<number>`COUNT(*)`,
-  }).from(debts).where(and(
-    eq(debts.userId, userId),
-    ne(debts.status, "quitada")
-  ));
+  const [debtsData] = await db
+    .select({
+      totalBalance: sql<string>`COALESCE(SUM(${debts.currentBalance}), 0)`,
+      totalMonthly: sql<string>`COALESCE(SUM(${debts.monthlyPayment}), 0)`,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(debts)
+    .where(and(eq(debts.userId, userId), ne(debts.status, "quitada")));
 
-  const [investmentsData] = await db.select({
-    totalDeposited: sql<string>`COALESCE(SUM(${investments.depositAmount}), 0)`,
-    totalBalance: sql<string>`COALESCE(SUM(${investments.currentBalance}), 0)`,
-  }).from(investments).where(eq(investments.userId, userId));
+  const [investmentsData] = await db
+    .select({
+      totalDeposited: sql<string>`COALESCE(SUM(${investments.depositAmount}), 0)`,
+      totalBalance: sql<string>`COALESCE(SUM(${investments.currentBalance}), 0)`,
+    })
+    .from(investments)
+    .where(eq(investments.userId, userId));
 
-  const [reserveData] = await db.select({
-    total: sql<string>`COALESCE(SUM(${reserveFunds.depositAmount}), 0)`,
-  }).from(reserveFunds).where(and(
-    eq(reserveFunds.userId, userId),
-    eq(reserveFunds.type, "pessoal")
-  ));
+  const [reserveData] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${reserveFunds.depositAmount}), 0)`,
+    })
+    .from(reserveFunds)
+    .where(
+      and(eq(reserveFunds.userId, userId), eq(reserveFunds.type, "pessoal"))
+    );
 
   const userSettings = await getSettings(userId);
 
@@ -1552,7 +2173,11 @@ export async function getPersonalDashboardData(userId: number, month: number, ye
 }
 
 // ==================== CALENDAR DATA ====================
-export async function getCalendarData(userId: number, month: number, year: number) {
+export async function getCalendarData(
+  userId: number,
+  month: number,
+  year: number
+) {
   const db = await getDb();
   if (!db) return [];
 
@@ -1571,7 +2196,9 @@ export async function getCalendarData(userId: number, month: number, year: numbe
   const currentYear = new Date().getFullYear();
   const isCurrentMonth = month === currentMonth && year === currentYear;
 
-  const fixedCo = rowsFromResult(await getCompanyFixedCosts(userId, month, year));
+  const fixedCo = rowsFromResult(
+    await getCompanyFixedCosts(userId, month, year)
+  );
   fixedCo.forEach(c =>
     items.push({
       day: c.dueDay,
@@ -1585,19 +2212,25 @@ export async function getCalendarData(userId: number, month: number, year: numbe
     })
   );
 
-  const variableCo = rowsFromResult(await getCompanyVariableCosts(userId, month, year));
-  variableCo.forEach(c => items.push({
-    day: Number(c.date.slice(8, 10)),
-    description: `[EMP] ${c.description}`,
-    amount: c.amount,
-    type: "empresa-variavel",
-    status: c.status,
-    sourceId: c.id,
-    sourceType: "company_variable_cost",
-    actionable: c.status !== "pago",
-  }));
+  const variableCo = rowsFromResult(
+    await getCompanyVariableCosts(userId, month, year)
+  );
+  variableCo.forEach(c =>
+    items.push({
+      day: Number(c.date.slice(8, 10)),
+      description: `[EMP] ${c.description}`,
+      amount: c.amount,
+      type: "empresa-variavel",
+      status: c.status,
+      sourceId: c.id,
+      sourceType: "company_variable_cost",
+      actionable: c.status !== "pago",
+    })
+  );
 
-  const fixedPe = rowsFromResult(await getPersonalFixedCosts(userId, month, year));
+  const fixedPe = rowsFromResult(
+    await getPersonalFixedCosts(userId, month, year)
+  );
   fixedPe.forEach(c =>
     items.push({
       day: c.dueDay,
@@ -1611,45 +2244,59 @@ export async function getCalendarData(userId: number, month: number, year: numbe
     })
   );
 
-  const variablePe = rowsFromResult(await getPersonalVariableCosts(userId, month, year));
-  variablePe.forEach(c => items.push({
-    day: Number(c.date.slice(8, 10)),
-    description: `[PES] ${c.description}`,
-    amount: c.amount,
-    type: "pessoal-variavel",
-    status: c.status,
-    sourceId: c.id,
-    sourceType: "personal_variable_cost",
-    actionable: c.status !== "pago",
-  }));
+  const variablePe = rowsFromResult(
+    await getPersonalVariableCosts(userId, month, year)
+  );
+  variablePe.forEach(c =>
+    items.push({
+      day: Number(c.date.slice(8, 10)),
+      description: `[PES] ${c.description}`,
+      amount: c.amount,
+      type: "pessoal-variavel",
+      status: c.status,
+      sourceId: c.id,
+      sourceType: "personal_variable_cost",
+      actionable: c.status !== "pago",
+    })
+  );
 
   const employees = rowsFromResult(await getEmployees(userId));
-  employees.filter(e => e.status === "ativo").forEach(e =>
-    items.push({
-      day: e.paymentDay ?? 5,
-      description: `[EMP] Salário - ${e.name}`,
-      amount: e.totalCost,
-      type: "empresa-folha",
-      status: isCurrentMonth && (e.paymentDay ?? 5) < today ? "atrasada" : "pendente",
-      sourceId: e.id,
-      sourceType: "employee_payroll",
-      actionable: false,
-    })
-  );
+  employees
+    .filter(e => e.status === "ativo")
+    .forEach(e =>
+      items.push({
+        day: e.paymentDay ?? 5,
+        description: `[EMP] Salário - ${e.name}`,
+        amount: e.totalCost,
+        type: "empresa-folha",
+        status:
+          isCurrentMonth && (e.paymentDay ?? 5) < today
+            ? "atrasada"
+            : "pendente",
+        sourceId: e.id,
+        sourceType: "employee_payroll",
+        actionable: false,
+      })
+    );
 
   const activeDebts = await getDebts(userId);
-  activeDebts.filter(d => d.status !== "quitada").forEach(d =>
-    items.push({
-      day: d.dueDay,
-      description: `[DIV] ${d.creditor}`,
-      amount: d.monthlyPayment,
-      type: "divida",
-      status: d.status === "atrasada" || (isCurrentMonth && d.dueDay < today) ? "atrasada" : "pendente",
-      sourceId: d.id,
-      sourceType: "debt",
-      actionable: true,
-    })
-  );
+  activeDebts
+    .filter(d => d.status !== "quitada")
+    .forEach(d =>
+      items.push({
+        day: d.dueDay,
+        description: `[DIV] ${d.creditor}`,
+        amount: d.monthlyPayment,
+        type: "divida",
+        status:
+          d.status === "atrasada" || (isCurrentMonth && d.dueDay < today)
+            ? "atrasada"
+            : "pendente",
+        sourceId: d.id,
+        sourceType: "debt",
+        actionable: true,
+      })
+    );
 
   return items.sort((a, b) => a.day - b.day);
 }

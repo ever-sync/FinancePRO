@@ -1,0 +1,11 @@
+.git/
+.vercel/
+.manus-logs/
+node_modules/
+dist/
+public/
+coverage/
+supabase/.temp/
+.env
+.env.*
+*.log

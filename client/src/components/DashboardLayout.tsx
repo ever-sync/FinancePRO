@@ -35,7 +35,6 @@ import {
   Receipt,
   Repeat,
   Settings,
-  ShieldCheck,
   Sparkles,
   TrendingDown,
   TrendingUp,
@@ -90,62 +89,134 @@ const useSidebarSections = () => {
       {
         label: getLabel("navigation.dashboard", "Dashboard"),
         items: [
-          { icon: LayoutDashboard, label: getLabel("dashboard.title", "Visao geral"), path: "/" },
-          { icon: User, label: getLabel("navigation.profile", "Perfil"), path: "/pessoal" },
+          {
+            icon: LayoutDashboard,
+            label: getLabel("dashboard.title", "Visao geral"),
+            path: "/",
+          },
+          {
+            icon: User,
+            label: getLabel("navigation.profile", "Perfil"),
+            path: "/pessoal",
+          },
         ],
       },
       {
         label: "Empresa",
         items: [
-          { icon: DollarSign, label: getLabel("navigation.revenues", "Receitas"), path: "/receitas" },
-          { icon: Building2, label: getLabel("costs.fixedCosts", "Custos fixos"), path: "/custos-fixos" },
-          { icon: Receipt, label: getLabel("costs.variableCosts", "Custos variaveis"), path: "/custos-variaveis" },
-          { icon: Users, label: getLabel("navigation.employees", "Funcionarios"), path: "/funcionarios" },
-          { icon: Truck, label: getLabel("navigation.suppliers", "Fornecedores"), path: "/fornecedores" },
-          { icon: UserCheck, label: getLabel("navigation.clients", "Clientes"), path: "/clientes" },
-          { icon: Briefcase, label: getLabel("navigation.services", "Servicos"), path: "/servicos" },
+          {
+            icon: DollarSign,
+            label: getLabel("navigation.revenues", "Receitas"),
+            path: "/receitas",
+          },
+          {
+            icon: Building2,
+            label: getLabel("costs.fixedCosts", "Custos fixos"),
+            path: "/custos-fixos",
+          },
+          {
+            icon: Receipt,
+            label: getLabel("costs.variableCosts", "Custos variaveis"),
+            path: "/custos-variaveis",
+          },
+          {
+            icon: Users,
+            label: getLabel("navigation.employees", "Funcionarios"),
+            path: "/funcionarios",
+          },
+          {
+            icon: Truck,
+            label: getLabel("navigation.suppliers", "Fornecedores"),
+            path: "/fornecedores",
+          },
+          {
+            icon: UserCheck,
+            label: getLabel("navigation.clients", "Clientes"),
+            path: "/clientes",
+          },
+          {
+            icon: Briefcase,
+            label: getLabel("navigation.services", "Servicos"),
+            path: "/servicos",
+          },
         ],
       },
       {
         label: "Pessoal",
         items: [
-          { icon: Wallet, label: getLabel("costs.fixedCosts", "Custos fixos"), path: "/contas-fixas" },
-          { icon: Receipt, label: getLabel("costs.variableCosts", "Custos variaveis"), path: "/contas-variaveis" },
-          { icon: TrendingDown, label: getLabel("navigation.debts", "Dividas"), path: "/dividas" },
-          { icon: TrendingUp, label: getLabel("navigation.investments", "Investimentos"), path: "/investimentos" },
-          { icon: PiggyBank, label: getLabel("dashboard.reservedFund", "Fundo de reserva"), path: "/fundo-reserva" },
-        ],
-      },
-      {
-        label: "Asaas",
-        items: [
-          { icon: ShieldCheck, label: "Integracao Asaas", path: "/asaas/integracao" },
-          { icon: Receipt, label: "Cobrancas", path: "/asaas/cobrancas" },
-          { icon: Repeat, label: "Assinaturas", path: "/asaas/assinaturas" },
-          { icon: FileSpreadsheet, label: "Notas fiscais", path: "/asaas/notas" },
-          { icon: Repeat, label: "Transferencias", path: "/asaas/transferencias" },
-          { icon: FileText, label: "Extrato", path: "/asaas/extrato" },
-          { icon: FileText, label: "Eventos", path: "/asaas/eventos" },
+          {
+            icon: Wallet,
+            label: getLabel("costs.fixedCosts", "Custos fixos"),
+            path: "/contas-fixas",
+          },
+          {
+            icon: Receipt,
+            label: getLabel("costs.variableCosts", "Custos variaveis"),
+            path: "/contas-variaveis",
+          },
+          {
+            icon: TrendingDown,
+            label: getLabel("navigation.debts", "Dividas"),
+            path: "/dividas",
+          },
+          {
+            icon: TrendingUp,
+            label: getLabel("navigation.investments", "Investimentos"),
+            path: "/investimentos",
+          },
+          {
+            icon: PiggyBank,
+            label: getLabel("dashboard.reservedFund", "Fundo de reserva"),
+            path: "/fundo-reserva",
+          },
         ],
       },
       {
         label: "WhatsApp IA",
         items: [
-          { icon: MessageCircle, label: "Integracao", path: "/whatsapp/integracao" },
-          { icon: MessageCircle, label: "Inbox do mentor", path: "/whatsapp/conversas" },
+          {
+            icon: MessageCircle,
+            label: "Integracao",
+            path: "/whatsapp/integracao",
+          },
+          {
+            icon: MessageCircle,
+            label: "Inbox do mentor",
+            path: "/whatsapp/conversas",
+          },
           { icon: Repeat, label: "Automacao", path: "/whatsapp/automacao" },
-          { icon: Sparkles, label: "Mentoria financeira", path: "/whatsapp/planos" },
+          {
+            icon: Sparkles,
+            label: "Mentoria financeira",
+            path: "/whatsapp/planos",
+          },
           { icon: FileText, label: "Auditoria", path: "/whatsapp/auditoria" },
         ],
       },
       {
         label: getLabel("navigation.tools", "Ferramentas"),
         items: [
-          { icon: FileSpreadsheet, label: "Importador CSV", path: "/importador" },
-          { icon: Landmark, label: "Integracoes bancarias", path: "/integracoes-bancarias" },
+          {
+            icon: FileSpreadsheet,
+            label: "Importador CSV",
+            path: "/importador",
+          },
+          {
+            icon: Landmark,
+            label: "Integracoes bancarias",
+            path: "/integracoes-bancarias",
+          },
           { icon: FileText, label: "DRE", path: "/dre" },
-          { icon: CalendarDays, label: getLabel("navigation.calendar", "Calendario"), path: "/calendario" },
-          { icon: Settings, label: getLabel("navigation.settings", "Configuracoes"), path: "/configuracoes" },
+          {
+            icon: CalendarDays,
+            label: getLabel("navigation.calendar", "Calendario"),
+            path: "/calendario",
+          },
+          {
+            icon: Settings,
+            label: getLabel("navigation.settings", "Configuracoes"),
+            path: "/configuracoes",
+          },
         ],
       },
     ],
@@ -202,9 +273,9 @@ export default function DashboardLayout({
             Sessao sem sincronizacao
           </h1>
           <p className="mt-2 text-sm leading-6 text-zinc-500">
-            Seu login existe no navegador, mas o servidor nao conseguiu validar o usuario da
-            aplicacao. Enquanto isso acontecer, os dados protegidos podem aparecer vazios no
-            front-end.
+            Seu login existe no navegador, mas o servidor nao conseguiu validar
+            o usuario da aplicacao. Enquanto isso acontecer, os dados protegidos
+            podem aparecer vazios no front-end.
           </p>
           {appUserQuery.error ? (
             <p className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
@@ -254,7 +325,10 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   const sidebarSections = useSidebarSections();
 
   const activeMenuItem = useMemo(
-    () => sidebarSections.flatMap(section => section.items).find(item => item.path === location),
+    () =>
+      sidebarSections
+        .flatMap(section => section.items)
+        .find(item => item.path === location),
     [location, sidebarSections]
   );
 
@@ -265,7 +339,9 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
         location={location}
         onNavigate={setLocation}
         onLogout={signOut}
-        userName={user?.user_metadata?.name ?? user?.email?.split("@")[0] ?? "Usuario"}
+        userName={
+          user?.user_metadata?.name ?? user?.email?.split("@")[0] ?? "Usuario"
+        }
         userEmail={user?.email ?? ""}
       />
 
@@ -280,7 +356,9 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         )}
-        <main className="flex-1 p-4 text-zinc-900 md:p-6 lg:p-8">{children}</main>
+        <main className="flex-1 p-4 text-zinc-900 md:p-6 lg:p-8">
+          {children}
+        </main>
       </SidebarInset>
     </>
   );
@@ -303,15 +381,20 @@ function DashboardSidebar({
 }) {
   const { state, toggleSidebar, isMobile } = useSidebar();
   const isCollapsed = state === "collapsed";
-  const initials = userName
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase())
-    .join("") || "U";
+  const initials =
+    userName
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0]?.toUpperCase())
+      .join("") || "U";
 
   return (
-    <Sidebar collapsible="icon" variant="floating" className="border-0 bg-transparent">
+    <Sidebar
+      collapsible="icon"
+      variant="floating"
+      className="border-0 bg-transparent"
+    >
       <SidebarHeader className="px-3 pb-2 pt-3">
         <div
           className={cn(
@@ -326,7 +409,9 @@ function DashboardSidebar({
             <p className="truncate text-sm font-semibold tracking-tight text-zinc-900">
               FinancePro
             </p>
-            <p className="truncate text-[11px] text-zinc-500">Dashboard financeiro</p>
+            <p className="truncate text-[11px] text-zinc-500">
+              Dashboard financeiro
+            </p>
           </div>
           <Button
             type="button"
@@ -348,12 +433,12 @@ function DashboardSidebar({
 
       <SidebarContent className="px-2 pb-6">
         <div className="space-y-5">
-        {sections.map(section => (
-          <section key={section.label} className="space-y-2">
-            <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400 group-data-[collapsible=icon]:hidden">
-              {section.label}
-            </p>
-            <div className="space-y-1.5">
+          {sections.map(section => (
+            <section key={section.label} className="space-y-2">
+              <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400 group-data-[collapsible=icon]:hidden">
+                {section.label}
+              </p>
+              <div className="space-y-1.5">
                 {section.items.map(item => {
                   const isActive = location === item.path;
 
@@ -361,34 +446,35 @@ function DashboardSidebar({
                     <button
                       key={item.path}
                       type="button"
-                        onClick={() => {
-                          onNavigate(item.path);
-                          if (isMobile) {
-                            toggleSidebar();
-                          }
-                        }}
+                      onClick={() => {
+                        onNavigate(item.path);
+                        if (isMobile) {
+                          toggleSidebar();
+                        }
+                      }}
+                      className={cn(
+                        "flex min-h-11 w-full items-center gap-3 rounded-[22px] px-3.5 py-2.5 text-left text-[13px] font-medium leading-snug text-zinc-500 transition-all sm:text-sm",
+                        "hover:bg-zinc-100 hover:text-zinc-900",
+                        isActive &&
+                          "bg-zinc-900 text-white shadow-[0_14px_32px_rgba(15,23,42,0.18)]",
+                        "group-data-[collapsible=icon]:!size-10 group-data-[collapsible=icon]:!justify-center group-data-[collapsible=icon]:!px-0"
+                      )}
+                    >
+                      <item.icon
                         className={cn(
-                          "flex min-h-11 w-full items-center gap-3 rounded-[22px] px-3.5 py-2.5 text-left text-[13px] font-medium leading-snug text-zinc-500 transition-all sm:text-sm",
-                          "hover:bg-zinc-100 hover:text-zinc-900",
-                          isActive && "bg-zinc-900 text-white shadow-[0_14px_32px_rgba(15,23,42,0.18)]",
-                          "group-data-[collapsible=icon]:!size-10 group-data-[collapsible=icon]:!justify-center group-data-[collapsible=icon]:!px-0"
+                          "size-4 shrink-0 transition-colors",
+                          isActive ? "text-white" : "text-zinc-500"
                         )}
-                      >
-                        <item.icon
-                          className={cn(
-                            "size-4 shrink-0 transition-colors",
-                            isActive ? "text-white" : "text-zinc-500"
-                          )}
-                        />
-                        <span className="min-w-0 whitespace-normal text-left leading-snug group-data-[collapsible=icon]:hidden">
-                          {item.label}
-                        </span>
+                      />
+                      <span className="min-w-0 whitespace-normal text-left leading-snug group-data-[collapsible=icon]:hidden">
+                        {item.label}
+                      </span>
                     </button>
                   );
                 })}
-            </div>
-          </section>
-        ))}
+              </div>
+            </section>
+          ))}
         </div>
       </SidebarContent>
 
@@ -418,8 +504,12 @@ function DashboardSidebar({
               </Avatar>
 
               <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-                <p className="truncate text-sm font-medium text-zinc-900">{userName}</p>
-                <p className="truncate text-[11px] text-zinc-500">{userEmail || " "}</p>
+                <p className="truncate text-sm font-medium text-zinc-900">
+                  {userName}
+                </p>
+                <p className="truncate text-[11px] text-zinc-500">
+                  {userEmail || " "}
+                </p>
               </div>
             </div>
 

@@ -1,8 +1,15 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSupabaseAuth } from "@/lib/auth";
+import { supabaseConfigurationError } from "@/lib/supabase";
 import { DollarSign, Loader2 } from "lucide-react";
 import { useState } from "react";
 
@@ -33,8 +40,13 @@ export default function AuthPage() {
         setLoading(false);
         return;
       }
-      if (password.length < 6) {
-        setError("A senha deve ter pelo menos 6 caracteres.");
+      if (password.length < 8) {
+        setError("A senha deve ter pelo menos 8 caracteres.");
+        setLoading(false);
+        return;
+      }
+      if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        setError("A senha deve conter pelo menos uma letra e um número.");
         setLoading(false);
         return;
       }
@@ -42,7 +54,9 @@ export default function AuthPage() {
       if (result.error) {
         setError(translateError(result.error));
       } else {
-        setSuccess("Conta criada! Verifique seu e-mail para confirmar o cadastro.");
+        setSuccess(
+          "Conta criada! Verifique seu e-mail para confirmar o cadastro."
+        );
         setMode("login");
       }
     }
@@ -77,6 +91,12 @@ export default function AuthPage() {
 
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {supabaseConfigurationError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {supabaseConfigurationError}
+              </div>
+            )}
+
             {mode === "register" && (
               <div className="space-y-2">
                 <Label htmlFor="name">Nome</Label>
@@ -110,12 +130,18 @@ export default function AuthPage() {
               <Input
                 id="password"
                 type="password"
-                placeholder={mode === "register" ? "Mínimo 6 caracteres" : "Sua senha"}
+                placeholder={
+                  mode === "register"
+                    ? "8+ caracteres, letra e número"
+                    : "Sua senha"
+                }
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 required
-                minLength={6}
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                minLength={mode === "register" ? 8 : undefined}
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
               />
             </div>
 
@@ -131,7 +157,12 @@ export default function AuthPage() {
               </div>
             )}
 
-            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+            <Button
+              type="submit"
+              className="w-full"
+              size="lg"
+              disabled={loading || Boolean(supabaseConfigurationError)}
+            >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {mode === "login" ? "Entrar" : "Criar conta"}
             </Button>
@@ -169,11 +200,19 @@ export default function AuthPage() {
 }
 
 function translateError(msg: string): string {
-  if (msg.includes("Invalid login credentials")) return "E-mail ou senha incorretos.";
-  if (msg.includes("Email not confirmed")) return "Confirme seu e-mail antes de fazer login.";
-  if (msg.includes("User already registered")) return "Este e-mail já está cadastrado.";
-  if (msg.includes("Password should be at least")) return "A senha deve ter pelo menos 6 caracteres.";
+  if (msg.includes("Invalid login credentials"))
+    return "E-mail ou senha incorretos.";
+  if (msg.includes("Email not confirmed"))
+    return "Confirme seu e-mail antes de fazer login.";
+  if (msg.includes("User already registered"))
+    return "Este e-mail já está cadastrado.";
+  if (msg.includes("Password should be at least"))
+    return "A senha deve ter pelo menos 8 caracteres.";
+  if (msg.includes("Password should contain")) {
+    return "A senha deve conter pelo menos uma letra e um número.";
+  }
   if (msg.includes("Unable to validate email")) return "E-mail inválido.";
-  if (msg.includes("Email rate limit exceeded")) return "Muitas tentativas. Aguarde um momento.";
+  if (msg.includes("Email rate limit exceeded"))
+    return "Muitas tentativas. Aguarde um momento.";
   return msg;
 }

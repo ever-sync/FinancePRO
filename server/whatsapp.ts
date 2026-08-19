@@ -1,7 +1,6 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
-import * as asaasDb from "./db/asaas";
 import * as whatsappDb from "./db/whatsapp";
 import * as financialAdvisor from "./financial-advisor";
 import {
@@ -12,7 +11,18 @@ import {
   type FinancialAssistantIntent,
 } from "./_core/financialAssistantIntent";
 import { invokeLLM, type Message } from "./_core/llm";
-import { UazapiClient, UazapiRequestError, normalizeWhatsAppPhone } from "./_core/uazapi";
+import {
+  UazapiClient,
+  UazapiRequestError,
+  normalizeUazapiBaseUrl,
+  normalizeWhatsAppPhone,
+} from "./_core/uazapi";
+import { ENV } from "./_core/env";
+import { isStrongSecret } from "./_core/secrets";
+import {
+  forwardFinancialMessageToN8n,
+  isN8nAgentForwardingConfigured,
+} from "./_core/n8nAgentClient";
 
 type AnyRecord = Record<string, any>;
 
@@ -38,7 +48,7 @@ type FinancialContext = {
   debts: AnyRecord[];
   investments: AnyRecord[];
   reserveFunds: AnyRecord[];
-  asaasCharges: AnyRecord[];
+  receivables: AnyRecord[];
 };
 
 type SuggestedAction = {
@@ -71,6 +81,19 @@ const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 const CONFIRM_WORDS = new Set(["CONFIRMAR", "CONFIRMO", "SIM"]);
 const SNOOZE_WORDS = new Set(["ADIAR", "DEPOIS", "MAIS TARDE"]);
 
+function normalizeTimeZone(value?: string) {
+  const timeZone = value?.trim() || DEFAULT_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat("pt-BR", { timeZone }).format(new Date());
+    return timeZone;
+  } catch {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Informe um fuso horario IANA valido.",
+    });
+  }
+}
+
 function maskSecret(secret: string | null | undefined) {
   if (!secret) return "";
   if (secret.length <= 8) return "*".repeat(secret.length);
@@ -90,17 +113,23 @@ function getUazapiClient(integration: {
 }
 
 function getWebhookUrl(origin?: string | null) {
-  if (!origin) return null;
+  if (!origin || !isStrongSecret(ENV.whatsappWebhookSecret)) return null;
   try {
     const url = new URL(origin);
     const hostname = url.hostname.toLowerCase();
-    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1"
+    ) {
       return null;
     }
+    const webhookUrl = new URL("/api/whatsapp/uazapi/webhook", url.origin);
+    webhookUrl.searchParams.set("secret", ENV.whatsappWebhookSecret);
+    return webhookUrl.toString();
   } catch {
     return null;
   }
-  return `${origin.replace(/\/$/, "")}/api/whatsapp/uazapi/webhook`;
 }
 
 function getPartsInTimeZone(date: Date, timeZone: string) {
@@ -149,11 +178,7 @@ function formatAdvisorPreviewMessage(params: {
       : params.mentorMode === "strategic"
         ? "Mentoria Financeira · Modo estrategico"
         : "Mentoria Financeira · Modo calibracao";
-  const parts = [
-    header,
-    `Pergunta: ${params.question}`,
-    params.reply,
-  ];
+  const parts = [header, `Pergunta: ${params.question}`, params.reply];
 
   if (params.alerts.length) {
     parts.push(`Alertas:\n- ${params.alerts.join("\n- ")}`);
@@ -161,13 +186,17 @@ function formatAdvisorPreviewMessage(params: {
 
   const nextActions = params.suggestedActions.slice(0, 3);
   if (nextActions.length) {
-    parts.push(`Proximas acoes:\n- ${nextActions.map(action => action.title).join("\n- ")}`);
+    parts.push(
+      `Proximas acoes:\n- ${nextActions.map(action => action.title).join("\n- ")}`
+    );
   }
 
   return parts.join("\n\n");
 }
 
-function getMentorModeLabel(mode?: financialAdvisor.FinancialAdvisorMentorMode) {
+function getMentorModeLabel(
+  mode?: financialAdvisor.FinancialAdvisorMentorMode
+) {
   if (mode === "execution_short") return "execucao curta";
   if (mode === "strategic") return "estrategico";
   return "calibracao";
@@ -190,21 +219,29 @@ function formatMentorChannelMessage(params: {
   }
 
   if (params.suggestedActions?.length) {
-    parts.push(`Proximas acoes:\n- ${params.suggestedActions.slice(0, 3).map(action => action.title).join("\n- ")}`);
+    parts.push(
+      `Proximas acoes:\n- ${params.suggestedActions
+        .slice(0, 3)
+        .map(action => action.title)
+        .join("\n- ")}`
+    );
   }
 
   return parts.join("\n\n");
 }
 
 function mapAdvisorRecommendationsToSuggestedActions(
-  recommendations: Awaited<ReturnType<typeof financialAdvisor.buildFinancialAdvisorAssistantReply>>["suggestedActions"]
+  recommendations: Awaited<
+    ReturnType<typeof financialAdvisor.buildFinancialAdvisorAssistantReply>
+  >["suggestedActions"]
 ): SuggestedAction[] {
   return recommendations.map(recommendation => ({
     actionType: recommendation.kind,
     title: recommendation.title,
     description: recommendation.description,
     priority:
-      recommendation.kind === "pay_priority_items" || recommendation.kind === "freeze_discretionary"
+      recommendation.kind === "pay_priority_items" ||
+      recommendation.kind === "freeze_discretionary"
         ? "alta"
         : recommendation.kind === "review_variable_costs"
           ? "media"
@@ -264,10 +301,18 @@ function extractUazapiMessages(payload: AnyRecord): ExtractedInboundMessage[] {
       payload?.data?.instance?.id ||
       payload?.data?.instance ||
       ""
-  );
+  )
+    .trim()
+    .slice(0, 120);
   const instanceToken = String(
-    payload?.token || payload?.instance?.token || payload?.data?.token || payload?.data?.instance?.token || ""
-  ).trim();
+    payload?.token ||
+      payload?.instance?.token ||
+      payload?.data?.token ||
+      payload?.data?.instance?.token ||
+      ""
+  )
+    .trim()
+    .slice(0, 4_096);
 
   const candidates = Array.isArray(payload?.data?.messages)
     ? payload.data.messages
@@ -280,15 +325,21 @@ function extractUazapiMessages(payload: AnyRecord): ExtractedInboundMessage[] {
   return candidates
     .map((candidate: AnyRecord) => {
       const inner = candidate?.message ?? candidate?.data?.message ?? candidate;
-      const providerMessageId = String(
+      const rawProviderMessageId = String(
         candidate?.key?.id ||
           candidate?.id ||
           candidate?.messageid ||
           inner?.id ||
           inner?.messageid ||
-          randomUUID()
+          `payload-${createHash("sha256").update(JSON.stringify(candidate)).digest("hex")}`
       );
-      const fromMe = Boolean(candidate?.key?.fromMe || candidate?.fromMe || inner?.fromMe);
+      const providerMessageId =
+        rawProviderMessageId.length <= 255
+          ? rawProviderMessageId
+          : `provider-${createHash("sha256").update(rawProviderMessageId).digest("hex")}`;
+      const fromMe = Boolean(
+        candidate?.key?.fromMe || candidate?.fromMe || inner?.fromMe
+      );
       const remoteJid = String(
         candidate?.key?.remoteJid ||
           candidate?.remoteJid ||
@@ -302,18 +353,23 @@ function extractUazapiMessages(payload: AnyRecord): ExtractedInboundMessage[] {
           inner?.chatid ||
           ""
       );
-      const phoneNumber = normalizeWhatsAppPhone(remoteJid.split("@")[0] || remoteJid);
-      const text = String(extractTextMessage(inner)).trim();
-      const displayName =
+      const phoneNumber = normalizeWhatsAppPhone(
+        remoteJid.split("@")[0] || remoteJid
+      ).slice(0, 32);
+      const text = String(extractTextMessage(inner)).trim().slice(0, 12_000);
+      const rawDisplayName =
         candidate?.pushName ||
         candidate?.notifyName ||
         candidate?.senderName ||
         candidate?.name ||
         inner?.senderName ||
-        inner?.name ||
-        null;
+        inner?.name;
+      const displayName = rawDisplayName
+        ? String(rawDisplayName).slice(0, 255)
+        : null;
 
-      if (fromMe || (!instanceId && !instanceToken) || !phoneNumber || !text) return null;
+      if (fromMe || (!instanceId && !instanceToken) || !phoneNumber || !text)
+        return null;
 
       return {
         instanceId,
@@ -330,7 +386,9 @@ function extractUazapiMessages(payload: AnyRecord): ExtractedInboundMessage[] {
 
 function mapUazapiErrorMessage(error: unknown) {
   if (!(error instanceof UazapiRequestError)) {
-    return error instanceof Error ? error.message : "Falha ao validar integracao Uazapi.";
+    return error instanceof Error
+      ? error.message
+      : "Falha ao validar integracao Uazapi.";
   }
 
   const message = error.message || "Falha ao validar integracao Uazapi.";
@@ -351,18 +409,25 @@ function mapUazapiErrorMessage(error: unknown) {
   return message;
 }
 
-async function buildFinancialContext(userId: number, timezone = DEFAULT_TIMEZONE): Promise<FinancialContext> {
+async function buildFinancialContext(
+  userId: number,
+  timezone = DEFAULT_TIMEZONE
+): Promise<FinancialContext> {
   const now = new Date();
   const { month, year, iso } = getPartsInTimeZone(now, timezone);
-  const [company, personal, calendar, debts, investments, reserveFunds, asaasCharges] = await Promise.all([
-    db.getCompanyDashboardData(userId, month, year).catch(() => null),
-    db.getPersonalDashboardData(userId, month, year).catch(() => null),
-    db.getCalendarData(userId, month, year).catch(() => null),
-    db.getDebts(userId).catch(() => []),
-    db.getInvestments(userId).catch(() => []),
-    db.getReserveFunds(userId).catch(() => []),
-    asaasDb.listAsaasCharges(userId).catch(() => []),
-  ]);
+  const [company, personal, calendar, debts, investments, reserveFunds] =
+    await Promise.all([
+      db.getCompanyDashboardData(userId, month, year).catch(() => null),
+      db.getPersonalDashboardData(userId, month, year).catch(() => null),
+      db.getCalendarData(userId, month, year).catch(() => null),
+      db.getDebts(userId).catch(() => []),
+      db.getInvestments(userId).catch(() => []),
+      db.getReserveFunds(userId).catch(() => []),
+    ]);
+
+  const receivables = Array.isArray(company?.revenue?.items)
+    ? company.revenue.items.slice(0, 25)
+    : [];
 
   return {
     generatedAt: iso,
@@ -374,34 +439,54 @@ async function buildFinancialContext(userId: number, timezone = DEFAULT_TIMEZONE
     debts: Array.isArray(debts) ? debts : [],
     investments: Array.isArray(investments) ? investments : [],
     reserveFunds: Array.isArray(reserveFunds) ? reserveFunds : [],
-    asaasCharges: Array.isArray(asaasCharges) ? asaasCharges.slice(0, 25) : [],
+    receivables,
   };
 }
 
 function summarizeContext(context: FinancialContext) {
   return JSON.stringify(
     {
-      period: { month: context.month, year: context.year, generatedAt: context.generatedAt },
+      period: {
+        month: context.month,
+        year: context.year,
+        generatedAt: context.generatedAt,
+      },
       company: context.company,
       personal: context.personal,
       upcoming: context.calendar,
       debts: context.debts.slice(0, 15),
       investments: context.investments.slice(0, 10),
       reserveFunds: context.reserveFunds.slice(0, 10),
-      asaasCharges: context.asaasCharges.slice(0, 15),
+      receivables: context.receivables.slice(0, 15),
     },
     null,
     2
   );
 }
 
-function buildFallbackReply(intent: AssistantIntent, context: FinancialContext): AssistantReplyPayload {
-  const companyNet = Number(context.company?.netProfit ?? context.company?.monthlyNet ?? 0);
-  const personalBalance = Number(context.personal?.balance ?? context.personal?.monthlyBalance ?? 0);
-  const overdueCharges = context.asaasCharges.filter(
-    charge => String(charge.status || "").toUpperCase().includes("OVERDUE") || charge.status === "RECEIVED_IN_CASH_UNDONE"
+function buildFallbackReply(
+  intent: AssistantIntent,
+  context: FinancialContext
+): AssistantReplyPayload {
+  const companyNet = Number(
+    context.company?.netProfit ?? context.company?.monthlyNet ?? 0
   );
-  const upcomingItems = Array.isArray(context.calendar?.items) ? context.calendar.items.slice(0, 5) : [];
+  const personalBalance = Number(
+    context.personal?.balance ?? context.personal?.monthlyBalance ?? 0
+  );
+  const overdueReceivables = context.receivables.filter(item => {
+    const status = String(item.status || "").toLowerCase();
+    const dueDate = String(item.dueDate || "");
+    return (
+      status.includes("atras") ||
+      (status !== "recebido" &&
+        status !== "cancelado" &&
+        dueDate < context.generatedAt)
+    );
+  });
+  const upcomingItems = Array.isArray(context.calendar?.items)
+    ? context.calendar.items.slice(0, 5)
+    : [];
 
   const replies: Record<AssistantIntent, string> = {
     monthly_plan_request:
@@ -411,10 +496,10 @@ function buildFallbackReply(intent: AssistantIntent, context: FinancialContext):
     personal_summary: `Seu caixa pessoal estimado está em ${personalBalance.toFixed(2)} neste mês. Revise vencimentos desta semana e preserve reserva antes de assumir novos compromissos.`,
     upcoming_bills: upcomingItems.length
       ? `Os próximos vencimentos já mapeados são: ${upcomingItems.map((item: AnyRecord) => item.title || item.description || "item").join(", ")}.`
-      : "Não encontrei vencimentos próximos no calendário atual, mas vale revisar as contas fixas e cobranças do Asaas.",
-    overdue_items: overdueCharges.length
-      ? `Existem ${overdueCharges.length} cobranças do Asaas exigindo atenção. Priorize contato e renegociação das mais antigas.`
-      : "Não encontrei cobrança vencida agora, mas sigo monitorando qualquer risco de atraso.",
+      : "Não encontrei vencimentos próximos no calendário atual, mas vale revisar as contas fixas e os recebimentos em aberto.",
+    overdue_items: overdueReceivables.length
+      ? `Existem ${overdueReceivables.length} recebimentos exigindo atenção. Priorize o contato manual com os clientes mais atrasados.`
+      : "Não encontrei recebimento vencido agora, mas sigo monitorando qualquer risco de atraso.",
     consolidated_analysis:
       "Seu cenário consolidado pede disciplina de caixa: olhar empresa e pessoal juntos, proteger reserva e concentrar esforços nos recebimentos e vencimentos desta quinzena.",
     spending_limit:
@@ -444,14 +529,17 @@ function buildFallbackReply(intent: AssistantIntent, context: FinancialContext):
   return {
     reply: replies[intent],
     summary: replies[intent],
-    alerts: overdueCharges.length ? [`${overdueCharges.length} cobrança(s) do Asaas com risco ou atraso.`] : [],
+    alerts: overdueReceivables.length
+      ? [`${overdueReceivables.length} recebimento(s) com risco ou atraso.`]
+      : [],
     suggestedActions:
       intent === "monthly_plan_request"
         ? [
             {
               actionType: "create_monthly_plan",
               title: "Gerar plano financeiro do mês",
-              description: "Criar plano com objetivos, prioridades de caixa e ações concretas.",
+              description:
+                "Criar plano com objetivos, prioridades de caixa e ações concretas.",
               priority: "alta",
               requiresConfirmation: true,
             },
@@ -492,17 +580,26 @@ async function generateAssistantReply(
     return {
       reply: parsed.reply || fallback.reply,
       summary: parsed.summary || parsed.reply || fallback.summary,
-      alerts: Array.isArray(parsed.alerts) ? parsed.alerts.map(String) : fallback.alerts,
+      alerts: Array.isArray(parsed.alerts)
+        ? parsed.alerts.map(String)
+        : fallback.alerts,
       suggestedActions: Array.isArray(parsed.suggestedActions)
         ? parsed.suggestedActions.map(action => ({
             actionType: String(action.actionType || "manual_follow_up"),
             title: String(action.title || "Acompanhar item financeiro"),
-            description: String(action.description || "Verificar o ponto sugerido pela IA."),
+            description: String(
+              action.description || "Verificar o ponto sugerido pela IA."
+            ),
             priority:
-              action.priority === "alta" || action.priority === "baixa" ? action.priority : "media",
+              action.priority === "alta" || action.priority === "baixa"
+                ? action.priority
+                : "media",
             dueDate: action.dueDate ? String(action.dueDate) : null,
             requiresConfirmation: Boolean(action.requiresConfirmation),
-            metadata: typeof action.metadata === "object" && action.metadata ? action.metadata : undefined,
+            metadata:
+              typeof action.metadata === "object" && action.metadata
+                ? action.metadata
+                : undefined,
           }))
         : fallback.suggestedActions,
     };
@@ -511,11 +608,15 @@ async function generateAssistantReply(
   }
 }
 
-async function generateMonthlyPlan(context: FinancialContext): Promise<MonthlyPlanPayload> {
+async function generateMonthlyPlan(
+  context: FinancialContext
+): Promise<MonthlyPlanPayload> {
   const fallback: MonthlyPlanPayload = {
-    summary: "Plano mensal gerado com foco em caixa, vencimentos e disciplina financeira.",
+    summary:
+      "Plano mensal gerado com foco em caixa, vencimentos e disciplina financeira.",
     targetBalance: String(
-      Number(context.company?.netProfit ?? 0) + Number(context.personal?.balance ?? 0)
+      Number(context.company?.netProfit ?? 0) +
+        Number(context.personal?.balance ?? 0)
     ),
     recommendedCashAction:
       "Preservar liquidez, concentrar cobranças abertas e revisar os maiores gastos variáveis antes de novos compromissos.",
@@ -525,19 +626,22 @@ async function generateMonthlyPlan(context: FinancialContext): Promise<MonthlyPl
       {
         actionType: "charge_follow_up",
         title: "Cobrar recebimentos abertos",
-        description: "Revisar as cobranças abertas no Asaas e dar prioridade às que vencem primeiro.",
+        description:
+          "Revisar os recebimentos abertos e dar prioridade ao contato manual com os mais antigos.",
         priority: "alta",
       },
       {
         actionType: "expense_review",
         title: "Revisar custos variáveis",
-        description: "Cortar ou adiar gastos variáveis não essenciais desta semana.",
+        description:
+          "Cortar ou adiar gastos variáveis não essenciais desta semana.",
         priority: "media",
       },
       {
         actionType: "reserve_protection",
         title: "Proteger a reserva",
-        description: "Evitar usar a reserva para despesas previsíveis e acompanhar o saldo projetado.",
+        description:
+          "Evitar usar a reserva para despesas previsíveis e acompanhar o saldo projetado.",
         priority: "alta",
       },
     ],
@@ -566,9 +670,13 @@ async function generateMonthlyPlan(context: FinancialContext): Promise<MonthlyPl
     return {
       summary: parsed.summary || fallback.summary,
       targetBalance: parsed.targetBalance || fallback.targetBalance,
-      recommendedCashAction: parsed.recommendedCashAction || fallback.recommendedCashAction,
+      recommendedCashAction:
+        parsed.recommendedCashAction || fallback.recommendedCashAction,
       messageToUser: parsed.messageToUser || fallback.messageToUser,
-      actions: Array.isArray(parsed.actions) && parsed.actions.length > 0 ? parsed.actions : fallback.actions,
+      actions:
+        Array.isArray(parsed.actions) && parsed.actions.length > 0
+          ? parsed.actions
+          : fallback.actions,
     };
   } catch {
     return fallback;
@@ -585,8 +693,16 @@ async function sendOutgoingMessage(params: {
   requiresConfirmation?: boolean;
   metadata?: AnyRecord;
 }) {
-  const { integration, contactId, threadId, phoneNumber, text, detectedIntent, requiresConfirmation, metadata } =
-    params;
+  const {
+    integration,
+    contactId,
+    threadId,
+    phoneNumber,
+    text,
+    detectedIntent,
+    requiresConfirmation,
+    metadata,
+  } = params;
 
   if (!integration) {
     throw new Error("Integracao WhatsApp nao encontrada.");
@@ -634,7 +750,10 @@ async function createNotification(params: {
   dedupeKey: string;
   status?: "agendado" | "enviado" | "falhou" | "adiado" | "descartado";
 }) {
-  const existing = await whatsappDb.getNotificationEventByDedupeKey(params.integrationId, params.dedupeKey);
+  const existing = await whatsappDb.getNotificationEventByDedupeKey(
+    params.integrationId,
+    params.dedupeKey
+  );
   if (existing) return existing;
 
   return whatsappDb.createNotificationEvent({
@@ -652,11 +771,14 @@ async function createNotification(params: {
   });
 }
 
-export async function getWhatsAppIntegration(userId: number, origin?: string | null) {
+export async function getWhatsAppIntegration(
+  userId: number,
+  origin?: string | null
+) {
   const integration = await whatsappDb.getWhatsAppIntegration(userId);
   if (!integration) return null;
 
-  const webhookUrl = integration.webhookUrl || getWebhookUrl(origin);
+  const webhookUrl = getWebhookUrl(origin);
   return {
     ...integration,
     apiToken: undefined,
@@ -682,18 +804,41 @@ export async function upsertWhatsAppIntegration(
 ) {
   const normalizedPhone = normalizeWhatsAppPhone(input.authorizedPhone);
   if (!normalizedPhone) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Informe um numero autorizado valido." });
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Informe um numero autorizado valido.",
+    });
+  }
+
+  const existing = await whatsappDb.getWhatsAppIntegration(userId);
+  const apiToken = input.apiToken?.trim() || existing?.apiToken || "";
+  if (!apiToken) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Informe o token da API Uazapi.",
+    });
+  }
+
+  let apiBaseUrl: string;
+  try {
+    apiBaseUrl = normalizeUazapiBaseUrl(input.apiBaseUrl);
+  } catch (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        error instanceof Error ? error.message : "URL base da Uazapi invalida.",
+    });
   }
 
   const record = await whatsappDb.upsertWhatsAppIntegration(userId, {
     provider: input.provider ?? "uazapi",
     instanceId: input.instanceId.trim(),
-    apiBaseUrl: input.apiBaseUrl.trim(),
-    apiToken: input.apiToken,
+    apiBaseUrl,
+    apiToken,
     authorizedPhone: normalizedPhone,
     enabled: input.enabled ?? true,
     automationHour: input.automationHour ?? 8,
-    timezone: input.timezone ?? DEFAULT_TIMEZONE,
+    timezone: normalizeTimeZone(input.timezone),
     webhookUrl: getWebhookUrl(origin),
   });
 
@@ -717,7 +862,9 @@ export async function testWhatsAppConnection(
         apiBaseUrl: override?.apiBaseUrl?.trim() || savedIntegration.apiBaseUrl,
         apiToken: override?.apiToken?.trim() || savedIntegration.apiToken,
       }
-    : override?.instanceId?.trim() && override?.apiBaseUrl?.trim() && override?.apiToken?.trim()
+    : override?.instanceId?.trim() &&
+        override?.apiBaseUrl?.trim() &&
+        override?.apiToken?.trim()
       ? {
           id: 0,
           userId,
@@ -744,14 +891,20 @@ export async function testWhatsAppConnection(
   if (!integration) {
     throw new TRPCError({
       code: "NOT_FOUND",
-      message: "Preencha e salve a integracao do WhatsApp, ou informe instanceId, URL e token para testar.",
+      message:
+        "Preencha e salve a integracao do WhatsApp, ou informe instanceId, URL e token para testar.",
     });
   }
 
-  if (!integration.instanceId || !integration.apiBaseUrl || !integration.apiToken) {
+  if (
+    !integration.instanceId ||
+    !integration.apiBaseUrl ||
+    !integration.apiToken
+  ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Informe instanceId, API base URL e API token validos para testar a conexao.",
+      message:
+        "Informe instanceId, API base URL e API token validos para testar a conexao.",
     });
   }
 
@@ -759,9 +912,11 @@ export async function testWhatsAppConnection(
     const client = getUazapiClient(integration);
     const status = await client.getInstanceStatus();
     const connectedInstanceId = String(
-      (status as AnyRecord)?.instance?.id || (status as AnyRecord)?.instanceId || ""
+      (status as AnyRecord)?.instance?.id ||
+        (status as AnyRecord)?.instanceId ||
+        ""
     ).trim();
-    const webhookUrl = integration.webhookUrl || getWebhookUrl(origin);
+    const webhookUrl = getWebhookUrl(origin);
     let webhookConfigured = false;
 
     if (webhookUrl) {
@@ -773,7 +928,11 @@ export async function testWhatsAppConnection(
       await whatsappDb.markWhatsAppConnection(
         savedIntegration.id,
         "sincronizado",
-        String(status?.message || status?.status || "Conexao com a Uazapi validada com sucesso.")
+        String(
+          status?.message ||
+            status?.status ||
+            "Conexao com a Uazapi validada com sucesso."
+        )
       );
     }
 
@@ -793,7 +952,11 @@ export async function testWhatsAppConnection(
   } catch (error) {
     const message = mapUazapiErrorMessage(error);
     if (savedIntegration) {
-      await whatsappDb.markWhatsAppConnection(savedIntegration.id, "erro", message);
+      await whatsappDb.markWhatsAppConnection(
+        savedIntegration.id,
+        "erro",
+        message
+      );
     }
     throw new TRPCError({ code: "BAD_REQUEST", message });
   }
@@ -802,7 +965,10 @@ export async function testWhatsAppConnection(
 export async function sendWhatsAppTestMessage(userId: number) {
   const integration = await whatsappDb.getWhatsAppIntegration(userId);
   if (!integration) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Integracao do WhatsApp nao encontrada." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Integracao do WhatsApp nao encontrada.",
+    });
   }
 
   const contact = await whatsappDb.upsertWhatsAppContact(userId, {
@@ -813,9 +979,14 @@ export async function sendWhatsAppTestMessage(userId: number) {
     lastSeenAt: new Date(),
   });
 
-  const thread = await whatsappDb.getOrCreateAssistantThread(userId, integration.id, contact.id, {
-    lastMessageAt: new Date(),
-  });
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    userId,
+    integration.id,
+    contact.id,
+    {
+      lastMessageAt: new Date(),
+    }
+  );
 
   try {
     const message = await sendOutgoingMessage({
@@ -839,21 +1010,29 @@ export async function sendWhatsAppTestMessage(userId: number) {
   }
 }
 
-export async function sendFinancialAdvisorPreviewMessage(userId: number, question: string) {
+export async function sendFinancialAdvisorPreviewMessage(
+  userId: number,
+  question: string
+) {
   const integration = await whatsappDb.getWhatsAppIntegration(userId);
   if (!integration) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Integracao do WhatsApp nao encontrada." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Integracao do WhatsApp nao encontrada.",
+    });
   }
   if (!integration.enabled) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Ative a integracao do WhatsApp antes de enviar a mentoria para o numero autorizado.",
+      message:
+        "Ative a integracao do WhatsApp antes de enviar a mentoria para o numero autorizado.",
     });
   }
   if (!integration.authorizedPhone) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Informe um numero autorizado antes de enviar a mentoria para o WhatsApp.",
+      message:
+        "Informe um numero autorizado antes de enviar a mentoria para o WhatsApp.",
     });
   }
 
@@ -871,15 +1050,22 @@ export async function sendFinancialAdvisorPreviewMessage(userId: number, questio
     lastSeenAt: new Date(),
   });
 
-  const thread = await whatsappDb.getOrCreateAssistantThread(userId, integration.id, contact.id, {
-    lastMessageAt: new Date(),
-  });
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    userId,
+    integration.id,
+    contact.id,
+    {
+      lastMessageAt: new Date(),
+    }
+  );
 
   const text = formatAdvisorPreviewMessage({
     question,
     reply: advisorReply.reply,
     alerts: advisorReply.alerts,
-    suggestedActions: mapAdvisorRecommendationsToSuggestedActions(advisorReply.suggestedActions),
+    suggestedActions: mapAdvisorRecommendationsToSuggestedActions(
+      advisorReply.suggestedActions
+    ),
     mentorMode: advisorReply.mentorMode,
   });
 
@@ -920,7 +1106,10 @@ export async function sendFinancialAdvisorPreviewMessage(userId: number, questio
   }
 }
 
-export async function askFinancialAdvisorFromDashboard(userId: number, message: string) {
+export async function askFinancialAdvisorFromDashboard(
+  userId: number,
+  message: string
+) {
   const advisorReply = await financialAdvisor.askFinancialAdvisorQuestion({
     userId,
     message,
@@ -943,9 +1132,14 @@ export async function askFinancialAdvisorFromDashboard(userId: number, message: 
       lastSeenAt: new Date(),
     });
 
-    const thread = await whatsappDb.getOrCreateAssistantThread(userId, integration.id, contact.id, {
-      lastMessageAt: new Date(),
-    });
+    const thread = await whatsappDb.getOrCreateAssistantThread(
+      userId,
+      integration.id,
+      contact.id,
+      {
+        lastMessageAt: new Date(),
+      }
+    );
 
     await whatsappDb.createWhatsAppMessage({
       userId,
@@ -964,14 +1158,18 @@ export async function askFinancialAdvisorFromDashboard(userId: number, message: 
       }),
     });
 
-    const suggestedActions = mapAdvisorRecommendationsToSuggestedActions(advisorReply.suggestedActions);
+    const suggestedActions = mapAdvisorRecommendationsToSuggestedActions(
+      advisorReply.suggestedActions
+    );
 
     const run = await whatsappDb.createAssistantRun({
       userId,
       integrationId: integration.id,
       threadId: thread.id,
       triggerType: "direct_message",
-      status: advisorReply.requiresConfirmation ? "aguardando_confirmacao" : "executado",
+      status: advisorReply.requiresConfirmation
+        ? "aguardando_confirmacao"
+        : "executado",
       userMessage: message,
       normalizedIntent: advisorReply.detectedIntent,
       contextPayload: JSON.stringify({
@@ -980,7 +1178,9 @@ export async function askFinancialAdvisorFromDashboard(userId: number, message: 
       }),
       assistantResponse: advisorReply.reply,
       suggestedActions: JSON.stringify(suggestedActions),
-      executedActions: advisorReply.requiresConfirmation ? undefined : JSON.stringify([]),
+      executedActions: advisorReply.requiresConfirmation
+        ? undefined
+        : JSON.stringify([]),
       requiresConfirmation: advisorReply.requiresConfirmation,
       expiresAt: advisorReply.requiresConfirmation
         ? new Date(Date.now() + 24 * 60 * 60 * 1000)
@@ -1023,14 +1223,15 @@ export async function askFinancialAdvisorFromDashboard(userId: number, message: 
 }
 
 export async function getWhatsAppSyncStatus(userId: number) {
-  const [integration, threads, messages, runs, plans, notifications] = await Promise.all([
-    whatsappDb.getWhatsAppIntegration(userId),
-    whatsappDb.listAssistantThreads(userId),
-    whatsappDb.listWhatsAppMessages(userId),
-    whatsappDb.listAssistantRuns(userId),
-    whatsappDb.listFinancialPlans(userId),
-    whatsappDb.listNotificationEvents(userId),
-  ]);
+  const [integration, threads, messages, runs, plans, notifications] =
+    await Promise.all([
+      whatsappDb.getWhatsAppIntegration(userId),
+      whatsappDb.listAssistantThreads(userId),
+      whatsappDb.listWhatsAppMessages(userId),
+      whatsappDb.listAssistantRuns(userId),
+      whatsappDb.listFinancialPlans(userId),
+      whatsappDb.listNotificationEvents(userId),
+    ]);
 
   return {
     integration: integration
@@ -1045,7 +1246,9 @@ export async function getWhatsAppSyncStatus(userId: number) {
     totals: {
       threads: threads.length,
       messages: messages.length,
-      pendingConfirmations: runs.filter(run => run.status === "aguardando_confirmacao").length,
+      pendingConfirmations: runs.filter(
+        run => run.status === "aguardando_confirmacao"
+      ).length,
       plans: plans.length,
       notifications: notifications.length,
     },
@@ -1062,9 +1265,14 @@ export async function listAssistantInbox(userId: number) {
   return {
     threads: threads.map(thread => ({
       ...thread,
-      latestMessage: messages.find(message => message.threadId === thread.id) ?? null,
+      latestMessage:
+        messages.find(message => message.threadId === thread.id) ?? null,
       pendingRun:
-        runs.find(run => run.threadId === thread.id && run.status === "aguardando_confirmacao") ?? null,
+        runs.find(
+          run =>
+            run.threadId === thread.id &&
+            run.status === "aguardando_confirmacao"
+        ) ?? null,
     })),
     messages,
     runs,
@@ -1083,16 +1291,24 @@ export async function getAssistantOperationsSummary(userId: number) {
   ]);
 
   const failedEvents = events.filter(
-    event => event.status === "falhou" || String(event.lastError ?? "").trim().length > 0
+    event =>
+      event.status === "falhou" ||
+      String(event.lastError ?? "").trim().length > 0
   );
   const failedRuns = runs.filter(
-    run => run.status === "falhou" || String(run.errorMessage ?? "").trim().length > 0
+    run =>
+      run.status === "falhou" ||
+      String(run.errorMessage ?? "").trim().length > 0
   );
   const pendingRuns = runs.filter(
-    run => run.status === "aguardando_confirmacao" || run.status === "recebido" || run.status === "analisado"
+    run =>
+      run.status === "aguardando_confirmacao" ||
+      run.status === "recebido" ||
+      run.status === "analisado"
   );
 
-  const findLatestEvent = (type: string) => events.find(event => event.type === type) ?? null;
+  const findLatestEvent = (type: string) =>
+    events.find(event => event.type === type) ?? null;
   const latestDaily = findLatestEvent("daily_digest");
   const latestMonthStart = findLatestEvent("month_start");
   const latestMonthEnd = findLatestEvent("month_end");
@@ -1150,10 +1366,16 @@ export async function getAssistantOperationsSummary(userId: number) {
   };
 }
 
-export async function confirmAssistantRunFromApp(userId: number, runId: number) {
+export async function confirmAssistantRunFromApp(
+  userId: number,
+  runId: number
+) {
   const pendingRun = await whatsappDb.getAssistantRunById(userId, runId);
   if (!pendingRun) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Confirmacao pendente nao encontrada." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Confirmacao pendente nao encontrada.",
+    });
   }
   if (pendingRun.status !== "aguardando_confirmacao") {
     throw new TRPCError({
@@ -1166,7 +1388,8 @@ export async function confirmAssistantRunFromApp(userId: number, runId: number) 
   if (!integration || !integration.authorizedPhone) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Configure o numero autorizado do WhatsApp para concluir esse fluxo no app.",
+      message:
+        "Configure o numero autorizado do WhatsApp para concluir esse fluxo no app.",
     });
   }
 
@@ -1177,9 +1400,14 @@ export async function confirmAssistantRunFromApp(userId: number, runId: number) 
     isAuthorized: true,
     lastSeenAt: new Date(),
   });
-  const thread = await whatsappDb.getOrCreateAssistantThread(userId, integration.id, contact.id, {
-    lastMessageAt: new Date(),
-  });
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    userId,
+    integration.id,
+    contact.id,
+    {
+      lastMessageAt: new Date(),
+    }
+  );
 
   await whatsappDb.createWhatsAppMessage({
     userId,
@@ -1256,7 +1484,8 @@ export async function confirmAssistantRunFromApp(userId: number, runId: number) 
     providerMessageId: `dashboard-confirmed-${randomUUID()}`,
     direction: "outbound",
     status: "processed",
-    textContent: "Confirmacao registrada no painel. Vou seguir com a execucao daqui.",
+    textContent:
+      "Confirmacao registrada no painel. Vou seguir com a execucao daqui.",
     detectedIntent: pendingRun.normalizedIntent,
     rawPayload: JSON.stringify({
       source: "dashboard_confirmation",
@@ -1276,7 +1505,10 @@ export async function confirmAssistantRunFromApp(userId: number, runId: number) 
 export async function snoozeAssistantRunFromApp(userId: number, runId: number) {
   const pendingRun = await whatsappDb.getAssistantRunById(userId, runId);
   if (!pendingRun) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Confirmacao pendente nao encontrada." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Confirmacao pendente nao encontrada.",
+    });
   }
   if (pendingRun.status !== "aguardando_confirmacao") {
     throw new TRPCError({
@@ -1289,7 +1521,8 @@ export async function snoozeAssistantRunFromApp(userId: number, runId: number) {
   if (!integration || !integration.authorizedPhone) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Configure o numero autorizado do WhatsApp para acompanhar esse fluxo no app.",
+      message:
+        "Configure o numero autorizado do WhatsApp para acompanhar esse fluxo no app.",
     });
   }
 
@@ -1300,9 +1533,14 @@ export async function snoozeAssistantRunFromApp(userId: number, runId: number) {
     isAuthorized: true,
     lastSeenAt: new Date(),
   });
-  const thread = await whatsappDb.getOrCreateAssistantThread(userId, integration.id, contact.id, {
-    lastMessageAt: new Date(),
-  });
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    userId,
+    integration.id,
+    contact.id,
+    {
+      lastMessageAt: new Date(),
+    }
+  );
 
   await whatsappDb.updateAssistantRun(pendingRun.id, {
     status: "descartado",
@@ -1335,7 +1573,8 @@ export async function snoozeAssistantRunFromApp(userId: number, runId: number) {
     providerMessageId: `dashboard-snoozed-${randomUUID()}`,
     direction: "outbound",
     status: "processed",
-    textContent: "Perfeito. A confirmacao foi adiada no painel e sigo monitorando daqui.",
+    textContent:
+      "Perfeito. A confirmacao foi adiada no painel e sigo monitorando daqui.",
     detectedIntent: pendingRun.normalizedIntent,
     rawPayload: JSON.stringify({
       source: "dashboard_confirmation",
@@ -1355,10 +1594,16 @@ export async function listNotificationEvents(userId: number) {
   return whatsappDb.listNotificationEvents(userId);
 }
 
-export async function dismissNotificationEvent(userId: number, eventId: number) {
+export async function dismissNotificationEvent(
+  userId: number,
+  eventId: number
+) {
   const event = await whatsappDb.getNotificationEventById(userId, eventId);
   if (!event) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Alerta nao encontrado." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Alerta nao encontrado.",
+    });
   }
 
   await whatsappDb.updateNotificationEvent(eventId, userId, {
@@ -1380,21 +1625,38 @@ export async function listAssistantPlans(userId: number) {
 
 export async function getCurrentAssistantPlan(userId: number) {
   const integration = await whatsappDb.getWhatsAppIntegration(userId);
-  const now = getPartsInTimeZone(new Date(), integration?.timezone || DEFAULT_TIMEZONE);
-  const plan = await whatsappDb.getFinancialPlanByPeriod(userId, now.month, now.year);
+  const now = getPartsInTimeZone(
+    new Date(),
+    integration?.timezone || DEFAULT_TIMEZONE
+  );
+  const plan = await whatsappDb.getFinancialPlanByPeriod(
+    userId,
+    now.month,
+    now.year
+  );
   if (!plan) return null;
   const actions = await whatsappDb.listFinancialPlanActions(userId, plan.id);
   return { ...plan, actions };
 }
 
-export async function confirmAssistantPlanAction(userId: number, actionId: number) {
+export async function confirmAssistantPlanAction(
+  userId: number,
+  actionId: number
+) {
   return financialAdvisor.confirmFinancialAdvisorAction(userId, actionId);
 }
 
-export async function snoozeNotificationAlert(userId: number, eventId: number, hours = 24) {
+export async function snoozeNotificationAlert(
+  userId: number,
+  eventId: number,
+  hours = 24
+) {
   const event = await whatsappDb.getNotificationEventById(userId, eventId);
   if (!event) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Alerta nao encontrado." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Alerta nao encontrado.",
+    });
   }
 
   const snoozedUntil = new Date(Date.now() + hours * 60 * 60 * 1000);
@@ -1406,10 +1668,14 @@ export async function snoozeNotificationAlert(userId: number, eventId: number, h
 }
 
 async function processConfirmation(params: {
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>;
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >;
   contact: Awaited<ReturnType<typeof whatsappDb.upsertWhatsAppContact>>;
   thread: Awaited<ReturnType<typeof whatsappDb.getOrCreateAssistantThread>>;
-  pendingRun: NonNullable<Awaited<ReturnType<typeof whatsappDb.getLatestPendingAssistantRun>>>;
+  pendingRun: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getLatestPendingAssistantRun>>
+  >;
 }) {
   const { integration, contact, thread, pendingRun } = params;
   const plan = await financialAdvisor.generateFinancialAdvisorMonthlyPlan({
@@ -1454,10 +1720,14 @@ async function processConfirmation(params: {
 }
 
 async function processSnooze(params: {
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>;
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >;
   contact: Awaited<ReturnType<typeof whatsappDb.upsertWhatsAppContact>>;
   thread: Awaited<ReturnType<typeof whatsappDb.getOrCreateAssistantThread>>;
-  pendingRun: NonNullable<Awaited<ReturnType<typeof whatsappDb.getLatestPendingAssistantRun>>>;
+  pendingRun: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getLatestPendingAssistantRun>>
+  >;
 }) {
   const { integration, contact, thread, pendingRun } = params;
   await whatsappDb.updateAssistantRun(pendingRun.id, {
@@ -1487,10 +1757,14 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
   for (const incoming of messages) {
     const integration =
       (incoming.instanceId
-        ? await whatsappDb.getWhatsAppIntegrationByInstanceId(incoming.instanceId)
+        ? await whatsappDb.getWhatsAppIntegrationByInstanceId(
+            incoming.instanceId
+          )
         : undefined) ??
       (incoming.instanceToken
-        ? await whatsappDb.getWhatsAppIntegrationByApiToken(incoming.instanceToken)
+        ? await whatsappDb.getWhatsAppIntegrationByApiToken(
+            incoming.instanceToken
+          )
         : undefined);
     if (!integration || !integration.enabled) {
       continue;
@@ -1498,7 +1772,9 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
 
     await whatsappDb.touchWhatsAppWebhook(integration.id);
 
-    const isAuthorized = normalizeWhatsAppPhone(integration.authorizedPhone) === incoming.phoneNumber;
+    const isAuthorized =
+      normalizeWhatsAppPhone(integration.authorizedPhone) ===
+      incoming.phoneNumber;
     const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
       integrationId: integration.id,
       phoneNumber: incoming.phoneNumber,
@@ -1506,11 +1782,16 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       isAuthorized,
       lastSeenAt: new Date(),
     });
-    const thread = await whatsappDb.getOrCreateAssistantThread(integration.userId, integration.id, contact.id, {
-      lastMessageAt: new Date(),
-    });
+    const thread = await whatsappDb.getOrCreateAssistantThread(
+      integration.userId,
+      integration.id,
+      contact.id,
+      {
+        lastMessageAt: new Date(),
+      }
+    );
 
-    await whatsappDb.createWhatsAppMessage({
+    const inboundMessage = await whatsappDb.createInboundWhatsAppMessageIfNew({
       userId: integration.userId,
       integrationId: integration.id,
       contactId: contact.id,
@@ -1521,6 +1802,9 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       textContent: incoming.text,
       rawPayload: JSON.stringify(incoming.rawPayload),
     });
+    if (!inboundMessage) {
+      continue;
+    }
     await whatsappDb.touchWhatsAppInbound(integration.id);
 
     if (!isAuthorized) {
@@ -1534,7 +1818,10 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       continue;
     }
 
-    const pendingRun = await whatsappDb.getLatestPendingAssistantRun(integration.userId, thread.id);
+    const pendingRun = await whatsappDb.getLatestPendingAssistantRun(
+      integration.userId,
+      thread.id
+    );
     if (pendingRun && isConfirmationMessage(incoming.text)) {
       await processConfirmation({ integration, contact, thread, pendingRun });
       processed += 1;
@@ -1547,18 +1834,97 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       continue;
     }
 
+    if (isN8nAgentForwardingConfigured()) {
+      try {
+        const recentMessages = await whatsappDb.listRecentWhatsAppMessages(
+          integration.userId,
+          thread.id,
+          12
+        );
+        const agentResponse = await forwardFinancialMessageToN8n({
+          integrationId: integration.id,
+          threadId: thread.id,
+          requestId: incoming.providerMessageId,
+          message: incoming.text,
+          timezone: integration.timezone,
+          recentConversation: recentMessages
+            .slice()
+            .reverse()
+            .map(message => ({
+              direction: message.direction,
+              text: message.textContent,
+              createdAt: message.createdAt,
+            })),
+        });
+        const run = await whatsappDb.createAssistantRun({
+          userId: integration.userId,
+          integrationId: integration.id,
+          threadId: thread.id,
+          triggerType: "direct_message",
+          status: "executado",
+          userMessage: incoming.text,
+          normalizedIntent: "n8n_agent",
+          contextPayload: JSON.stringify({
+            source: "n8n",
+            requestId: incoming.providerMessageId,
+            workflowExecutionId: agentResponse.workflowExecutionId ?? null,
+          }),
+          assistantResponse: agentResponse.reply,
+          suggestedActions: JSON.stringify([]),
+          executedActions: JSON.stringify([]),
+          requiresConfirmation: false,
+        });
+        const outbound = await sendOutgoingMessage({
+          integration,
+          contactId: contact.id,
+          threadId: thread.id,
+          phoneNumber: contact.phoneNumber,
+          text: agentResponse.reply,
+          detectedIntent: "n8n_agent",
+        });
+        await createNotification({
+          integrationId: integration.id,
+          userId: integration.userId,
+          relatedRunId: run.id,
+          relatedMessageId: outbound.id,
+          type: "n8n_agent_reply",
+          scope: "conversation",
+          title: "Resposta do agente financeiro",
+          messageBody: agentResponse.reply.slice(0, 1_000),
+          dedupeKey: `n8n-reply:${integration.userId}:${incoming.providerMessageId}`,
+          status: "enviado",
+        });
+        processed += 1;
+        continue;
+      } catch (error) {
+        console.warn(
+          "[N8N Agent] Falling back to the built-in financial assistant",
+          {
+            integrationId: integration.id,
+            error: error instanceof Error ? error.message : "unknown",
+          }
+        );
+      }
+    }
+
     const intent = detectFinancialAssistantIntent(incoming.text);
     const decisionAmount = extractDecisionAmount(incoming.text);
     const decisionInstallments = extractInstallmentCount(incoming.text);
-    const context = await buildFinancialContext(integration.userId, integration.timezone);
+    const context = await buildFinancialContext(
+      integration.userId,
+      integration.timezone
+    );
 
     if (intent === "monthly_plan_request") {
-      const preview = await financialAdvisor.buildFinancialAdvisorAssistantReply({
-        intent,
-        userId: integration.userId,
-        timezone: integration.timezone,
-      });
-      const previewActions = mapAdvisorRecommendationsToSuggestedActions(preview.suggestedActions);
+      const preview =
+        await financialAdvisor.buildFinancialAdvisorAssistantReply({
+          intent,
+          userId: integration.userId,
+          timezone: integration.timezone,
+        });
+      const previewActions = mapAdvisorRecommendationsToSuggestedActions(
+        preview.suggestedActions
+      );
       const run = await whatsappDb.createAssistantRun({
         userId: integration.userId,
         integrationId: integration.id,
@@ -1585,7 +1951,9 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       });
 
       await whatsappDb.updateAssistantRun(run.id, { status: "analisado" });
-      await whatsappDb.updateAssistantRun(run.id, { status: "aguardando_confirmacao" });
+      await whatsappDb.updateAssistantRun(run.id, {
+        status: "aguardando_confirmacao",
+      });
       processed += 1;
       continue;
     }
@@ -1608,7 +1976,9 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
           reply: advisorReply.reply,
           summary: advisorReply.summary,
           alerts: advisorReply.alerts,
-          suggestedActions: mapAdvisorRecommendationsToSuggestedActions(advisorReply.suggestedActions),
+          suggestedActions: mapAdvisorRecommendationsToSuggestedActions(
+            advisorReply.suggestedActions
+          ),
           mentorMode: advisorReply.mentorMode,
         }
       : await generateAssistantReply(intent, incoming.text, context);
@@ -1621,7 +1991,9 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
       status: "executado",
       userMessage: incoming.text,
       normalizedIntent: intent,
-      contextPayload: advisorReply ? JSON.stringify({ snapshot: advisorReply.snapshot }) : summarizeContext(context),
+      contextPayload: advisorReply
+        ? JSON.stringify({ snapshot: advisorReply.snapshot })
+        : summarizeContext(context),
       assistantResponse: reply.reply,
       suggestedActions: JSON.stringify(reply.suggestedActions),
       executedActions: JSON.stringify([]),
@@ -1664,7 +2036,9 @@ export async function handleUazapiWebhook(payload: AnyRecord) {
 }
 
 async function runDailyDigestForIntegration(
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>,
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >,
   options?: { notificationDedupeKey?: string }
 ) {
   const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
@@ -1674,18 +2048,27 @@ async function runDailyDigestForIntegration(
     isAuthorized: true,
     lastSeenAt: new Date(),
   });
-  const thread = await whatsappDb.getOrCreateAssistantThread(integration.userId, integration.id, contact.id, {
-    lastMessageAt: new Date(),
-  });
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    integration.userId,
+    integration.id,
+    contact.id,
+    {
+      lastMessageAt: new Date(),
+    }
+  );
   const digest = await financialAdvisor.getFinancialAdvisorDailyDigest({
     userId: integration.userId,
     integrationId: integration.id,
     timezone: integration.timezone,
   });
-  const digestMemory = await financialAdvisor.getFinancialAdvisorMemory(integration.userId, {
-    currentSnapshot: digest.snapshot,
-  });
-  const digestMentorMode = financialAdvisor.getFinancialAdvisorMentorMode(digestMemory);
+  const digestMemory = await financialAdvisor.getFinancialAdvisorMemory(
+    integration.userId,
+    {
+      currentSnapshot: digest.snapshot,
+    }
+  );
+  const digestMentorMode =
+    financialAdvisor.getFinancialAdvisorMentorMode(digestMemory);
   const run = await whatsappDb.createAssistantRun({
     userId: integration.userId,
     integrationId: integration.id,
@@ -1721,13 +2104,17 @@ async function runDailyDigestForIntegration(
     scope: "automation",
     title: "Resumo diario enviado",
     messageBody: digest.message,
-    dedupeKey: options?.notificationDedupeKey || `daily:${integration.userId}:${digest.snapshot.generatedAt}`,
+    dedupeKey:
+      options?.notificationDedupeKey ||
+      `daily:${integration.userId}:${digest.snapshot.generatedAt}`,
     status: "enviado",
   });
 }
 
 async function runMonthStartForIntegration(
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>,
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >,
   options?: { notificationDedupeKey?: string }
 ) {
   const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
@@ -1736,13 +2123,19 @@ async function runMonthStartForIntegration(
     displayName: "Titular",
     isAuthorized: true,
   });
-  const thread = await whatsappDb.getOrCreateAssistantThread(integration.userId, integration.id, contact.id);
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    integration.userId,
+    integration.id,
+    contact.id
+  );
   const preview = await financialAdvisor.buildFinancialAdvisorAssistantReply({
     intent: "monthly_plan_request",
     userId: integration.userId,
     timezone: integration.timezone,
   });
-  const previewActions = mapAdvisorRecommendationsToSuggestedActions(preview.suggestedActions);
+  const previewActions = mapAdvisorRecommendationsToSuggestedActions(
+    preview.suggestedActions
+  );
   const run = await whatsappDb.createAssistantRun({
     userId: integration.userId,
     integrationId: integration.id,
@@ -1788,7 +2181,9 @@ async function runMonthStartForIntegration(
 }
 
 async function runMonthEndForIntegration(
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>,
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >,
   options?: { notificationDedupeKey?: string }
 ) {
   const contact = await whatsappDb.upsertWhatsAppContact(integration.userId, {
@@ -1797,16 +2192,24 @@ async function runMonthEndForIntegration(
     displayName: "Titular",
     isAuthorized: true,
   });
-  const thread = await whatsappDb.getOrCreateAssistantThread(integration.userId, integration.id, contact.id);
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    integration.userId,
+    integration.id,
+    contact.id
+  );
   const close = await financialAdvisor.getFinancialAdvisorMonthClose({
     userId: integration.userId,
     integrationId: integration.id,
     timezone: integration.timezone,
   });
-  const closeMemory = await financialAdvisor.getFinancialAdvisorMemory(integration.userId, {
-    currentSnapshot: close.snapshot,
-  });
-  const closeMentorMode = financialAdvisor.getFinancialAdvisorMentorMode(closeMemory);
+  const closeMemory = await financialAdvisor.getFinancialAdvisorMemory(
+    integration.userId,
+    {
+      currentSnapshot: close.snapshot,
+    }
+  );
+  const closeMentorMode =
+    financialAdvisor.getFinancialAdvisorMentorMode(closeMemory);
   const run = await whatsappDb.createAssistantRun({
     userId: integration.userId,
     integrationId: integration.id,
@@ -1828,7 +2231,9 @@ async function runMonthEndForIntegration(
     text: formatMentorChannelMessage({
       reply: close.message,
       mentorMode: closeMentorMode,
-      suggestedActions: mapAdvisorRecommendationsToSuggestedActions(close.snapshot.topRecommendations),
+      suggestedActions: mapAdvisorRecommendationsToSuggestedActions(
+        close.snapshot.topRecommendations
+      ),
       intro: "Fechamento do mes.",
     }),
     detectedIntent: "consolidated_analysis",
@@ -1857,11 +2262,16 @@ type AssistantCronDiagnosticStatus =
   | "already_sent";
 
 function getRoutineStatusForConnection(params: {
-  integration: NonNullable<Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>>;
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >;
   routine: "daily_digest" | "month_start" | "month_end";
   duplicateFound: boolean;
 }) {
-  const now = getPartsInTimeZone(new Date(), params.integration.timezone || DEFAULT_TIMEZONE);
+  const now = getPartsInTimeZone(
+    new Date(),
+    params.integration.timezone || DEFAULT_TIMEZONE
+  );
   const tomorrow = getPartsInTimeZone(
     new Date(Date.now() + 24 * 60 * 60 * 1000),
     params.integration.timezone || DEFAULT_TIMEZONE
@@ -1902,14 +2312,17 @@ function getRoutineStatusForConnection(params: {
   if (params.routine === "month_end" && tomorrow.month === now.month) {
     return {
       status: "outside_window" as const,
-      summary: "A rotina automatica de fechamento so dispara no ultimo dia do mes.",
+      summary:
+        "A rotina automatica de fechamento so dispara no ultimo dia do mes.",
     };
   }
 
   if (params.integration.lastConnectionStatus === "erro") {
     return {
       status: "attention" as const,
-      summary: params.integration.lastConnectionMessage || "A integracao esta com erro e merece revisao antes do envio.",
+      summary:
+        params.integration.lastConnectionMessage ||
+        "A integracao esta com erro e merece revisao antes do envio.",
     };
   }
 
@@ -1951,15 +2364,19 @@ export async function getAssistantCronDiagnostics(userId: number) {
     };
   }
 
-  const now = getPartsInTimeZone(new Date(), integration.timezone || DEFAULT_TIMEZONE);
+  const now = getPartsInTimeZone(
+    new Date(),
+    integration.timezone || DEFAULT_TIMEZONE
+  );
   const dailyKey = `daily:${integration.userId}:${now.iso}`;
   const monthStartKey = `month-start:${integration.userId}:${now.year}-${now.month}`;
   const monthEndKey = `month-end:${integration.userId}:${now.year}-${now.month}`;
-  const [dailyExisting, monthStartExisting, monthEndExisting] = await Promise.all([
-    whatsappDb.getNotificationEventByDedupeKey(integration.id, dailyKey),
-    whatsappDb.getNotificationEventByDedupeKey(integration.id, monthStartKey),
-    whatsappDb.getNotificationEventByDedupeKey(integration.id, monthEndKey),
-  ]);
+  const [dailyExisting, monthStartExisting, monthEndExisting] =
+    await Promise.all([
+      whatsappDb.getNotificationEventByDedupeKey(integration.id, dailyKey),
+      whatsappDb.getNotificationEventByDedupeKey(integration.id, monthStartKey),
+      whatsappDb.getNotificationEventByDedupeKey(integration.id, monthEndKey),
+    ]);
 
   const daily = getRoutineStatusForConnection({
     integration,
@@ -1989,9 +2406,24 @@ export async function getAssistantCronDiagnostics(userId: number) {
       lastConnectionMessage: integration.lastConnectionMessage,
     },
     routines: [
-      { key: "daily_digest", label: "Digest diario", dedupeKey: dailyKey, ...daily },
-      { key: "month_start", label: "Inicio do mes", dedupeKey: monthStartKey, ...monthStart },
-      { key: "month_end", label: "Fechamento do mes", dedupeKey: monthEndKey, ...monthEnd },
+      {
+        key: "daily_digest",
+        label: "Digest diario",
+        dedupeKey: dailyKey,
+        ...daily,
+      },
+      {
+        key: "month_start",
+        label: "Inicio do mes",
+        dedupeKey: monthStartKey,
+        ...monthStart,
+      },
+      {
+        key: "month_end",
+        label: "Fechamento do mes",
+        dedupeKey: monthEndKey,
+        ...monthEnd,
+      },
     ],
   };
 }
@@ -2001,7 +2433,8 @@ async function getManualAutomationIntegration(userId: number) {
   if (!integration || !integration.enabled || !integration.authorizedPhone) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Configure uma integracao do WhatsApp habilitada com numero autorizado para rodar esta rotina.",
+      message:
+        "Configure uma integracao do WhatsApp habilitada com numero autorizado para rodar esta rotina.",
     });
   }
   return integration;
@@ -2012,7 +2445,11 @@ export async function runFinancialDailyForUser(userId: number) {
   await runDailyDigestForIntegration(integration, {
     notificationDedupeKey: `manual-daily:${integration.userId}:${Date.now()}`,
   });
-  return { success: true, processed: 1, message: "Digest diario executado manualmente para esta integracao." };
+  return {
+    success: true,
+    processed: 1,
+    message: "Digest diario executado manualmente para esta integracao.",
+  };
 }
 
 export async function runFinancialMonthStartForUser(userId: number) {
@@ -2020,7 +2457,11 @@ export async function runFinancialMonthStartForUser(userId: number) {
   await runMonthStartForIntegration(integration, {
     notificationDedupeKey: `manual-month-start:${integration.userId}:${Date.now()}`,
   });
-  return { success: true, processed: 1, message: "Inicio do mes executado manualmente para esta integracao." };
+  return {
+    success: true,
+    processed: 1,
+    message: "Inicio do mes executado manualmente para esta integracao.",
+  };
 }
 
 export async function runFinancialMonthEndForUser(userId: number) {
@@ -2028,15 +2469,25 @@ export async function runFinancialMonthEndForUser(userId: number) {
   await runMonthEndForIntegration(integration, {
     notificationDedupeKey: `manual-month-end:${integration.userId}:${Date.now()}`,
   });
-  return { success: true, processed: 1, message: "Fechamento do mes executado manualmente para esta integracao." };
+  return {
+    success: true,
+    processed: 1,
+    message: "Fechamento do mes executado manualmente para esta integracao.",
+  };
 }
 
-function getFailureTimestamp(entry: { updatedAt?: Date | null; createdAt?: Date | null }) {
+function getFailureTimestamp(entry: {
+  updatedAt?: Date | null;
+  createdAt?: Date | null;
+}) {
   return entry.updatedAt?.getTime() ?? entry.createdAt?.getTime() ?? 0;
 }
 
 function getRerunnableAutomationRoutineFromRun(
-  run: Awaited<ReturnType<typeof whatsappDb.listAssistantRuns>>[number] | null | undefined
+  run:
+    | Awaited<ReturnType<typeof whatsappDb.listAssistantRuns>>[number]
+    | null
+    | undefined
 ) {
   if (!run) return null;
   if (run.triggerType === "daily_digest") return "daily_digest" as const;
@@ -2046,7 +2497,10 @@ function getRerunnableAutomationRoutineFromRun(
 }
 
 function getRerunnableAutomationRoutineFromEvent(
-  event: Awaited<ReturnType<typeof whatsappDb.listNotificationEvents>>[number] | null | undefined
+  event:
+    | Awaited<ReturnType<typeof whatsappDb.listNotificationEvents>>[number]
+    | null
+    | undefined
 ) {
   if (!event) return null;
   if (event.type === "daily_digest") return "daily_digest" as const;
@@ -2071,10 +2525,14 @@ export async function rerunLatestOperationalFailure(userId: number) {
   ]);
 
   const failedEvents = events.filter(
-    event => event.status === "falhou" || String(event.lastError ?? "").trim().length > 0
+    event =>
+      event.status === "falhou" ||
+      String(event.lastError ?? "").trim().length > 0
   );
   const failedRuns = runs.filter(
-    run => run.status === "falhou" || String(run.errorMessage ?? "").trim().length > 0
+    run =>
+      run.status === "falhou" ||
+      String(run.errorMessage ?? "").trim().length > 0
   );
 
   const latestFailedEvent = failedEvents[0] ?? null;
@@ -2088,7 +2546,8 @@ export async function rerunLatestOperationalFailure(userId: number) {
   }
 
   const latestSource =
-    getFailureTimestamp(latestFailedRun ?? {}) >= getFailureTimestamp(latestFailedEvent ?? {})
+    getFailureTimestamp(latestFailedRun ?? {}) >=
+    getFailureTimestamp(latestFailedEvent ?? {})
       ? { kind: "run" as const, value: latestFailedRun }
       : { kind: "event" as const, value: latestFailedEvent };
 
@@ -2100,7 +2559,8 @@ export async function rerunLatestOperationalFailure(userId: number) {
   if (!rerunnableRoutine) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "A ultima falha registrada nao pertence a uma rotina automatica reprocessavel pelo painel.",
+      message:
+        "A ultima falha registrada nao pertence a uma rotina automatica reprocessavel pelo painel.",
     });
   }
 
@@ -2174,7 +2634,10 @@ export async function runFinancialDailyCron() {
   const integrations = await whatsappDb.listEnabledWhatsAppIntegrations();
   let processed = 0;
   for (const integration of integrations) {
-    const now = getPartsInTimeZone(new Date(), integration.timezone || DEFAULT_TIMEZONE);
+    const now = getPartsInTimeZone(
+      new Date(),
+      integration.timezone || DEFAULT_TIMEZONE
+    );
     if ((integration.automationHour ?? 8) !== now.hour) {
       continue;
     }
@@ -2193,7 +2656,10 @@ export async function runFinancialMonthStartCron() {
   const integrations = await whatsappDb.listEnabledWhatsAppIntegrations();
   let processed = 0;
   for (const integration of integrations) {
-    const now = getPartsInTimeZone(new Date(), integration.timezone || DEFAULT_TIMEZONE);
+    const now = getPartsInTimeZone(
+      new Date(),
+      integration.timezone || DEFAULT_TIMEZONE
+    );
     if (now.day !== 1) continue;
     const existing = await whatsappDb.getNotificationEventByDedupeKey(
       integration.id,
@@ -2210,8 +2676,14 @@ export async function runFinancialMonthEndCron() {
   const integrations = await whatsappDb.listEnabledWhatsAppIntegrations();
   let processed = 0;
   for (const integration of integrations) {
-    const now = getPartsInTimeZone(new Date(), integration.timezone || DEFAULT_TIMEZONE);
-    const tomorrow = getPartsInTimeZone(new Date(Date.now() + 24 * 60 * 60 * 1000), integration.timezone || DEFAULT_TIMEZONE);
+    const now = getPartsInTimeZone(
+      new Date(),
+      integration.timezone || DEFAULT_TIMEZONE
+    );
+    const tomorrow = getPartsInTimeZone(
+      new Date(Date.now() + 24 * 60 * 60 * 1000),
+      integration.timezone || DEFAULT_TIMEZONE
+    );
     if (tomorrow.month === now.month) continue;
     const existing = await whatsappDb.getNotificationEventByDedupeKey(
       integration.id,
@@ -2232,9 +2704,13 @@ export async function sendImmediateFinancialAlert(params: {
   dedupeKey: string;
 }) {
   const integration = await whatsappDb.getWhatsAppIntegration(params.userId);
-  if (!integration || !integration.enabled) return { success: false, skipped: true };
+  if (!integration || !integration.enabled)
+    return { success: false, skipped: true };
 
-  const existing = await whatsappDb.getNotificationEventByDedupeKey(integration.id, params.dedupeKey);
+  const existing = await whatsappDb.getNotificationEventByDedupeKey(
+    integration.id,
+    params.dedupeKey
+  );
   if (existing) return { success: true, deduped: true };
 
   const contact = await whatsappDb.upsertWhatsAppContact(params.userId, {
@@ -2243,7 +2719,11 @@ export async function sendImmediateFinancialAlert(params: {
     displayName: "Titular",
     isAuthorized: true,
   });
-  const thread = await whatsappDb.getOrCreateAssistantThread(params.userId, integration.id, contact.id);
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    params.userId,
+    integration.id,
+    contact.id
+  );
   const message = await sendOutgoingMessage({
     integration,
     contactId: contact.id,

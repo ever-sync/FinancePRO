@@ -118,14 +118,23 @@ vi.mock("./db", () => {
     deleteReserveFund: vi.fn().mockResolvedValue(undefined),
     getCalendarData: vi.fn().mockResolvedValue([]),
     getCompanyDashboardData: vi.fn().mockResolvedValue({
-      revenue: { items: [], totalGross: "10000.00", totalTax: "600.00", totalNet: "9400.00" },
+      revenue: {
+        items: [],
+        totalGross: "10000.00",
+        totalTax: "600.00",
+        totalNet: "9400.00",
+      },
       fixedCosts: { items: [], total: "3000.00" },
       variableCosts: { items: [], total: "500.00" },
       employees: { items: [], totalSalary: "3000.00", totalCost: "3823.33" },
       purchases: { items: [], total: "1000.00" },
     }),
     getPersonalDashboardData: vi.fn().mockResolvedValue({
-      settings: { proLaboreGross: "5000.00", tithePercent: "10", investmentPercent: "10" },
+      settings: {
+        proLaboreGross: "5000.00",
+        tithePercent: "10",
+        investmentPercent: "10",
+      },
       fixedCosts: { items: [], total: "2000.00" },
       variableCosts: { items: [], total: "500.00" },
       debts: { items: [], totalMonthly: "2000.00", totalBalance: "30000.00" },
@@ -177,11 +186,13 @@ describe("Settings Router", () => {
   it("upserts settings with new values", async () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(caller.settings.upsert({
-      taxPercent: "8",
-      proLaboreGross: "6000.00",
-      companyName: "Nova Empresa",
-    })).resolves.not.toThrow();
+    await expect(
+      caller.settings.upsert({
+        taxPercent: "8",
+        proLaboreGross: "6000.00",
+        companyName: "Nova Empresa",
+      })
+    ).resolves.not.toThrow();
   });
 });
 
@@ -212,14 +223,32 @@ describe("Revenues Router", () => {
   it("rejects revenue creation with empty description", async () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
-    await expect(caller.revenues.create({
-      description: "",
-      category: "Serviço",
-      grossAmount: "5000.00",
-      taxAmount: "300.00",
-      netAmount: "4700.00",
-      dueDate: "2026-03-20",
-    })).rejects.toThrow();
+    await expect(
+      caller.revenues.create({
+        description: "",
+        category: "Serviço",
+        grossAmount: "5000.00",
+        taxAmount: "300.00",
+        netAmount: "4700.00",
+        dueDate: "2026-03-20",
+      })
+    ).rejects.toThrow();
+  });
+
+  it("rejects invalid money and calendar values before reaching the database", async () => {
+    const caller = appRouter.createCaller(createAuthContext());
+
+    await expect(
+      caller.revenues.create({
+        description: "Valor invalido",
+        category: "Servico",
+        grossAmount: "-1.00",
+        taxAmount: "0.00",
+        netAmount: "-1.00",
+        dueDate: "2026-02-30",
+      })
+    ).rejects.toThrow();
+    expect(db.createRevenue).not.toHaveBeenCalled();
   });
 });
 
@@ -247,10 +276,12 @@ describe("Employees Router", () => {
       paymentDay: 7,
     });
     expect(result).toBeDefined();
-    expect(db.createEmployee).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 1,
-      paymentDay: 7,
-    }));
+    expect(db.createEmployee).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        paymentDay: 7,
+      })
+    );
   });
 });
 
@@ -267,11 +298,13 @@ describe("Variable Costs Router", () => {
       installmentCount: 6,
     });
 
-    expect(db.createCompanyVariableCost).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 1,
-      description: "Compra parcelada",
-      installmentCount: 6,
-    }));
+    expect(db.createCompanyVariableCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        description: "Compra parcelada",
+        installmentCount: 6,
+      })
+    );
   });
 
   it("creates a personal variable cost with installments", async () => {
@@ -286,11 +319,13 @@ describe("Variable Costs Router", () => {
       installmentCount: 12,
     });
 
-    expect(db.createPersonalVariableCost).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 1,
-      description: "Assinatura anual",
-      installmentCount: 12,
-    }));
+    expect(db.createPersonalVariableCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        description: "Assinatura anual",
+        installmentCount: 12,
+      })
+    );
   });
 });
 
@@ -325,6 +360,14 @@ describe("Debts Router", () => {
 });
 
 describe("Dashboard Router", () => {
+  it("rejects months outside the financial calendar", async () => {
+    const caller = appRouter.createCaller(createAuthContext());
+    await expect(
+      caller.dashboard.company({ month: 13, year: 2026 })
+    ).rejects.toThrow();
+    expect(db.getCompanyDashboardData).not.toHaveBeenCalled();
+  });
+
   it("returns company dashboard data", async () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);

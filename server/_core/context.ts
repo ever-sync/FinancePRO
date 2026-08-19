@@ -1,7 +1,9 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
+import { ENV } from "./env";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -9,28 +11,22 @@ export type TrpcContext = {
   user: User | null;
 };
 
-const supabaseUrl =
-  process.env.SUPABASE_URL ??
-  process.env.NEXT_PUBLIC_SUPABASE_URL ??
-  process.env.VITE_SUPABASE_URL ??
-  "";
-const supabaseServiceKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??
-  process.env.SUPABASE_ANON_KEY ??
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-  process.env.VITE_SUPABASE_ANON_KEY ??
-  "";
-
 let supabaseAdmin: SupabaseClient | null = null;
 
 function getSupabaseAdmin() {
   if (supabaseAdmin) return supabaseAdmin;
-  if (!supabaseUrl || !supabaseServiceKey) {
+  if (!ENV.supabaseUrl || !ENV.supabaseAuthKey) {
     return null;
   }
 
   try {
-    supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    supabaseAdmin = createClient(ENV.supabaseUrl, ENV.supabaseAuthKey, {
+      auth: {
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        persistSession: false,
+      },
+    });
     return supabaseAdmin;
   } catch (error) {
     console.error("[Auth] Failed to initialize Supabase client:", error);
@@ -38,39 +34,51 @@ function getSupabaseAdmin() {
   }
 }
 const AUTH_CACHE_TTL_MS = 30_000;
+const MAX_AUTH_CACHE_ENTRIES = 1_000;
 const authCache = new Map<string, { expiresAt: number; user: User }>();
 const pendingAuthLookups = new Map<string, Promise<User | null>>();
 
-/**
- * If there is a legacy (non-Supabase) user in the DB, migrate it to use the
- * Supabase openId. This preserves all existing data linked to that user.
- * If a new empty Supabase user was already auto-created, it gets removed first.
- */
-async function migrateExistingUserIfNeeded(supabaseOpenId: string): Promise<void> {
-  const legacyUser = await db.getLegacyUser();
-  if (!legacyUser) return;
+function getTokenCacheKey(token: string) {
+  return createHash("sha256").update(token).digest("base64url");
+}
 
-  if (legacyUser.openId === supabaseOpenId) return;
+function cacheAuthenticatedUser(cacheKey: string, user: User) {
+  const now = Date.now();
+  authCache.forEach((value, key) => {
+    if (value.expiresAt <= now) authCache.delete(key);
+  });
 
-  await db.migrateLegacyUserToSupabase(legacyUser.id, supabaseOpenId);
-  console.log(
-    `[Auth] Migrated legacy user id=${legacyUser.id} openId="${legacyUser.openId}" -> "${supabaseOpenId}"`
-  );
+  while (authCache.size >= MAX_AUTH_CACHE_ENTRIES) {
+    const oldestKey = authCache.keys().next().value;
+    if (!oldestKey) break;
+    authCache.delete(oldestKey);
+  }
+
+  authCache.set(cacheKey, {
+    expiresAt: now + AUTH_CACHE_TTL_MS,
+    user,
+  });
 }
 
 async function resolveAppUserFromToken(token: string): Promise<User | null> {
+  if (token.length < 20 || token.length > 16_384) return null;
+
   const client = getSupabaseAdmin();
   if (!client) {
-    console.warn("[Auth] Supabase client is not configured in runtime environment");
+    console.warn(
+      "[Auth] Supabase client is not configured in runtime environment"
+    );
     return null;
   }
 
-  const cached = authCache.get(token);
+  const cacheKey = getTokenCacheKey(token);
+  const cached = authCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.user;
   }
+  if (cached) authCache.delete(cacheKey);
 
-  const inFlight = pendingAuthLookups.get(token);
+  const inFlight = pendingAuthLookups.get(cacheKey);
   if (inFlight) {
     return inFlight;
   }
@@ -84,10 +92,11 @@ async function resolveAppUserFromToken(token: string): Promise<User | null> {
     if (error || !supaAuthUser) return null;
 
     const openId = supaAuthUser.id;
-    const name = supaAuthUser.user_metadata?.name || supaAuthUser.email?.split("@")[0] || "Usuario";
+    const name =
+      supaAuthUser.user_metadata?.name ||
+      supaAuthUser.email?.split("@")[0] ||
+      "Usuario";
     const email = supaAuthUser.email ?? null;
-
-    await migrateExistingUserIfNeeded(openId);
 
     await db.upsertUser({
       openId,
@@ -99,25 +108,24 @@ async function resolveAppUserFromToken(token: string): Promise<User | null> {
 
     const appUser = await db.getUserByOpenId(openId);
     if (appUser) {
-      authCache.set(token, {
-        expiresAt: Date.now() + AUTH_CACHE_TTL_MS,
-        user: appUser,
-      });
+      cacheAuthenticatedUser(cacheKey, appUser);
     }
 
     return appUser ?? null;
   })().finally(() => {
-    pendingAuthLookups.delete(token);
+    pendingAuthLookups.delete(cacheKey);
   });
 
-  pendingAuthLookups.set(token, lookup);
+  pendingAuthLookups.set(cacheKey, lookup);
   return lookup;
 }
 
 async function authenticateSupabaseRequest(
   req: CreateExpressContextOptions["req"]
 ): Promise<User | null> {
-  const authHeader = (req.headers as Record<string, string | undefined>)["authorization"];
+  const authHeader = (req.headers as Record<string, string | undefined>)[
+    "authorization"
+  ];
   if (!authHeader?.startsWith("Bearer ")) return null;
 
   const token = authHeader.slice(7);

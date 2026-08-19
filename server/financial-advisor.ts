@@ -7,34 +7,18 @@ import {
   type FinancialAssistantIntent,
 } from "./_core/financialAssistantIntent";
 import * as db from "./db";
-import * as asaas from "./asaas";
-import * as asaasDb from "./db/asaas";
 import * as advisorDb from "./db/financial-advisor";
 import * as whatsappDb from "./db/whatsapp";
 
 type AnyRecord = Record<string, any>;
 
-export type AsaasChargeFollowUpItem = {
-  id: number;
-  asaasChargeId: string;
+export type RevenueFollowUpTarget = {
+  revenueId: number;
   description: string;
-  billingType: string;
+  clientName?: string | null;
   status: string;
   dueDate: string;
   value: number;
-  invoiceUrl?: string | null;
-  bankSlipUrl?: string | null;
-  pixQrCodeUrl?: string | null;
-  pixCopyAndPaste?: string | null;
-};
-
-export type AsaasChargeCreationTarget = {
-  revenueId: number;
-  description: string;
-  clientName: string;
-  dueDate: string;
-  value: number;
-  billingType: "PIX" | "BOLETO";
 };
 
 export type RevenueReceiptTarget = {
@@ -81,7 +65,6 @@ export type FinancialRecommendation = {
   kind:
     | "freeze_discretionary"
     | "charge_follow_up"
-    | "create_asaas_charge"
     | "register_revenue_receipt"
     | "renegotiate_debt"
     | "transfer_company_reserve"
@@ -297,13 +280,14 @@ type FinancialAdvisorContext = {
   debts: AnyRecord[];
   investments: AnyRecord[];
   reserveFunds: AnyRecord[];
-  asaasCharges: AnyRecord[];
+  receivables: AnyRecord[];
 };
 
 const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 
 function toNumber(value: string | number | null | undefined) {
-  const parsed = typeof value === "string" ? Number.parseFloat(value) : Number(value ?? 0);
+  const parsed =
+    typeof value === "string" ? Number.parseFloat(value) : Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -312,7 +296,10 @@ function clampCurrency(value: number) {
 }
 
 function clampPercent(value: number) {
-  return Math.max(0, Math.min(100, Math.round(Number.isFinite(value) ? value : 0)));
+  return Math.max(
+    0,
+    Math.min(100, Math.round(Number.isFinite(value) ? value : 0))
+  );
 }
 
 function average(values: number[]) {
@@ -375,7 +362,10 @@ function buildIsoDate(year: number, month: number, day: number) {
 
 function daysRemainingInMonth(referenceDate: Date, timeZone: string) {
   const parts = getPartsInTimeZone(referenceDate, timeZone);
-  return Math.max(getLastDayOfMonth(parts.year, parts.month) - parts.day + 1, 1);
+  return Math.max(
+    getLastDayOfMonth(parts.year, parts.month) - parts.day + 1,
+    1
+  );
 }
 
 function buildSummary(snapshot: Omit<FinancialGovernanceSnapshot, "summary">) {
@@ -399,7 +389,8 @@ function buildOnboardingStep(params: {
 }) {
   const completedItems = params.checklist.filter(item => item.completed).length;
   const totalItems = params.checklist.length;
-  const progressPercent = totalItems > 0 ? clampPercent((completedItems / totalItems) * 100) : 0;
+  const progressPercent =
+    totalItems > 0 ? clampPercent((completedItems / totalItems) * 100) : 0;
   const status =
     completedItems === totalItems
       ? ("complete" as const)
@@ -429,7 +420,9 @@ function parseActionMetadata(value?: string | null) {
   if (!value) return {} as AnyRecord;
   try {
     const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" ? (parsed as AnyRecord) : ({} as AnyRecord);
+    return parsed && typeof parsed === "object"
+      ? (parsed as AnyRecord)
+      : ({} as AnyRecord);
   } catch {
     return {} as AnyRecord;
   }
@@ -439,16 +432,20 @@ function buildExecutedActionMetadata(base: AnyRecord, extra: AnyRecord) {
   return JSON.stringify({
     ...base,
     execution: {
-      ...(base.execution && typeof base.execution === "object" ? base.execution : {}),
+      ...(base.execution && typeof base.execution === "object"
+        ? base.execution
+        : {}),
       ...extra,
     },
   });
 }
 
-function isActionablePaymentPriorityItem(item?: Pick<
-  PaymentPriorityItem,
-  "sourceId" | "sourceType" | "actionable"
-> | null) {
+function isActionablePaymentPriorityItem(
+  item?: Pick<
+    PaymentPriorityItem,
+    "sourceId" | "sourceType" | "actionable"
+  > | null
+) {
   return Boolean(
     item &&
       item.actionable !== false &&
@@ -459,7 +456,9 @@ function isActionablePaymentPriorityItem(item?: Pick<
   );
 }
 
-function normalizePaymentPriorityItem(value?: AnyRecord | null): PaymentPriorityItem | null {
+function normalizePaymentPriorityItem(
+  value?: AnyRecord | null
+): PaymentPriorityItem | null {
   if (!value || typeof value !== "object") return null;
 
   const sourceId =
@@ -469,7 +468,9 @@ function normalizePaymentPriorityItem(value?: AnyRecord | null): PaymentPriority
         ? Number(value.sourceId)
         : null;
   const sourceType =
-    typeof value.sourceType === "string" ? (value.sourceType as PaymentPrioritySourceType) : null;
+    typeof value.sourceType === "string"
+      ? (value.sourceType as PaymentPrioritySourceType)
+      : null;
 
   return {
     id: String(value.id ?? ""),
@@ -491,124 +492,82 @@ function normalizePaymentPriorityItem(value?: AnyRecord | null): PaymentPriority
       value.urgency === "planned"
         ? value.urgency
         : "planned",
-    recommendedAction: String(value.recommendedAction ?? "Acompanhar no calendario do mes."),
+    recommendedAction: String(
+      value.recommendedAction ?? "Acompanhar no calendario do mes."
+    ),
     sourceId,
     sourceType,
-    actionable: value.actionable !== false && Boolean(sourceId && sourceType && sourceType !== "employee_payroll"),
+    actionable:
+      value.actionable !== false &&
+      Boolean(sourceId && sourceType && sourceType !== "employee_payroll"),
   };
 }
 
-function findFirstActionablePaymentPriorityItem(paymentPriority: PaymentPriorityItem[]) {
-  return paymentPriority.find(item => isActionablePaymentPriorityItem(item)) ?? null;
+function findFirstActionablePaymentPriorityItem(
+  paymentPriority: PaymentPriorityItem[]
+) {
+  return (
+    paymentPriority.find(item => isActionablePaymentPriorityItem(item)) ?? null
+  );
 }
 
-function normalizeAsaasChargeFollowUpItem(value?: AnyRecord | null): AsaasChargeFollowUpItem | null {
+function normalizeRevenueFollowUpTarget(
+  value?: AnyRecord | null
+): RevenueFollowUpTarget | null {
   if (!value || typeof value !== "object") return null;
-  const id = Number(value.id);
-  if (!Number.isFinite(id) || id <= 0) return null;
-
-  return {
-    id,
-    asaasChargeId: String(value.asaasChargeId ?? ""),
-    description: String(value.description ?? "Cobranca Asaas"),
-    billingType: String(value.billingType ?? "PIX"),
-    status: String(value.status ?? "PENDING"),
-    dueDate: String(value.dueDate ?? ""),
-    value: clampCurrency(toNumber(value.value ?? 0)),
-    invoiceUrl: value.invoiceUrl ? String(value.invoiceUrl) : null,
-    bankSlipUrl: value.bankSlipUrl ? String(value.bankSlipUrl) : null,
-    pixQrCodeUrl: value.pixQrCodeUrl ? String(value.pixQrCodeUrl) : null,
-    pixCopyAndPaste: value.pixCopyAndPaste ? String(value.pixCopyAndPaste) : null,
-  };
-}
-
-function pickChargeFollowUpTarget(charges: AnyRecord[]) {
-  return charges
-    .map(charge => normalizeAsaasChargeFollowUpItem(charge))
-    .filter((charge): charge is AsaasChargeFollowUpItem => Boolean(charge))
-    .filter(charge => {
-      const status = charge.status.toUpperCase();
-      return status === "OVERDUE" || status === "PENDING" || status === "CONFIRMED";
-    })
-    .sort((left, right) => {
-      const priority = (status: string) => {
-        const normalized = status.toUpperCase();
-        if (normalized === "OVERDUE") return 0;
-        if (normalized === "PENDING") return 1;
-        if (normalized === "CONFIRMED") return 2;
-        return 3;
-      };
-
-      if (priority(left.status) !== priority(right.status)) {
-        return priority(left.status) - priority(right.status);
-      }
-
-      return String(left.dueDate || "").localeCompare(String(right.dueDate || ""));
-    })[0] ?? null;
-}
-
-function normalizeTextToken(value?: string | null) {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-function normalizeAsaasChargeCreationTarget(value?: AnyRecord | null): AsaasChargeCreationTarget | null {
-  if (!value || typeof value !== "object") return null;
-  const revenueId = Number(value.revenueId);
+  const revenueId = Number(value.revenueId ?? value.id);
   if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
-
-  const clientName = String(value.clientName ?? "").trim();
-  if (!clientName) return null;
 
   const dueDate = String(value.dueDate ?? "").trim();
   if (!dueDate) return null;
+  const clientName = value.clientName ?? value.client ?? null;
 
   return {
     revenueId,
     description: String(value.description ?? "Receita pendente"),
-    clientName,
+    clientName: clientName ? String(clientName) : null,
+    status: String(value.status ?? "pendente"),
     dueDate,
-    value: clampCurrency(toNumber(value.value ?? 0)),
-    billingType: String(value.billingType ?? "PIX").toUpperCase() === "BOLETO" ? "BOLETO" : "PIX",
+    value: clampCurrency(
+      toNumber(value.value ?? value.netAmount ?? value.grossAmount ?? 0)
+    ),
   };
 }
 
-function pickChargeCreationTarget(revenues: AnyRecord[]) {
-  return revenues
-    .map<AsaasChargeCreationTarget | null>(revenue => {
-      const revenueId = Number(revenue.id);
-      const clientName = String(revenue.client ?? "").trim();
-      const asaasPaymentId = String(revenue.asaasPaymentId ?? "").trim();
-      const status = String(revenue.status ?? "").toLowerCase();
-      const dueDate = String(revenue.dueDate ?? "").trim();
-      const value = clampCurrency(toNumber(revenue.grossAmount ?? revenue.netAmount ?? 0));
-      if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
-      if (!clientName || !dueDate || value <= 0) return null;
-      if (asaasPaymentId) return null;
-      if (status === "recebido" || status === "cancelado") return null;
+function pickChargeFollowUpTarget(
+  revenues: AnyRecord[],
+  referenceDate?: string
+) {
+  return (
+    revenues
+      .map(revenue => normalizeRevenueFollowUpTarget(revenue))
+      .filter((revenue): revenue is RevenueFollowUpTarget => Boolean(revenue))
+      .filter(revenue => {
+        const status = revenue.status.toLowerCase();
+        return status !== "recebido" && status !== "cancelado";
+      })
+      .sort((left, right) => {
+        const priority = (item: RevenueFollowUpTarget) => {
+          const status = item.status.toLowerCase();
+          if (status.includes("atras")) return 0;
+          if (referenceDate && item.dueDate < referenceDate) return 0;
+          return 1;
+        };
 
-      return {
-        revenueId,
-        description: String(revenue.description ?? "Receita pendente"),
-        clientName,
-        dueDate,
-        value,
-        billingType: "PIX",
-      };
-    })
-    .filter((item): item is AsaasChargeCreationTarget => Boolean(item))
-    .sort((left, right) => {
-      const leftDue = parseIsoDate(left.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      const rightDue = parseIsoDate(right.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      if (leftDue !== rightDue) return leftDue - rightDue;
-      return right.value - left.value;
-    })[0] ?? null;
+        if (priority(left) !== priority(right)) {
+          return priority(left) - priority(right);
+        }
+
+        return String(left.dueDate || "").localeCompare(
+          String(right.dueDate || "")
+        );
+      })[0] ?? null
+  );
 }
 
-function normalizeRevenueReceiptTarget(value?: AnyRecord | null): RevenueReceiptTarget | null {
+function normalizeRevenueReceiptTarget(
+  value?: AnyRecord | null
+): RevenueReceiptTarget | null {
   if (!value || typeof value !== "object") return null;
   const revenueId = Number(value.revenueId);
   if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
@@ -625,40 +584,52 @@ function normalizeRevenueReceiptTarget(value?: AnyRecord | null): RevenueReceipt
   };
 }
 
-function pickRevenueReceiptTarget(revenues: AnyRecord[], referenceDate: string) {
-  return revenues
-    .map<RevenueReceiptTarget | null>(revenue => {
-      const revenueId = Number(revenue.id);
-      const status = String(revenue.status ?? "").toLowerCase();
-      const dueDate = String(revenue.dueDate ?? "").trim();
-      if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
-      if (!dueDate) return null;
-      if (status === "recebido" || status === "cancelado") return null;
-      if (String(revenue.receivedDate ?? "").trim()) return null;
+function pickRevenueReceiptTarget(
+  revenues: AnyRecord[],
+  referenceDate: string
+) {
+  return (
+    revenues
+      .map<RevenueReceiptTarget | null>(revenue => {
+        const revenueId = Number(revenue.id);
+        const status = String(revenue.status ?? "").toLowerCase();
+        const dueDate = String(revenue.dueDate ?? "").trim();
+        if (!Number.isFinite(revenueId) || revenueId <= 0) return null;
+        if (!dueDate) return null;
+        if (status === "recebido" || status === "cancelado") return null;
+        if (String(revenue.receivedDate ?? "").trim()) return null;
 
-      return {
-        revenueId,
-        description: String(revenue.description ?? "Receita pendente"),
-        clientName: revenue.client ? String(revenue.client) : null,
-        dueDate,
-        value: clampCurrency(toNumber(revenue.netAmount ?? revenue.grossAmount ?? 0)),
-      };
-    })
-    .filter((item): item is RevenueReceiptTarget => Boolean(item))
-    .filter(item => item.value > 0 && item.dueDate <= referenceDate)
-    .sort((left, right) => {
-      if (left.dueDate !== right.dueDate) return left.dueDate.localeCompare(right.dueDate);
-      return right.value - left.value;
-    })[0] ?? null;
+        return {
+          revenueId,
+          description: String(revenue.description ?? "Receita pendente"),
+          clientName: revenue.client ? String(revenue.client) : null,
+          dueDate,
+          value: clampCurrency(
+            toNumber(revenue.netAmount ?? revenue.grossAmount ?? 0)
+          ),
+        };
+      })
+      .filter((item): item is RevenueReceiptTarget => Boolean(item))
+      .filter(item => item.value > 0 && item.dueDate <= referenceDate)
+      .sort((left, right) => {
+        if (left.dueDate !== right.dueDate)
+          return left.dueDate.localeCompare(right.dueDate);
+        return right.value - left.value;
+      })[0] ?? null
+  );
 }
 
-function normalizeDebtRenegotiationTarget(value?: AnyRecord | null): DebtRenegotiationTarget | null {
+function normalizeDebtRenegotiationTarget(
+  value?: AnyRecord | null
+): DebtRenegotiationTarget | null {
   if (!value || typeof value !== "object") return null;
   const debtId = Number(value.debtId);
   if (!Number.isFinite(debtId) || debtId <= 0) return null;
 
   const priority =
-    value.priority === "alta" || value.priority === "baixa" ? value.priority : "media";
+    value.priority === "alta" || value.priority === "baixa"
+      ? value.priority
+      : "media";
 
   return {
     debtId,
@@ -672,53 +643,72 @@ function normalizeDebtRenegotiationTarget(value?: AnyRecord | null): DebtRenegot
 }
 
 function pickDebtRenegotiationTarget(debts: AnyRecord[]) {
-  return debts
-    .map<DebtRenegotiationTarget | null>(debt => {
-      const debtId = Number(debt.id);
-      if (!Number.isFinite(debtId) || debtId <= 0) return null;
-      const status = String(debt.status ?? "ativa");
-      if (status === "quitada" || status === "renegociada") return null;
+  return (
+    debts
+      .map<DebtRenegotiationTarget | null>(debt => {
+        const debtId = Number(debt.id);
+        if (!Number.isFinite(debtId) || debtId <= 0) return null;
+        const status = String(debt.status ?? "ativa");
+        if (status === "quitada" || status === "renegociada") return null;
 
-      return {
-        debtId,
-        creditor: String(debt.creditor ?? ""),
-        description: String(debt.description ?? debt.creditor ?? "Divida pressionada"),
-        currentBalance: clampCurrency(toNumber(debt.currentBalance ?? 0)),
-        monthlyPayment: clampCurrency(toNumber(debt.monthlyPayment ?? 0)),
-        priority: debt.priority === "alta" || debt.priority === "baixa" ? debt.priority : "media",
-        status,
-      };
-    })
-    .filter((item): item is DebtRenegotiationTarget => Boolean(item))
-    .filter(item => item.currentBalance > 0)
-    .sort((left, right) => {
-      const priorityWeight = (value: DebtRenegotiationTarget["priority"]) =>
-        value === "alta" ? 0 : value === "media" ? 1 : 2;
-      const statusWeight = (value: string) => (value === "atrasada" ? 0 : 1);
-      if (statusWeight(left.status) !== statusWeight(right.status)) {
-        return statusWeight(left.status) - statusWeight(right.status);
-      }
-      if (priorityWeight(left.priority) !== priorityWeight(right.priority)) {
-        return priorityWeight(left.priority) - priorityWeight(right.priority);
-      }
-      return right.currentBalance - left.currentBalance;
-    })[0] ?? null;
+        return {
+          debtId,
+          creditor: String(debt.creditor ?? ""),
+          description: String(
+            debt.description ?? debt.creditor ?? "Divida pressionada"
+          ),
+          currentBalance: clampCurrency(toNumber(debt.currentBalance ?? 0)),
+          monthlyPayment: clampCurrency(toNumber(debt.monthlyPayment ?? 0)),
+          priority:
+            debt.priority === "alta" || debt.priority === "baixa"
+              ? debt.priority
+              : "media",
+          status,
+        };
+      })
+      .filter((item): item is DebtRenegotiationTarget => Boolean(item))
+      .filter(item => item.currentBalance > 0)
+      .sort((left, right) => {
+        const priorityWeight = (value: DebtRenegotiationTarget["priority"]) =>
+          value === "alta" ? 0 : value === "media" ? 1 : 2;
+        const statusWeight = (value: string) => (value === "atrasada" ? 0 : 1);
+        if (statusWeight(left.status) !== statusWeight(right.status)) {
+          return statusWeight(left.status) - statusWeight(right.status);
+        }
+        if (priorityWeight(left.priority) !== priorityWeight(right.priority)) {
+          return priorityWeight(left.priority) - priorityWeight(right.priority);
+        }
+        return right.currentBalance - left.currentBalance;
+      })[0] ?? null
+  );
 }
 
 function buildTopRecommendations(args: {
   snapshotBase: Omit<FinancialGovernanceSnapshot, "summary">;
   companyVariableRatio: number;
   personalVariableRatio: number;
-  asaasCharges: AnyRecord[];
   companyRevenues: AnyRecord[];
   debts: AnyRecord[];
 }) {
-  const { snapshotBase, companyVariableRatio, personalVariableRatio, asaasCharges, companyRevenues, debts } = args;
+  const {
+    snapshotBase,
+    companyVariableRatio,
+    personalVariableRatio,
+    companyRevenues,
+    debts,
+  } = args;
   const recommendations: FinancialRecommendation[] = [];
-  const actionablePriority = findFirstActionablePaymentPriorityItem(snapshotBase.paymentPriority);
-  const chargeTarget = pickChargeFollowUpTarget(asaasCharges);
-  const chargeCreationTarget = pickChargeCreationTarget(companyRevenues);
-  const revenueReceiptTarget = pickRevenueReceiptTarget(companyRevenues, snapshotBase.referenceDate);
+  const actionablePriority = findFirstActionablePaymentPriorityItem(
+    snapshotBase.paymentPriority
+  );
+  const chargeTarget = pickChargeFollowUpTarget(
+    companyRevenues,
+    snapshotBase.referenceDate
+  );
+  const revenueReceiptTarget = pickRevenueReceiptTarget(
+    companyRevenues,
+    snapshotBase.referenceDate
+  );
   const debtRenegotiationTarget = pickDebtRenegotiationTarget(debts);
 
   if (snapshotBase.counts.overdueItems > 0) {
@@ -739,14 +729,17 @@ function buildTopRecommendations(args: {
     });
   }
 
-  if (snapshotBase.counts.overdueCharges > 0 || snapshotBase.counts.pendingCharges > 0) {
+  if (
+    snapshotBase.counts.overdueCharges > 0 ||
+    snapshotBase.counts.pendingCharges > 0
+  ) {
     recommendations.push({
       kind: "charge_follow_up",
-      title: "Atuar nas cobranças abertas do Asaas",
-      description: `Há ${snapshotBase.counts.pendingCharges} cobrança(s) pendente(s) e ${snapshotBase.counts.overdueCharges} em atraso pedindo acompanhamento.`,
+      title: "Cobrar recebimentos em aberto",
+      description: `Há ${snapshotBase.counts.pendingCharges} recebimento(s) pendente(s) e ${snapshotBase.counts.overdueCharges} em atraso pedindo acompanhamento manual.`,
       metadata: chargeTarget
         ? {
-            targetCharge: chargeTarget,
+            targetRevenue: chargeTarget,
             pendingCharges: snapshotBase.counts.pendingCharges,
             overdueCharges: snapshotBase.counts.overdueCharges,
           }
@@ -754,17 +747,6 @@ function buildTopRecommendations(args: {
             pendingCharges: snapshotBase.counts.pendingCharges,
             overdueCharges: snapshotBase.counts.overdueCharges,
           },
-    });
-  }
-
-  if (chargeCreationTarget) {
-    recommendations.push({
-      kind: "create_asaas_charge",
-      title: "Gerar cobranca Asaas para receita pendente",
-      description: `A receita ${chargeCreationTarget.description} de ${chargeCreationTarget.clientName} ainda nao virou cobranca automatizada.`,
-      metadata: {
-        targetRevenue: chargeCreationTarget,
-      },
     });
   }
 
@@ -794,7 +776,8 @@ function buildTopRecommendations(args: {
     recommendations.push({
       kind: "transfer_company_reserve",
       title: "Separar valor para reserva da empresa",
-      description: "O caixa do mês comporta uma recomposição parcial da reserva empresarial sem comprometer os vencimentos.",
+      description:
+        "O caixa do mês comporta uma recomposição parcial da reserva empresarial sem comprometer os vencimentos.",
       amount: snapshotBase.companyReserveRecommendation,
       requiresConfirmation: true,
       metadata: { target: "empresa" },
@@ -805,7 +788,8 @@ function buildTopRecommendations(args: {
     recommendations.push({
       kind: "transfer_personal_reserve",
       title: "Separar valor para reserva pessoal",
-      description: "Há espaço para reforçar a reserva pessoal depois das obrigações protegidas do mês.",
+      description:
+        "Há espaço para reforçar a reserva pessoal depois das obrigações protegidas do mês.",
       amount: snapshotBase.personalReserveRecommendation,
       requiresConfirmation: true,
       metadata: { target: "pessoal" },
@@ -816,7 +800,8 @@ function buildTopRecommendations(args: {
     recommendations.push({
       kind: "freeze_discretionary",
       title: "Congelar gastos discricionários",
-      description: "O limite seguro do mês foi consumido; novos gastos só deveriam entrar com compensação clara.",
+      description:
+        "O limite seguro do mês foi consumido; novos gastos só deveriam entrar com compensação clara.",
     });
   }
 
@@ -824,7 +809,8 @@ function buildTopRecommendations(args: {
     recommendations.push({
       kind: "protect_tax_provision",
       title: "Proteger provisão de impostos",
-      description: "Mantenha a provisão tributária intocada até o fechamento do ciclo financeiro da empresa.",
+      description:
+        "Mantenha a provisão tributária intocada até o fechamento do ciclo financeiro da empresa.",
       amount: snapshotBase.taxProvision,
     });
   }
@@ -833,7 +819,8 @@ function buildTopRecommendations(args: {
     recommendations.push({
       kind: "review_variable_costs",
       title: "Revisar custos variáveis do mês",
-      description: "O peso dos gastos variáveis está acima do ideal para o momento do caixa e merece corte ou adiamento.",
+      description:
+        "O peso dos gastos variáveis está acima do ideal para o momento do caixa e merece corte ou adiamento.",
       metadata: { companyVariableRatio, personalVariableRatio },
     });
   }
@@ -859,26 +846,34 @@ function getDecisionSummary(
   const amountLabel = `R$ ${clampCurrency(amount).toFixed(2)}`;
 
   if (kind === "withdrawal") {
-    if (tone === "healthy") return `Retirar ${amountLabel} parece viavel hoje sem estourar a folga operacional da empresa.`;
-    if (tone === "attention") return `Retirar ${amountLabel} e possivel, mas ja pressiona a folga da empresa e pede mais disciplina no mes.`;
+    if (tone === "healthy")
+      return `Retirar ${amountLabel} parece viavel hoje sem estourar a folga operacional da empresa.`;
+    if (tone === "attention")
+      return `Retirar ${amountLabel} e possivel, mas ja pressiona a folga da empresa e pede mais disciplina no mes.`;
     return `Retirar ${amountLabel} agora aumenta demais o risco e tende a apertar o caixa operacional.`;
   }
 
   if (kind === "personal_spend") {
-    if (tone === "healthy") return `Esse gasto extra de ${amountLabel} cabe no plano atual sem desorganizar o mes.`;
-    if (tone === "attention") return `Esse gasto extra de ${amountLabel} consome boa parte da folga pessoal e merece cautela.`;
+    if (tone === "healthy")
+      return `Esse gasto extra de ${amountLabel} cabe no plano atual sem desorganizar o mes.`;
+    if (tone === "attention")
+      return `Esse gasto extra de ${amountLabel} consome boa parte da folga pessoal e merece cautela.`;
     return `Esse gasto extra de ${amountLabel} tende a furar a folga do mes e reduzir sua seguranca financeira.`;
   }
 
   if (kind === "monthly_cost") {
-    if (tone === "healthy") return `Assumir ${amountLabel}/mes como novo custo parece suportavel no cenario atual.`;
-    if (tone === "attention") return `Adicionar ${amountLabel}/mes ja encurta bastante a folga de caixa e pede validacao extra.`;
+    if (tone === "healthy")
+      return `Assumir ${amountLabel}/mes como novo custo parece suportavel no cenario atual.`;
+    if (tone === "attention")
+      return `Adicionar ${amountLabel}/mes ja encurta bastante a folga de caixa e pede validacao extra.`;
     return `Adicionar ${amountLabel}/mes agora deixa o plano muito apertado e aumenta o risco do caixa.`;
   }
 
   if (kind === "hiring") {
-    if (tone === "healthy") return `Contratar com um impacto mensal de ${amountLabel} parece viavel sem apertar demais o caixa da empresa.`;
-    if (tone === "attention") return `Essa contratacao de ${amountLabel}/mes e possivel, mas ja encurta a folga e pede acompanhamento proximo.`;
+    if (tone === "healthy")
+      return `Contratar com um impacto mensal de ${amountLabel} parece viavel sem apertar demais o caixa da empresa.`;
+    if (tone === "attention")
+      return `Essa contratacao de ${amountLabel}/mes e possivel, mas ja encurta a folga e pede acompanhamento proximo.`;
     return `Essa contratacao de ${amountLabel}/mes aumenta demais a pressao sobre o caixa para o momento atual.`;
   }
 
@@ -896,8 +891,10 @@ function getDecisionSummary(
     return `Parcelar ${totalLabel} em ${months}x de ${parcelLabel} aperta demais o fluxo para o momento atual.`;
   }
 
-  if (tone === "healthy") return `Tirar ${amountLabel}/mes da empresa de forma recorrente parece suportavel no cenario atual.`;
-  if (tone === "attention") return `Tirar ${amountLabel}/mes da empresa de forma recorrente exige mais disciplina para nao encurtar demais a folga.`;
+  if (tone === "healthy")
+    return `Tirar ${amountLabel}/mes da empresa de forma recorrente parece suportavel no cenario atual.`;
+  if (tone === "attention")
+    return `Tirar ${amountLabel}/mes da empresa de forma recorrente exige mais disciplina para nao encurtar demais a folga.`;
   return `Tirar ${amountLabel}/mes da empresa de forma recorrente agora aumenta demais o risco do caixa.`;
 }
 
@@ -914,7 +911,11 @@ function buildDecisionAssessment(args: {
 }) {
   const amount = clampCurrency(Math.max(args.amount, 0));
   const consumptionPercent =
-    args.headroom > 0 ? clampPercent((amount / args.headroom) * 100) : amount > 0 ? 100 : 0;
+    args.headroom > 0
+      ? clampPercent((amount / args.headroom) * 100)
+      : amount > 0
+        ? 100
+        : 0;
 
   let tone: FinancialGovernanceSnapshot["cashRiskLevel"] =
     amount <= 0
@@ -953,32 +954,54 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     recurringWithdrawalAmount?: number;
   }
 ): FinancialDecisionScenarioSet {
-  const withdrawalAmount = clampCurrency(Math.max(input?.withdrawalAmount ?? 0, 0));
-  const personalSpendAmount = clampCurrency(Math.max(input?.personalSpendAmount ?? 0, 0));
-  const monthlyCostAmount = clampCurrency(Math.max(input?.monthlyCostAmount ?? 0, 0));
-  const hiringCostAmount = clampCurrency(Math.max(input?.hiringCostAmount ?? 0, 0));
-  const installmentPurchaseAmount = clampCurrency(Math.max(input?.installmentPurchaseAmount ?? 0, 0));
-  const installmentPurchaseMonths = Math.max(Math.round(input?.installmentPurchaseMonths ?? 12), 1);
-  const recurringWithdrawalAmount = clampCurrency(Math.max(input?.recurringWithdrawalAmount ?? 0, 0));
+  const withdrawalAmount = clampCurrency(
+    Math.max(input?.withdrawalAmount ?? 0, 0)
+  );
+  const personalSpendAmount = clampCurrency(
+    Math.max(input?.personalSpendAmount ?? 0, 0)
+  );
+  const monthlyCostAmount = clampCurrency(
+    Math.max(input?.monthlyCostAmount ?? 0, 0)
+  );
+  const hiringCostAmount = clampCurrency(
+    Math.max(input?.hiringCostAmount ?? 0, 0)
+  );
+  const installmentPurchaseAmount = clampCurrency(
+    Math.max(input?.installmentPurchaseAmount ?? 0, 0)
+  );
+  const installmentPurchaseMonths = Math.max(
+    Math.round(input?.installmentPurchaseMonths ?? 12),
+    1
+  );
+  const recurringWithdrawalAmount = clampCurrency(
+    Math.max(input?.recurringWithdrawalAmount ?? 0, 0)
+  );
 
   const companyHeadroom = clampCurrency(
     Math.max(
-      snapshot.guardrails.company.projectedCash - snapshot.guardrails.company.reserveRecommendation,
+      snapshot.guardrails.company.projectedCash -
+        snapshot.guardrails.company.reserveRecommendation,
       0
     )
   );
   const personalHeadroom = clampCurrency(
     Math.max(
-      snapshot.guardrails.personal.projectedCash - snapshot.guardrails.personal.reserveRecommendation,
+      snapshot.guardrails.personal.projectedCash -
+        snapshot.guardrails.personal.reserveRecommendation,
       0
     )
   );
   const totalHeadroom = clampCurrency(Math.max(snapshot.safeToSpendMonth, 0));
   const personalUsable = clampCurrency(
-    Math.min(personalHeadroom > 0 ? personalHeadroom : totalHeadroom, totalHeadroom)
+    Math.min(
+      personalHeadroom > 0 ? personalHeadroom : totalHeadroom,
+      totalHeadroom
+    )
   );
   const installmentMonthlyAmount = clampCurrency(
-    installmentPurchaseMonths > 0 ? installmentPurchaseAmount / installmentPurchaseMonths : installmentPurchaseAmount
+    installmentPurchaseMonths > 0
+      ? installmentPurchaseAmount / installmentPurchaseMonths
+      : installmentPurchaseAmount
   );
   const employeeCostBase = snapshot.guardrails.company.employeeCosts;
   const companyNetRevenue = Math.max(snapshot.guardrails.company.netRevenue, 0);
@@ -992,7 +1015,11 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     attentionLimit: 100,
     note: "A leitura usa a folga operacional estimada da empresa neste mes, depois da recomendacao de reserva.",
     metrics: [
-      { label: "Folga operacional atual", value: companyHeadroom, format: "currency" },
+      {
+        label: "Folga operacional atual",
+        value: companyHeadroom,
+        format: "currency",
+      },
       {
         label: "Folga apos retirada",
         value: clampCurrency(Math.max(companyHeadroom - withdrawalAmount, 0)),
@@ -1000,7 +1027,9 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
       },
       {
         label: "Caixa projetado empresa",
-        value: clampCurrency(snapshot.guardrails.company.projectedCash - withdrawalAmount),
+        value: clampCurrency(
+          snapshot.guardrails.company.projectedCash - withdrawalAmount
+        ),
         format: "currency",
       },
       {
@@ -1020,16 +1049,28 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     attentionLimit: 100,
     note: "A simulacao cruza sua folga pessoal com o limite seguro total do mes para nao te enganar pelo saldo bruto.",
     metrics: [
-      { label: "Folga pessoal atual", value: personalHeadroom, format: "currency" },
-      { label: "Limite seguro do mes", value: totalHeadroom, format: "currency" },
+      {
+        label: "Folga pessoal atual",
+        value: personalHeadroom,
+        format: "currency",
+      },
+      {
+        label: "Limite seguro do mes",
+        value: totalHeadroom,
+        format: "currency",
+      },
       {
         label: "Folga pessoal apos gasto",
-        value: clampCurrency(Math.max(personalHeadroom - personalSpendAmount, 0)),
+        value: clampCurrency(
+          Math.max(personalHeadroom - personalSpendAmount, 0)
+        ),
         format: "currency",
       },
       {
         label: "Caixa pessoal projetado",
-        value: clampCurrency(snapshot.guardrails.personal.projectedCash - personalSpendAmount),
+        value: clampCurrency(
+          snapshot.guardrails.personal.projectedCash - personalSpendAmount
+        ),
         format: "currency",
       },
     ],
@@ -1046,15 +1087,23 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     metrics: [
       {
         label: "Caixa projetado apos custo",
-        value: clampCurrency(snapshot.guardrails.company.projectedCash - monthlyCostAmount),
+        value: clampCurrency(
+          snapshot.guardrails.company.projectedCash - monthlyCostAmount
+        ),
         format: "currency",
       },
       {
         label: "Limite seguro apos custo",
-        value: clampCurrency(Math.max(snapshot.safeToSpendMonth - monthlyCostAmount, 0)),
+        value: clampCurrency(
+          Math.max(snapshot.safeToSpendMonth - monthlyCostAmount, 0)
+        ),
         format: "currency",
       },
-      { label: "Folga operacional atual", value: companyHeadroom, format: "currency" },
+      {
+        label: "Folga operacional atual",
+        value: companyHeadroom,
+        format: "currency",
+      },
       {
         label: "Reforco de reserva previsto",
         value: snapshot.guardrails.company.reserveRecommendation,
@@ -1072,7 +1121,11 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     attentionLimit: 60,
     note: "Essa leitura trata a contratacao como um compromisso mensal continuo e pesa mais a disciplina do caixa operacional.",
     metrics: [
-      { label: "Custo mensal da contratacao", value: hiringCostAmount, format: "currency" },
+      {
+        label: "Custo mensal da contratacao",
+        value: hiringCostAmount,
+        format: "currency",
+      },
       {
         label: "Folga apos contratacao",
         value: clampCurrency(Math.max(companyHeadroom - hiringCostAmount, 0)),
@@ -1087,7 +1140,10 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
         label: "Peso da folha na receita liquida",
         value:
           companyNetRevenue > 0
-            ? clampPercent(((employeeCostBase + hiringCostAmount) / companyNetRevenue) * 100)
+            ? clampPercent(
+                ((employeeCostBase + hiringCostAmount) / companyNetRevenue) *
+                  100
+              )
             : 100,
         format: "percent",
       },
@@ -1103,12 +1159,26 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     attentionLimit: 60,
     note: "A compra parcelada entra na analise pelo peso da parcela mensal, nao pelo valor cheio, para refletir o impacto real do fluxo.",
     metrics: [
-      { label: "Valor total da compra", value: installmentPurchaseAmount, format: "currency" },
-      { label: "Parcela mensal", value: installmentMonthlyAmount, format: "currency" },
-      { label: "Quantidade de parcelas", value: installmentPurchaseMonths, format: "number" },
+      {
+        label: "Valor total da compra",
+        value: installmentPurchaseAmount,
+        format: "currency",
+      },
+      {
+        label: "Parcela mensal",
+        value: installmentMonthlyAmount,
+        format: "currency",
+      },
+      {
+        label: "Quantidade de parcelas",
+        value: installmentPurchaseMonths,
+        format: "number",
+      },
       {
         label: "Folga apos parcela",
-        value: clampCurrency(Math.max(companyHeadroom - installmentMonthlyAmount, 0)),
+        value: clampCurrency(
+          Math.max(companyHeadroom - installmentMonthlyAmount, 0)
+        ),
         format: "currency",
       },
     ],
@@ -1129,22 +1199,30 @@ export function evaluateFinancialDecisionScenariosFromSnapshot(
     metrics: [
       {
         label: "Folga apos retirada recorrente",
-        value: clampCurrency(Math.max(companyHeadroom - recurringWithdrawalAmount, 0)),
+        value: clampCurrency(
+          Math.max(companyHeadroom - recurringWithdrawalAmount, 0)
+        ),
         format: "currency",
       },
       {
         label: "Caixa projetado empresa",
-        value: clampCurrency(snapshot.guardrails.company.projectedCash - recurringWithdrawalAmount),
+        value: clampCurrency(
+          snapshot.guardrails.company.projectedCash - recurringWithdrawalAmount
+        ),
         format: "currency",
       },
       {
         label: "Caixa pessoal projetado",
-        value: clampCurrency(snapshot.guardrails.personal.projectedCash + recurringWithdrawalAmount),
+        value: clampCurrency(
+          snapshot.guardrails.personal.projectedCash + recurringWithdrawalAmount
+        ),
         format: "currency",
       },
       {
         label: "Limite seguro apos retirada",
-        value: clampCurrency(Math.max(snapshot.safeToSpendMonth - recurringWithdrawalAmount, 0)),
+        value: clampCurrency(
+          Math.max(snapshot.safeToSpendMonth - recurringWithdrawalAmount, 0)
+        ),
         format: "currency",
       },
     ],
@@ -1174,17 +1252,27 @@ export async function buildFinancialAdvisorContext(
   referenceDate = new Date()
 ): Promise<FinancialAdvisorContext> {
   const { month, year, iso } = getPartsInTimeZone(referenceDate, timezone);
-  const [settings, company, personal, calendar, debts, investments, reserveFunds, asaasCharges] =
-    await Promise.all([
-      db.getSettings(userId).catch(() => null),
-      db.getCompanyDashboardData(userId, month, year).catch(() => null),
-      db.getPersonalDashboardData(userId, month, year).catch(() => null),
-      db.getCalendarData(userId, month, year).catch(() => []),
-      db.getDebts(userId).catch(() => []),
-      db.getInvestments(userId).catch(() => []),
-      db.getReserveFunds(userId).catch(() => []),
-      asaasDb.listAsaasCharges(userId).catch(() => []),
-    ]);
+  const [
+    settings,
+    company,
+    personal,
+    calendar,
+    debts,
+    investments,
+    reserveFunds,
+  ] = await Promise.all([
+    db.getSettings(userId).catch(() => null),
+    db.getCompanyDashboardData(userId, month, year).catch(() => null),
+    db.getPersonalDashboardData(userId, month, year).catch(() => null),
+    db.getCalendarData(userId, month, year).catch(() => []),
+    db.getDebts(userId).catch(() => []),
+    db.getInvestments(userId).catch(() => []),
+    db.getReserveFunds(userId).catch(() => []),
+  ]);
+
+  const receivables = Array.isArray(company?.revenue?.items)
+    ? company.revenue.items
+    : [];
 
   return {
     generatedAt: iso,
@@ -1198,7 +1286,7 @@ export async function buildFinancialAdvisorContext(
     debts: Array.isArray(debts) ? debts : [],
     investments: Array.isArray(investments) ? investments : [],
     reserveFunds: Array.isArray(reserveFunds) ? reserveFunds : [],
-    asaasCharges: Array.isArray(asaasCharges) ? asaasCharges : [],
+    receivables,
   };
 }
 
@@ -1207,70 +1295,132 @@ export function calculateFinancialGovernanceSnapshot(
   options?: { timezone?: string; referenceDate?: Date }
 ): FinancialGovernanceSnapshot {
   const timezone = options?.timezone || DEFAULT_TIMEZONE;
-  const referenceDate = options?.referenceDate ?? parseIsoDate(context.referenceDate) ?? new Date();
+  const referenceDate =
+    options?.referenceDate ?? parseIsoDate(context.referenceDate) ?? new Date();
   const settings = context.settings ?? {};
 
   const taxPercent = toNumber(settings.taxPercent ?? "6");
   const tithePercent = toNumber(settings.tithePercent ?? "10");
   const investmentPercent = toNumber(settings.investmentPercent ?? "10");
   const proLaboreGross = toNumber(settings.proLaboreGross ?? "0");
-  const companyReserveMonths = Math.max(toNumber(settings.companyReserveMonths ?? 3), 1);
-  const personalReserveMonths = Math.max(toNumber(settings.personalReserveMonths ?? 6), 1);
-  const companyMinCashMonths = Math.max(toNumber(settings.companyMinCashMonths ?? 1), 0.5);
-  const personalMinCashMonths = Math.max(toNumber(settings.personalMinCashMonths ?? 1), 0.5);
+  const companyReserveMonths = Math.max(
+    toNumber(settings.companyReserveMonths ?? 3),
+    1
+  );
+  const personalReserveMonths = Math.max(
+    toNumber(settings.personalReserveMonths ?? 6),
+    1
+  );
+  const companyMinCashMonths = Math.max(
+    toNumber(settings.companyMinCashMonths ?? 1),
+    0.5
+  );
+  const personalMinCashMonths = Math.max(
+    toNumber(settings.personalMinCashMonths ?? 1),
+    0.5
+  );
 
-  const companyGrossRevenue = toNumber(context.company?.summary?.current?.grossRevenue ?? context.company?.revenue?.totalGross);
-  const companyNetRevenue = toNumber(context.company?.summary?.current?.netRevenue ?? context.company?.revenue?.totalNet);
+  const companyGrossRevenue = toNumber(
+    context.company?.summary?.current?.grossRevenue ??
+      context.company?.revenue?.totalGross
+  );
+  const companyNetRevenue = toNumber(
+    context.company?.summary?.current?.netRevenue ??
+      context.company?.revenue?.totalNet
+  );
   const companyTaxProvision = Math.max(
-    toNumber(context.company?.summary?.current?.taxAmount ?? context.company?.revenue?.totalTax),
+    toNumber(
+      context.company?.summary?.current?.taxAmount ??
+        context.company?.revenue?.totalTax
+    ),
     clampCurrency(companyGrossRevenue * (taxPercent / 100))
   );
-  const companyFixedCosts = toNumber(context.company?.summary?.current?.fixedCosts ?? context.company?.fixedCosts?.total);
-  const companyVariableCosts = toNumber(context.company?.summary?.current?.variableCosts ?? context.company?.variableCosts?.total);
-  const companyEmployeeCosts = toNumber(context.company?.summary?.current?.employeeCosts ?? context.company?.employees?.totalCost);
-  const companyPurchaseCosts = toNumber(context.company?.summary?.current?.purchases ?? context.company?.purchases?.total);
-  const companyReserveTotal = toNumber(context.company?.summary?.current?.reserve ?? context.company?.reserve?.total);
-  const companyEssentialMonthly = companyFixedCosts + companyEmployeeCosts + companyPurchaseCosts + proLaboreGross;
-  const companyProjectedCash = companyNetRevenue - (companyEssentialMonthly + companyVariableCosts);
+  const companyFixedCosts = toNumber(
+    context.company?.summary?.current?.fixedCosts ??
+      context.company?.fixedCosts?.total
+  );
+  const companyVariableCosts = toNumber(
+    context.company?.summary?.current?.variableCosts ??
+      context.company?.variableCosts?.total
+  );
+  const companyEmployeeCosts = toNumber(
+    context.company?.summary?.current?.employeeCosts ??
+      context.company?.employees?.totalCost
+  );
+  const companyPurchaseCosts = toNumber(
+    context.company?.summary?.current?.purchases ??
+      context.company?.purchases?.total
+  );
+  const companyReserveTotal = toNumber(
+    context.company?.summary?.current?.reserve ??
+      context.company?.reserve?.total
+  );
+  const companyEssentialMonthly =
+    companyFixedCosts +
+    companyEmployeeCosts +
+    companyPurchaseCosts +
+    proLaboreGross;
+  const companyProjectedCash =
+    companyNetRevenue - (companyEssentialMonthly + companyVariableCosts);
   const companyMinCashTarget = companyEssentialMonthly * companyMinCashMonths;
   const companyReserveGoal = companyEssentialMonthly * companyReserveMonths;
-  const companyReserveShortfall = Math.max(companyReserveGoal - companyReserveTotal, 0);
+  const companyReserveShortfall = Math.max(
+    companyReserveGoal - companyReserveTotal,
+    0
+  );
   const companyReserveRecommendation =
-    companyProjectedCash > 0 ? Math.min(companyReserveShortfall, companyProjectedCash * 0.4) : 0;
+    companyProjectedCash > 0
+      ? Math.min(companyReserveShortfall, companyProjectedCash * 0.4)
+      : 0;
 
   const personalFixedCosts = toNumber(context.personal?.fixedCosts?.total);
-  const personalVariableCosts = toNumber(context.personal?.variableCosts?.total);
+  const personalVariableCosts = toNumber(
+    context.personal?.variableCosts?.total
+  );
   const personalDebtMonthly = toNumber(context.personal?.debts?.totalMonthly);
   const titheAmount = clampCurrency(proLaboreGross * (tithePercent / 100));
-  const personalInvestmentAmount = clampCurrency(proLaboreGross * (investmentPercent / 100));
-  const personalAvailableIncome = Math.max(proLaboreGross - titheAmount - personalInvestmentAmount, 0);
+  const personalInvestmentAmount = clampCurrency(
+    proLaboreGross * (investmentPercent / 100)
+  );
+  const personalAvailableIncome = Math.max(
+    proLaboreGross - titheAmount - personalInvestmentAmount,
+    0
+  );
   const personalReserveTotal = toNumber(context.personal?.reserve?.total);
-  const personalEssentialMonthly = personalFixedCosts + personalDebtMonthly + titheAmount + personalInvestmentAmount;
+  const personalEssentialMonthly =
+    personalFixedCosts +
+    personalDebtMonthly +
+    titheAmount +
+    personalInvestmentAmount;
   const personalProjectedCash =
-    personalAvailableIncome - (personalFixedCosts + personalDebtMonthly + personalVariableCosts);
-  const personalMinCashTarget = personalEssentialMonthly * personalMinCashMonths;
+    personalAvailableIncome -
+    (personalFixedCosts + personalDebtMonthly + personalVariableCosts);
+  const personalMinCashTarget =
+    personalEssentialMonthly * personalMinCashMonths;
   const personalReserveGoal = personalEssentialMonthly * personalReserveMonths;
-  const personalReserveShortfall = Math.max(personalReserveGoal - personalReserveTotal, 0);
+  const personalReserveShortfall = Math.max(
+    personalReserveGoal - personalReserveTotal,
+    0
+  );
   const personalReserveRecommendation =
-    personalProjectedCash > 0 ? Math.min(personalReserveShortfall, personalProjectedCash * 0.4) : 0;
+    personalProjectedCash > 0
+      ? Math.min(personalReserveShortfall, personalProjectedCash * 0.4)
+      : 0;
 
-  const incomingDates = [
-    ...(Array.isArray(context.company?.revenue?.items) ? context.company.revenue.items : [])
-      .filter((item: AnyRecord) => item.status !== "cancelado" && item.status !== "recebido")
-      .map((item: AnyRecord) => String(item.dueDate || "")),
-    ...context.asaasCharges
-      .filter(charge => {
-        const status = String(charge.status || "").toUpperCase();
-        return status === "PENDING" || status === "CONFIRMED" || status === "RECEIVED";
-      })
-      .map(charge => String(charge.dueDate || "")),
-  ]
+  const incomingDates = context.receivables
+    .filter(item => {
+      const status = String(item.status || "").toLowerCase();
+      return status !== "cancelado" && status !== "recebido";
+    })
+    .map(item => String(item.dueDate || ""))
     .map(value => parseIsoDate(value))
     .filter((value): value is Date => Boolean(value))
     .filter(date => diffInDays(referenceDate, date) >= 0)
     .sort((left, right) => left.getTime() - right.getTime());
 
-  const nextIncomingDate = incomingDates[0] ? toIsoDate(incomingDates[0]) : null;
+  const nextIncomingDate = incomingDates[0]
+    ? toIsoDate(incomingDates[0])
+    : null;
   const nextIncoming = nextIncomingDate ? parseIsoDate(nextIncomingDate) : null;
 
   const paymentPriority: PaymentPriorityItem[] = context.calendarItems
@@ -1278,12 +1428,23 @@ export function calculateFinancialGovernanceSnapshot(
       const dueDate = buildIsoDate(
         context.year,
         context.month,
-        Math.max(Math.min(Number(item.day) || 1, getLastDayOfMonth(context.year, context.month)), 1)
+        Math.max(
+          Math.min(
+            Number(item.day) || 1,
+            getLastDayOfMonth(context.year, context.month)
+          ),
+          1
+        )
       );
       const dueDateObj = parseIsoDate(dueDate) ?? referenceDate;
       const isOverdue =
-        String(item.status || "").toLowerCase().includes("atras") || diffInDays(referenceDate, dueDateObj) < 0;
-      const beforeNextIncome = !isOverdue && nextIncoming ? dueDateObj.getTime() <= nextIncoming.getTime() : false;
+        String(item.status || "")
+          .toLowerCase()
+          .includes("atras") || diffInDays(referenceDate, dueDateObj) < 0;
+      const beforeNextIncome =
+        !isOverdue && nextIncoming
+          ? dueDateObj.getTime() <= nextIncoming.getTime()
+          : false;
       const dueSoon = !isOverdue && diffInDays(referenceDate, dueDateObj) <= 7;
       const urgency: PaymentPriorityItem["urgency"] = isOverdue
         ? "overdue"
@@ -1296,20 +1457,20 @@ export function calculateFinancialGovernanceSnapshot(
       return {
         id: `${item.type}:${dueDate}:${item.description}`,
         title: item.description,
-        source: (
-          item.type.startsWith("empresa")
-            ? "company"
-            : item.type.startsWith("pessoal")
-              ? "personal"
-              : item.type === "divida"
-                ? "debt"
-                : "calendar"
-        ) as PaymentPriorityItem["source"],
+        source: (item.type.startsWith("empresa")
+          ? "company"
+          : item.type.startsWith("pessoal")
+            ? "personal"
+            : item.type === "divida"
+              ? "debt"
+              : "calendar") as PaymentPriorityItem["source"],
         dueDate,
         amount: clampCurrency(toNumber(item.amount)),
         status: item.status,
         urgency,
-        sourceId: Number.isFinite(Number(item.sourceId)) ? Number(item.sourceId) : null,
+        sourceId: Number.isFinite(Number(item.sourceId))
+          ? Number(item.sourceId)
+          : null,
         sourceType:
           typeof item.sourceType === "string"
             ? (item.sourceType as PaymentPrioritySourceType)
@@ -1344,22 +1505,35 @@ export function calculateFinancialGovernanceSnapshot(
     })
     .slice(0, 8);
 
-  const overdueItems = paymentPriority.filter(item => item.urgency === "overdue").length;
+  const overdueItems = paymentPriority.filter(
+    item => item.urgency === "overdue"
+  ).length;
   const dueThisWeek = paymentPriority.filter(
     item => item.urgency === "before_next_income" || item.urgency === "due_soon"
   ).length;
-  const overdueCharges = context.asaasCharges.filter(charge =>
-    String(charge.status || "").toUpperCase().includes("OVERDUE")
-  ).length;
-  const pendingCharges = context.asaasCharges.filter(charge => {
-    const status = String(charge.status || "").toUpperCase();
-    return status === "PENDING" || status === "CONFIRMED";
+  const openReceivables = context.receivables.filter(item => {
+    const status = String(item.status || "").toLowerCase();
+    return status !== "recebido" && status !== "cancelado";
+  });
+  const overdueCharges = openReceivables.filter(item => {
+    const status = String(item.status || "").toLowerCase();
+    const dueDate = String(item.dueDate || "");
+    return (
+      status.includes("atras") ||
+      Boolean(dueDate && dueDate < context.referenceDate)
+    );
   }).length;
+  const pendingCharges = Math.max(openReceivables.length - overdueCharges, 0);
 
   const totalProjectedCash = companyProjectedCash + personalProjectedCash;
-  const totalReserveRecommendation = companyReserveRecommendation + personalReserveRecommendation;
-  const safeToSpendMonth = Math.max(totalProjectedCash - totalReserveRecommendation, 0);
-  const safeToSpendNow = safeToSpendMonth / daysRemainingInMonth(referenceDate, timezone);
+  const totalReserveRecommendation =
+    companyReserveRecommendation + personalReserveRecommendation;
+  const safeToSpendMonth = Math.max(
+    totalProjectedCash - totalReserveRecommendation,
+    0
+  );
+  const safeToSpendNow =
+    safeToSpendMonth / daysRemainingInMonth(referenceDate, timezone);
   const protectedCash =
     companyTaxProvision +
     proLaboreGross +
@@ -1380,7 +1554,11 @@ export function calculateFinancialGovernanceSnapshot(
   if (!context.settings) confidenceScore -= 0.2;
   if (!context.company) confidenceScore -= 0.2;
   if (!context.personal) confidenceScore -= 0.2;
-  if (!Array.isArray(context.calendarItems) || context.calendarItems.length === 0) confidenceScore -= 0.1;
+  if (
+    !Array.isArray(context.calendarItems) ||
+    context.calendarItems.length === 0
+  )
+    confidenceScore -= 0.1;
   confidenceScore = Math.max(0.4, confidenceScore);
 
   const snapshotBase = {
@@ -1445,11 +1623,15 @@ export function calculateFinancialGovernanceSnapshot(
 
   const topRecommendations = buildTopRecommendations({
     snapshotBase,
-    companyVariableRatio: companyNetRevenue > 0 ? companyVariableCosts / Math.max(companyNetRevenue, 1) : 0,
+    companyVariableRatio:
+      companyNetRevenue > 0
+        ? companyVariableCosts / Math.max(companyNetRevenue, 1)
+        : 0,
     personalVariableRatio:
-      personalAvailableIncome > 0 ? personalVariableCosts / Math.max(personalAvailableIncome, 1) : 0,
-    asaasCharges: context.asaasCharges,
-    companyRevenues: Array.isArray(context.company?.revenue?.items) ? context.company.revenue.items : [],
+      personalAvailableIncome > 0
+        ? personalVariableCosts / Math.max(personalAvailableIncome, 1)
+        : 0,
+    companyRevenues: context.receivables,
     debts: context.debts,
   });
 
@@ -1464,13 +1646,15 @@ export function calculateFinancialAdvisorOnboarding(args: {
   hasCurrentPlan?: boolean;
 }): FinancialAdvisorOnboardingState {
   const { context } = args;
-  const snapshot = args.snapshot ?? calculateFinancialGovernanceSnapshot(context);
+  const snapshot =
+    args.snapshot ?? calculateFinancialGovernanceSnapshot(context);
   const settings = context.settings ?? {};
   const whatsappIntegration = args.whatsappIntegration ?? null;
   const hasCurrentPlan = Boolean(args.hasCurrentPlan);
 
   const companyRevenueCoverage =
-    Number(context.company?.revenue?.count ?? 0) > 0 || context.asaasCharges.length > 0;
+    Number(context.company?.revenue?.count ?? 0) > 0 ||
+    context.receivables.length > 0;
   const companyCostCoverage =
     Number(context.company?.fixedCosts?.count ?? 0) > 0 ||
     Number(context.company?.variableCosts?.count ?? 0) > 0 ||
@@ -1509,7 +1693,8 @@ export function calculateFinancialAdvisorOnboarding(args: {
   const profileStep = buildOnboardingStep({
     key: "profile",
     title: "Parametros do mentor",
-    description: "Define a base que o mentor usa para separar empresa, pro-labore e impostos.",
+    description:
+      "Define a base que o mentor usa para separar empresa, pro-labore e impostos.",
     checklist: [
       {
         id: "company_name",
@@ -1527,16 +1712,19 @@ export function calculateFinancialAdvisorOnboarding(args: {
         completed: toNumber(settings.taxPercent ?? "0") > 0,
       },
     ],
-    emptySummary: "Sem essa base, o mentor cai em valores padrao e perde contexto sobre sua operacao.",
+    emptySummary:
+      "Sem essa base, o mentor cai em valores padrao e perde contexto sobre sua operacao.",
     partialSummary:
       "A base ja existe, mas ainda faltam alguns parametros para o mentor decidir com mais seguranca.",
-    completeSummary: "Perfil financeiro principal configurado para o mentor operar com contexto real.",
+    completeSummary:
+      "Perfil financeiro principal configurado para o mentor operar com contexto real.",
   });
 
   const guardrailsStep = buildOnboardingStep({
     key: "guardrails",
     title: "Protecoes de caixa",
-    description: "Cria os limites que impedem o mentor de olhar apenas para saldo em conta.",
+    description:
+      "Cria os limites que impedem o mentor de olhar apenas para saldo em conta.",
     checklist: [
       {
         id: "company_reserve",
@@ -1559,7 +1747,8 @@ export function calculateFinancialAdvisorOnboarding(args: {
         completed: toNumber(settings.personalMinCashMonths ?? 0) >= 0.5,
       },
     ],
-    emptySummary: "Ainda faltam as protecoes que transformam saldo bruto em limite seguro de gasto.",
+    emptySummary:
+      "Ainda faltam as protecoes que transformam saldo bruto em limite seguro de gasto.",
     partialSummary:
       "As protecoes comecaram a ser configuradas, mas o mentor ainda pode operar com folga incompleta.",
     completeSummary:
@@ -1598,7 +1787,8 @@ export function calculateFinancialAdvisorOnboarding(args: {
         completed: calendarCoverage,
       },
     ],
-    emptySummary: "Ainda falta materia-prima para o mentor enxergar o mes com profundidade.",
+    emptySummary:
+      "Ainda falta materia-prima para o mentor enxergar o mes com profundidade.",
     partialSummary:
       "Ja existe contexto financeiro, mas ainda vale completar o que falta para aumentar a confianca do mentor.",
     completeSummary:
@@ -1615,17 +1805,20 @@ export function calculateFinancialAdvisorOnboarding(args: {
   const whatsappStep = buildOnboardingStep({
     key: "whatsapp_channel",
     title: "Canal no WhatsApp",
-    description: "Conecta o mentor ao seu numero principal para virar rotina, nao so painel.",
+    description:
+      "Conecta o mentor ao seu numero principal para virar rotina, nao so painel.",
     checklist: [
       {
         id: "instance",
         label: "Instancia conectada",
-        completed: String(whatsappIntegration?.instanceId ?? "").trim().length > 0,
+        completed:
+          String(whatsappIntegration?.instanceId ?? "").trim().length > 0,
       },
       {
         id: "authorized_phone",
         label: "Numero autorizado definido",
-        completed: String(whatsappIntegration?.authorizedPhone ?? "").trim().length > 0,
+        completed:
+          String(whatsappIntegration?.authorizedPhone ?? "").trim().length > 0,
       },
       {
         id: "enabled",
@@ -1635,10 +1828,13 @@ export function calculateFinancialAdvisorOnboarding(args: {
       {
         id: "synced",
         label: "Sessao sincronizada",
-        completed: String(whatsappIntegration?.lastConnectionStatus ?? "") === "sincronizado",
+        completed:
+          String(whatsappIntegration?.lastConnectionStatus ?? "") ===
+          "sincronizado",
       },
     ],
-    emptySummary: "Sem o canal pronto, a mentoria ainda fica presa ao painel e perde rotina.",
+    emptySummary:
+      "Sem o canal pronto, a mentoria ainda fica presa ao painel e perde rotina.",
     partialSummary:
       "O canal ja esta em preparacao, mas ainda falta fechar a sincronizacao para usar no dia a dia.",
     completeSummary:
@@ -1648,7 +1844,8 @@ export function calculateFinancialAdvisorOnboarding(args: {
   const monthlyPlanStep = buildOnboardingStep({
     key: "monthly_plan",
     title: "Primeiro plano do mes",
-    description: "Consolida limites, prioridades e acoes praticas para o ciclo atual.",
+    description:
+      "Consolida limites, prioridades e acoes praticas para o ciclo atual.",
     checklist: [
       {
         id: "confidence",
@@ -1661,10 +1858,12 @@ export function calculateFinancialAdvisorOnboarding(args: {
         completed: hasCurrentPlan,
       },
     ],
-    emptySummary: "Ainda falta transformar a base atual em um plano acionavel do mes.",
+    emptySummary:
+      "Ainda falta transformar a base atual em um plano acionavel do mes.",
     partialSummary:
       "A leitura do mentor ja existe, mas ainda falta consolidar o plano do ciclo atual.",
-    completeSummary: "Plano do mes pronto para orientar prioridades, limites e execucao.",
+    completeSummary:
+      "Plano do mes pronto para orientar prioridades, limites e execucao.",
   });
 
   const steps = [
@@ -1674,23 +1873,31 @@ export function calculateFinancialAdvisorOnboarding(args: {
     whatsappStep,
     monthlyPlanStep,
   ];
-  const totalChecklistItems = steps.reduce((sum, step) => sum + step.totalItems, 0);
-  const completedChecklistItems = steps.reduce((sum, step) => sum + step.completedItems, 0);
-  const completedSteps = steps.filter(step => step.status === "complete").length;
+  const totalChecklistItems = steps.reduce(
+    (sum, step) => sum + step.totalItems,
+    0
+  );
+  const completedChecklistItems = steps.reduce(
+    (sum, step) => sum + step.completedItems,
+    0
+  );
+  const completedSteps = steps.filter(
+    step => step.status === "complete"
+  ).length;
   const progressPercent =
     totalChecklistItems > 0
       ? clampPercent((completedChecklistItems / totalChecklistItems) * 100)
       : 0;
 
-  const status =
-    steps.every(step => step.status === "complete")
-      ? ("ready" as const)
-      : progressPercent >= 55
-        ? ("attention" as const)
-        : ("setup" as const);
-  const recommendedStepKey = steps.find(step => step.status !== "complete")?.key ?? null;
+  const status = steps.every(step => step.status === "complete")
+    ? ("ready" as const)
+    : progressPercent >= 55
+      ? ("attention" as const)
+      : ("setup" as const);
+  const recommendedStepKey =
+    steps.find(step => step.status !== "complete")?.key ?? null;
   const recommendedStep = recommendedStepKey
-    ? steps.find(step => step.key === recommendedStepKey) ?? null
+    ? (steps.find(step => step.key === recommendedStepKey) ?? null)
     : null;
 
   const headline =
@@ -1742,7 +1949,8 @@ function getRecurringRiskLevel(counts: {
   healthy: number;
 }) {
   if (counts.critical >= 2) return "critical" as const;
-  if (counts.critical >= 1 || counts.attention >= 2) return "attention" as const;
+  if (counts.critical >= 1 || counts.attention >= 2)
+    return "attention" as const;
   return "healthy" as const;
 }
 
@@ -1762,7 +1970,9 @@ export async function getFinancialAdvisorMemory(
     .slice(0, 6);
 
   const snapshots = currentSnapshot ? [currentSnapshot, ...history] : history;
-  const uniqueMonths = new Set(snapshots.map(item => `${item.year}-${item.month}`));
+  const uniqueMonths = new Set(
+    snapshots.map(item => `${item.year}-${item.month}`)
+  );
   const riskCounts = snapshots.reduce(
     (acc, item) => {
       acc[item.cashRiskLevel] += 1;
@@ -1770,10 +1980,16 @@ export async function getFinancialAdvisorMemory(
     },
     { healthy: 0, attention: 0, critical: 0 }
   );
-  const averageSafeToSpend = average(snapshots.map(item => item.safeToSpendMonth));
-  const averageOverdue = average(snapshots.map(item => item.counts.overdueItems));
+  const averageSafeToSpend = average(
+    snapshots.map(item => item.safeToSpendMonth)
+  );
+  const averageOverdue = average(
+    snapshots.map(item => item.counts.overdueItems)
+  );
   const averageChargePressure = average(
-    snapshots.map(item => item.counts.overdueCharges + item.counts.pendingCharges)
+    snapshots.map(
+      item => item.counts.overdueCharges + item.counts.pendingCharges
+    )
   );
   const averageReserveCoverage = average(
     snapshots.map(item => {
@@ -1785,7 +2001,9 @@ export async function getFinancialAdvisorMemory(
   const newest = snapshots[0] ?? null;
   const oldest = snapshots[snapshots.length - 1] ?? null;
   const safeToSpendDelta =
-    newest && oldest ? clampCurrency(newest.safeToSpendMonth - oldest.safeToSpendMonth) : 0;
+    newest && oldest
+      ? clampCurrency(newest.safeToSpendMonth - oldest.safeToSpendMonth)
+      : 0;
   const trendDirection =
     safeToSpendDelta > 250
       ? ("improving" as const)
@@ -1805,14 +2023,20 @@ export async function getFinancialAdvisorMemory(
     )
   );
 
-  const confirmationRuns = assistantRuns.filter(run => run.requiresConfirmation);
+  const confirmationRuns = assistantRuns.filter(
+    run => run.requiresConfirmation
+  );
   const executedRuns = assistantRuns.filter(run => run.status === "executado");
   const snoozedRuns = assistantRuns.filter(run => {
     const payload = String(run.executedActions ?? "");
     return payload.includes("snoozed");
   });
-  const executedPlanActions = planActions.filter(action => action.status === "concluida");
-  const snoozedPlanActions = planActions.filter(action => action.status === "adiada");
+  const executedPlanActions = planActions.filter(
+    action => action.status === "concluida"
+  );
+  const snoozedPlanActions = planActions.filter(
+    action => action.status === "adiada"
+  );
   const totalBehaviorSignals = Math.max(
     confirmationRuns.length + planActions.length,
     1
@@ -1822,8 +2046,12 @@ export async function getFinancialAdvisorMemory(
       0,
       Math.min(
         100,
-        ((executedRuns.length + executedPlanActions.length * 1.2) / totalBehaviorSignals) * 100 -
-          ((snoozedRuns.length + snoozedPlanActions.length) / totalBehaviorSignals) * 28
+        ((executedRuns.length + executedPlanActions.length * 1.2) /
+          totalBehaviorSignals) *
+          100 -
+          ((snoozedRuns.length + snoozedPlanActions.length) /
+            totalBehaviorSignals) *
+            28
       )
     )
   );
@@ -1832,14 +2060,14 @@ export async function getFinancialAdvisorMemory(
     executionScore >= 72 && trendDirection === "improving"
       ? "mentor vendo disciplina de execucao crescer"
       : recurringRiskLevel === "critical"
-      ? "mentor em modo recuperacao"
-      : trendDirection === "improving" && consistencyScore >= 72
-        ? "mentor vendo consistencia crescente"
-        : executionScore <= 42
-          ? "mentor vendo boas intencoes, mas pouca execucao"
-        : averageChargePressure >= 2
-          ? "mentor atento a cobrancas e previsibilidade"
-          : "mentor com rotina financeira em construcao";
+        ? "mentor em modo recuperacao"
+        : trendDirection === "improving" && consistencyScore >= 72
+          ? "mentor vendo consistencia crescente"
+          : executionScore <= 42
+            ? "mentor vendo boas intencoes, mas pouca execucao"
+            : averageChargePressure >= 2
+              ? "mentor atento a cobrancas e previsibilidade"
+              : "mentor com rotina financeira em construcao";
 
   const headline =
     uniqueMonths.size >= 3
@@ -1851,22 +2079,32 @@ export async function getFinancialAdvisorMemory(
         ? "O historico recente mostra repeticao de meses apertados. O mentor deve agir de forma mais conservadora ate a previsibilidade melhorar."
         : executionScore <= 42
           ? "Os dados mostram contexto suficiente, mas a execucao ainda fica para depois. O mentor deve insistir em proximas acoes mais simples e diretas."
-        : trendDirection === "improving"
-          ? "Os ultimos ciclos mostram melhora de folga e mais consistencia. O mentor pode subir o nivel de refinamento sem perder prudencia."
-          : "Ja existe historico suficiente para o mentor reconhecer padroes, mas o comportamento ainda oscila entre meses."
+          : trendDirection === "improving"
+            ? "Os ultimos ciclos mostram melhora de folga e mais consistencia. O mentor pode subir o nivel de refinamento sem perder prudencia."
+            : "Ja existe historico suficiente para o mentor reconhecer padroes, mas o comportamento ainda oscila entre meses."
       : "O mentor comecou a formar memoria. Quanto mais ciclos e snapshots, mais personalizadas ficam as orientacoes.";
 
   const signals: FinancialAdvisorMemorySignal[] = [
     {
       id: "discipline",
       label: "Consistencia do mes",
-      status: consistencyScore >= 72 ? "healthy" : consistencyScore >= 48 ? "attention" : "critical",
+      status:
+        consistencyScore >= 72
+          ? "healthy"
+          : consistencyScore >= 48
+            ? "attention"
+            : "critical",
       value: `${consistencyScore}%`,
     },
     {
       id: "execution",
       label: "Execucao das acoes",
-      status: executionScore >= 72 ? "healthy" : executionScore >= 48 ? "attention" : "critical",
+      status:
+        executionScore >= 72
+          ? "healthy"
+          : executionScore >= 48
+            ? "attention"
+            : "critical",
       value: `${executionScore}%`,
     },
     {
@@ -1888,14 +2126,23 @@ export async function getFinancialAdvisorMemory(
     {
       id: "overdue-pattern",
       label: "Media de vencidos",
-      status: averageOverdue <= 0.5 ? "healthy" : averageOverdue <= 2 ? "attention" : "critical",
+      status:
+        averageOverdue <= 0.5
+          ? "healthy"
+          : averageOverdue <= 2
+            ? "attention"
+            : "critical",
       value: averageOverdue.toFixed(1),
     },
     {
       id: "charge-pressure",
       label: "Pressao de cobrancas",
       status:
-        averageChargePressure <= 1 ? "healthy" : averageChargePressure <= 3 ? "attention" : "critical",
+        averageChargePressure <= 1
+          ? "healthy"
+          : averageChargePressure <= 3
+            ? "attention"
+            : "critical",
       value: averageChargePressure.toFixed(1),
     },
   ];
@@ -1919,45 +2166,44 @@ export function personalizeFinancialRecommendations(
 ) {
   const lowExecution = memory.executionScore <= 42;
   const highExecution = memory.executionScore >= 72;
-  const strategicMoment = highExecution && memory.trendDirection === "improving";
-  const orderWeight: Record<FinancialRecommendation["kind"], number> = lowExecution
-    ? {
-        pay_priority_items: 0,
-        register_revenue_receipt: 1,
-        charge_follow_up: 2,
-        renegotiate_debt: 3,
-        create_asaas_charge: 4,
-        freeze_discretionary: 5,
-        protect_tax_provision: 6,
-        transfer_company_reserve: 7,
-        transfer_personal_reserve: 8,
-        review_variable_costs: 9,
-      }
-    : strategicMoment
+  const strategicMoment =
+    highExecution && memory.trendDirection === "improving";
+  const orderWeight: Record<FinancialRecommendation["kind"], number> =
+    lowExecution
       ? {
-          transfer_company_reserve: 0,
-          transfer_personal_reserve: 1,
-          review_variable_costs: 2,
-          protect_tax_provision: 3,
-          register_revenue_receipt: 4,
-          pay_priority_items: 5,
-          charge_follow_up: 6,
-          renegotiate_debt: 7,
-          create_asaas_charge: 8,
-          freeze_discretionary: 9,
-        }
-      : {
           pay_priority_items: 0,
           register_revenue_receipt: 1,
           charge_follow_up: 2,
           renegotiate_debt: 3,
-          create_asaas_charge: 4,
-          transfer_company_reserve: 5,
-          transfer_personal_reserve: 6,
-          review_variable_costs: 7,
-          protect_tax_provision: 8,
-          freeze_discretionary: 9,
-        };
+          freeze_discretionary: 4,
+          protect_tax_provision: 5,
+          transfer_company_reserve: 6,
+          transfer_personal_reserve: 7,
+          review_variable_costs: 8,
+        }
+      : strategicMoment
+        ? {
+            transfer_company_reserve: 0,
+            transfer_personal_reserve: 1,
+            review_variable_costs: 2,
+            protect_tax_provision: 3,
+            register_revenue_receipt: 4,
+            pay_priority_items: 5,
+            charge_follow_up: 6,
+            renegotiate_debt: 7,
+            freeze_discretionary: 8,
+          }
+        : {
+            pay_priority_items: 0,
+            register_revenue_receipt: 1,
+            charge_follow_up: 2,
+            renegotiate_debt: 3,
+            transfer_company_reserve: 4,
+            transfer_personal_reserve: 5,
+            review_variable_costs: 6,
+            protect_tax_provision: 7,
+            freeze_discretionary: 8,
+          };
 
   return snapshot.topRecommendations
     .map(recommendation => {
@@ -1965,14 +2211,14 @@ export function personalizeFinancialRecommendations(
         const lowExecutionMessage =
           recommendation.kind === "pay_priority_items" ||
           recommendation.kind === "charge_follow_up" ||
-          recommendation.kind === "create_asaas_charge" ||
           recommendation.kind === "register_revenue_receipt" ||
           recommendation.kind === "renegotiate_debt"
             ? "Foque em executar esta unica frente antes de abrir novas decisoes."
             : "O mentor simplificou a orientacao para aumentar a chance de execucao real.";
         return {
           ...recommendation,
-          description: `${recommendation.description} ${lowExecutionMessage}`.trim(),
+          description:
+            `${recommendation.description} ${lowExecutionMessage}`.trim(),
         };
       }
 
@@ -1984,7 +2230,8 @@ export function personalizeFinancialRecommendations(
             : "Como a execucao esta mais consistente, o mentor pode ampliar a ambicao desta recomendacao.";
         return {
           ...recommendation,
-          description: `${recommendation.description} ${strategicMessage}`.trim(),
+          description:
+            `${recommendation.description} ${strategicMessage}`.trim(),
         };
       }
 
@@ -2012,10 +2259,9 @@ export function personalizeFinancialAdvisorSummary(
   return `${snapshot.summary} O mentor esta calibrando as proximas recomendacoes com base no seu padrao recente de execucao.`;
 }
 
-export function getFinancialAdvisorMentorMode(memory: Pick<
-  FinancialAdvisorMemoryState,
-  "executionScore" | "trendDirection"
->): FinancialAdvisorMentorMode {
+export function getFinancialAdvisorMentorMode(
+  memory: Pick<FinancialAdvisorMemoryState, "executionScore" | "trendDirection">
+): FinancialAdvisorMentorMode {
   if (memory.executionScore <= 42) return "execution_short";
   if (memory.executionScore >= 72 && memory.trendDirection === "improving") {
     return "strategic";
@@ -2110,20 +2356,33 @@ export async function getFinancialAdvisorSnapshot(
     timezone: options?.timezone || DEFAULT_TIMEZONE,
     referenceDate: options?.referenceDate,
   });
-  const currentPlan = await whatsappDb.getFinancialPlanByPeriod(userId, snapshot.month, snapshot.year);
-  const planActions = currentPlan ? await whatsappDb.listFinancialPlanActions(userId, currentPlan.id) : [];
+  const currentPlan = await whatsappDb.getFinancialPlanByPeriod(
+    userId,
+    snapshot.month,
+    snapshot.year
+  );
+  const planActions = currentPlan
+    ? await whatsappDb.listFinancialPlanActions(userId, currentPlan.id)
+    : [];
   const enriched = {
     ...snapshot,
     counts: {
       ...snapshot.counts,
-      pendingPlanActions: planActions.filter(action => action.status === "pendente").length,
+      pendingPlanActions: planActions.filter(
+        action => action.status === "pendente"
+      ).length,
     },
   };
   const baseFinalized = { ...enriched, summary: buildSummary(enriched) };
-  const memory = await getFinancialAdvisorMemory(userId, { currentSnapshot: baseFinalized });
+  const memory = await getFinancialAdvisorMemory(userId, {
+    currentSnapshot: baseFinalized,
+  });
   const finalized = {
     ...baseFinalized,
-    topRecommendations: personalizeFinancialRecommendations(baseFinalized, memory),
+    topRecommendations: personalizeFinancialRecommendations(
+      baseFinalized,
+      memory
+    ),
     summary: personalizeFinancialAdvisorSummary(baseFinalized, memory),
   };
 
@@ -2204,13 +2463,15 @@ function buildPlanActions(snapshot: FinancialGovernanceSnapshot) {
     title: recommendation.title,
     description: recommendation.description,
     priority:
-      recommendation.kind === "pay_priority_items" || recommendation.kind === "freeze_discretionary"
+      recommendation.kind === "pay_priority_items" ||
+      recommendation.kind === "freeze_discretionary"
         ? ("alta" as const)
         : recommendation.kind === "review_variable_costs"
           ? ("media" as const)
           : ("baixa" as const),
     dueDate:
-      recommendation.kind === "pay_priority_items" && snapshot.paymentPriority[0]
+      recommendation.kind === "pay_priority_items" &&
+      snapshot.paymentPriority[0]
         ? snapshot.paymentPriority[0].dueDate
         : null,
     status: "pendente" as const,
@@ -2230,7 +2491,8 @@ function buildPlanActions(snapshot: FinancialGovernanceSnapshot) {
     {
       actionType: "protect_tax_provision",
       title: "Separar a provisão de impostos",
-      description: "Garantir que o valor tributário do mês não entre no caixa disponível para gasto.",
+      description:
+        "Garantir que o valor tributário do mês não entre no caixa disponível para gasto.",
       priority: "alta" as const,
       dueDate: null,
       status: "pendente" as const,
@@ -2240,11 +2502,14 @@ function buildPlanActions(snapshot: FinancialGovernanceSnapshot) {
     {
       actionType: "review_variable_costs",
       title: "Revisar gastos variáveis do mês",
-      description: "Mapear o que pode ser cortado, renegociado ou adiado antes do próximo ciclo.",
+      description:
+        "Mapear o que pode ser cortado, renegociado ou adiado antes do próximo ciclo.",
       priority: "media" as const,
       dueDate: null,
       status: "pendente" as const,
-      metadata: JSON.stringify({ paymentPriorityCount: snapshot.paymentPriority.length }),
+      metadata: JSON.stringify({
+        paymentPriorityCount: snapshot.paymentPriority.length,
+      }),
       snoozedUntil: null,
     },
   ].slice(0, 4);
@@ -2267,7 +2532,8 @@ export async function generateFinancialAdvisorMonthlyPlan(params: {
   const messageToUser = await buildNarrative({
     kind: "monthly_plan",
     snapshot,
-    extra: "Monte um plano mensal executivo com foco em disciplina de caixa, ordem de pagamento e recomposição de reserva.",
+    extra:
+      "Monte um plano mensal executivo com foco em disciplina de caixa, ordem de pagamento e recomposição de reserva.",
   });
 
   const plan = await whatsappDb.upsertFinancialPlan({
@@ -2284,7 +2550,11 @@ export async function generateFinancialAdvisorMonthlyPlan(params: {
     rawAnalysis: JSON.stringify({ snapshot, actions, summary: messageToUser }),
     confirmedAt: params.confirmed === false ? null : new Date(),
   });
-  const storedActions = await whatsappDb.replaceFinancialPlanActions(params.userId, plan.id, actions);
+  const storedActions = await whatsappDb.replaceFinancialPlanActions(
+    params.userId,
+    plan.id,
+    actions
+  );
 
   await persistSnapshot({
     userId: params.userId,
@@ -2297,7 +2567,12 @@ export async function generateFinancialAdvisorMonthlyPlan(params: {
     confirmedAt: params.confirmed === false ? null : new Date(),
   });
 
-  return { plan, actions: storedActions, snapshot, messageToUser } satisfies FinancialPlanSummary;
+  return {
+    plan,
+    actions: storedActions,
+    snapshot,
+    messageToUser,
+  } satisfies FinancialPlanSummary;
 }
 
 export async function getFinancialAdvisorDailyDigest(params: {
@@ -2311,15 +2586,21 @@ export async function getFinancialAdvisorDailyDigest(params: {
     referenceDate: params.referenceDate,
     integrationId: params.integrationId,
   });
-  const currentPlan = await whatsappDb.getFinancialPlanByPeriod(params.userId, snapshot.month, snapshot.year);
-  const planActions = currentPlan ? await whatsappDb.listFinancialPlanActions(params.userId, currentPlan.id) : [];
+  const currentPlan = await whatsappDb.getFinancialPlanByPeriod(
+    params.userId,
+    snapshot.month,
+    snapshot.year
+  );
+  const planActions = currentPlan
+    ? await whatsappDb.listFinancialPlanActions(params.userId, currentPlan.id)
+    : [];
   const message = await buildNarrative({ kind: "daily", snapshot });
   const alerts = [
     snapshot.counts.overdueItems > 0
       ? `${snapshot.counts.overdueItems} item(ns) vencido(s) exigem regularização hoje.`
       : null,
     snapshot.counts.overdueCharges > 0
-      ? `${snapshot.counts.overdueCharges} cobrança(s) do Asaas estão em atraso.`
+      ? `${snapshot.counts.overdueCharges} recebimento(s) estão em atraso.`
       : null,
     snapshot.counts.dueThisWeek > 0
       ? `${snapshot.counts.dueThisWeek} compromisso(s) pressionam o caixa nesta semana.`
@@ -2338,7 +2619,9 @@ export async function getFinancialAdvisorDailyDigest(params: {
     snapshot,
     message,
     alerts,
-    actions: planActions.filter(action => action.status === "pendente").slice(0, 3),
+    actions: planActions
+      .filter(action => action.status === "pendente")
+      .slice(0, 3),
   };
 }
 
@@ -2353,18 +2636,24 @@ export async function getFinancialAdvisorMonthClose(params: {
     referenceDate: params.referenceDate,
     integrationId: params.integrationId,
   });
-  const currentPlan = await whatsappDb.getFinancialPlanByPeriod(params.userId, snapshot.month, snapshot.year);
+  const currentPlan = await whatsappDb.getFinancialPlanByPeriod(
+    params.userId,
+    snapshot.month,
+    snapshot.year
+  );
   const targetBalance = toNumber(currentPlan?.targetBalance);
   const deviation = clampCurrency(snapshot.safeToSpendMonth - targetBalance);
   const excessSignals = [
-    snapshot.guardrails.company.variableCosts > snapshot.guardrails.company.fixedCosts * 0.75
+    snapshot.guardrails.company.variableCosts >
+    snapshot.guardrails.company.fixedCosts * 0.75
       ? "Custos variáveis da empresa pesaram acima do ideal."
       : null,
-    snapshot.guardrails.personal.variableCosts > snapshot.guardrails.personal.fixedCosts * 0.65
+    snapshot.guardrails.personal.variableCosts >
+    snapshot.guardrails.personal.fixedCosts * 0.65
       ? "Gastos variáveis pessoais ficaram acima do ponto de conforto."
       : null,
     snapshot.counts.overdueCharges > 0
-      ? "Cobranças em atraso do Asaas reduziram previsibilidade do caixa."
+      ? "Recebimentos em atraso reduziram a previsibilidade do caixa."
       : null,
   ].filter(Boolean) as string[];
   const focusNextMonth =
@@ -2376,7 +2665,12 @@ export async function getFinancialAdvisorMonthClose(params: {
   const message = await buildNarrative({
     kind: "month_close",
     snapshot,
-    extra: JSON.stringify({ targetBalance, deviation, focusNextMonth, excessSignals }),
+    extra: JSON.stringify({
+      targetBalance,
+      deviation,
+      focusNextMonth,
+      excessSignals,
+    }),
   });
 
   await persistSnapshot({
@@ -2387,16 +2681,30 @@ export async function getFinancialAdvisorMonthClose(params: {
     snapshot: { ...snapshot, summary: message },
   });
 
-  return { snapshot, targetBalance, deviation, focusNextMonth, excessSignals, message };
+  return {
+    snapshot,
+    targetBalance,
+    deviation,
+    focusNextMonth,
+    excessSignals,
+    message,
+  };
 }
 
-async function resolvePriorityItemForExecution(userId: number, metadata: AnyRecord) {
+async function resolvePriorityItemForExecution(
+  userId: number,
+  metadata: AnyRecord
+) {
   const fromMetadata = normalizePaymentPriorityItem(
-    metadata.targetItem && typeof metadata.targetItem === "object" ? metadata.targetItem : null
+    metadata.targetItem && typeof metadata.targetItem === "object"
+      ? metadata.targetItem
+      : null
   );
   if (isActionablePaymentPriorityItem(fromMetadata)) return fromMetadata;
 
-  const snapshot = await getFinancialAdvisorSnapshot(userId, { persist: false });
+  const snapshot = await getFinancialAdvisorSnapshot(userId, {
+    persist: false,
+  });
   return findFirstActionablePaymentPriorityItem(snapshot.paymentPriority);
 }
 
@@ -2410,7 +2718,8 @@ async function executePaymentPriorityAction(params: {
   if (!isActionablePaymentPriorityItem(item)) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "Nao encontrei uma prioridade executavel para concluir no plano atual.",
+      message:
+        "Nao encontrei uma prioridade executavel para concluir no plano atual.",
     });
   }
 
@@ -2472,11 +2781,15 @@ async function executePaymentPriorityAction(params: {
       });
     }
 
-    const currentBalance = clampCurrency(Math.max(toNumber(debt.currentBalance), 0));
+    const currentBalance = clampCurrency(
+      Math.max(toNumber(debt.currentBalance), 0)
+    );
     const installmentAmount = clampCurrency(
       Math.max(toNumber(debt.monthlyPayment), 0) || currentBalance
     );
-    const nextBalance = clampCurrency(Math.max(currentBalance - installmentAmount, 0));
+    const nextBalance = clampCurrency(
+      Math.max(currentBalance - installmentAmount, 0)
+    );
     const nextPaidInstallments = Math.max(
       0,
       Math.min(
@@ -2509,56 +2822,54 @@ async function executePaymentPriorityAction(params: {
 
   throw new TRPCError({
     code: "PRECONDITION_FAILED",
-    message: "Essa prioridade ainda nao tem execucao automatica disponivel no painel.",
+    message:
+      "Essa prioridade ainda nao tem execucao automatica disponivel no painel.",
   });
 }
 
-async function resolveChargeFollowUpTarget(userId: number, metadata: AnyRecord) {
-  const fromMetadata = normalizeAsaasChargeFollowUpItem(
-    metadata.targetCharge && typeof metadata.targetCharge === "object" ? metadata.targetCharge : null
+async function resolveChargeFollowUpTarget(
+  userId: number,
+  metadata: AnyRecord
+) {
+  const fromMetadata = normalizeRevenueFollowUpTarget(
+    metadata.targetRevenue && typeof metadata.targetRevenue === "object"
+      ? metadata.targetRevenue
+      : null
   );
   if (fromMetadata) return fromMetadata;
 
-  const charges = await asaasDb.listAsaasCharges(userId);
-  return pickChargeFollowUpTarget(charges);
+  const revenues = (
+    (await db.getRevenues(userId).catch(() => null))?.data ?? []
+  ).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  return pickChargeFollowUpTarget(revenues);
 }
 
-async function resolveChargeCreationTarget(userId: number, metadata: AnyRecord) {
-  const fromMetadata = normalizeAsaasChargeCreationTarget(
-    metadata.targetRevenue && typeof metadata.targetRevenue === "object" ? metadata.targetRevenue : null
-  );
-  if (fromMetadata) return fromMetadata;
-
-  const revenues = (await db.getRevenues(userId, undefined, undefined, {
-    page: 1,
-    limit: 200,
-    sortBy: "dueDate",
-    sortOrder: "asc",
-  }).catch(() => null))?.data ?? [];
-  return pickChargeCreationTarget(revenues);
-}
-
-async function resolveRevenueReceiptTarget(userId: number, metadata: AnyRecord, referenceDate: string) {
+async function resolveRevenueReceiptTarget(
+  userId: number,
+  metadata: AnyRecord,
+  referenceDate: string
+) {
   const fromMetadata = normalizeRevenueReceiptTarget(
-    metadata.targetRevenue && typeof metadata.targetRevenue === "object" ? metadata.targetRevenue : null
+    metadata.targetRevenue && typeof metadata.targetRevenue === "object"
+      ? metadata.targetRevenue
+      : null
   );
   if (fromMetadata) return fromMetadata;
 
-  const revenues =
-    (await db
-      .getRevenues(userId, undefined, undefined, {
-        page: 1,
-        limit: 200,
-        sortBy: "dueDate",
-        sortOrder: "asc",
-      })
-      .catch(() => null))?.data ?? [];
+  const revenues = (
+    (await db.getRevenues(userId).catch(() => null))?.data ?? []
+  ).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   return pickRevenueReceiptTarget(revenues, referenceDate);
 }
 
-async function resolveDebtRenegotiationTarget(userId: number, metadata: AnyRecord) {
+async function resolveDebtRenegotiationTarget(
+  userId: number,
+  metadata: AnyRecord
+) {
   const fromMetadata = normalizeDebtRenegotiationTarget(
-    metadata.targetDebt && typeof metadata.targetDebt === "object" ? metadata.targetDebt : null
+    metadata.targetDebt && typeof metadata.targetDebt === "object"
+      ? metadata.targetDebt
+      : null
   );
   if (fromMetadata) return fromMetadata;
 
@@ -2566,13 +2877,23 @@ async function resolveDebtRenegotiationTarget(userId: number, metadata: AnyRecor
   return pickDebtRenegotiationTarget(debts);
 }
 
-export async function confirmFinancialAdvisorAction(userId: number, actionId: number) {
+export async function confirmFinancialAdvisorAction(
+  userId: number,
+  actionId: number
+) {
   const action = await whatsappDb.getFinancialPlanActionById(userId, actionId);
   if (!action) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Acao do plano nao encontrada." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Acao do plano nao encontrada.",
+    });
   }
   if (action.status === "concluida") {
-    return { success: true, message: "Acao ja estava concluida.", executionKind: "noop" as const };
+    return {
+      success: true,
+      message: "Acao ja estava concluida.",
+      executionKind: "noop" as const,
+    };
   }
 
   const metadata = parseActionMetadata(action.metadata);
@@ -2599,9 +2920,12 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
         kind: execution.executionKind,
         targetItem: targetItem,
         updatedStatus: execution.updatedStatus,
-        nextBalance: "nextBalance" in execution ? execution.nextBalance : undefined,
+        nextBalance:
+          "nextBalance" in execution ? execution.nextBalance : undefined,
         paidInstallments:
-          "paidInstallments" in execution ? execution.paidInstallments : undefined,
+          "paidInstallments" in execution
+            ? execution.paidInstallments
+            : undefined,
         executedAt: executedAt.toISOString(),
       }),
     });
@@ -2615,153 +2939,48 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
   }
 
   if (action.actionType === "charge_follow_up") {
-    const targetCharge = await resolveChargeFollowUpTarget(userId, metadata);
-    if (!targetCharge) {
+    const targetRevenue = await resolveChargeFollowUpTarget(userId, metadata);
+    if (!targetRevenue) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: "Nao encontrei uma cobranca aberta do Asaas para acompanhar agora.",
+        message: "Nao encontrei um recebimento aberto para acompanhar agora.",
       });
     }
 
-    const refreshedCharge = await asaas.resendAsaasCharge(userId, targetCharge.id);
-    const billingType = String(refreshedCharge.billingType || targetCharge.billingType || "PIX").toUpperCase();
-    const dueDate = String(refreshedCharge.dueDate || targetCharge.dueDate || "");
-    const value = clampCurrency(toNumber(refreshedCharge.value ?? targetCharge.value));
+    const revenue = await db.getRevenueById(userId, targetRevenue.revenueId);
+    if (!revenue) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "A receita selecionada para acompanhamento nao existe mais.",
+      });
+    }
+
+    const dueDate = String(revenue.dueDate || targetRevenue.dueDate || "");
+    const value = clampCurrency(
+      toNumber(revenue.netAmount ?? revenue.grossAmount ?? targetRevenue.value)
+    );
 
     await whatsappDb.updateFinancialPlanAction(actionId, userId, {
       status: "concluida",
       metadata: buildExecutedActionMetadata(metadata, {
         kind: "charge_follow_up",
-        targetCharge: {
-          id: refreshedCharge.id ?? targetCharge.id,
-          asaasChargeId: refreshedCharge.asaasChargeId ?? targetCharge.asaasChargeId,
-          description: refreshedCharge.description ?? targetCharge.description,
-          billingType,
-          status: refreshedCharge.status ?? targetCharge.status,
-          dueDate,
-          value,
-          invoiceUrl: refreshedCharge.invoiceUrl ?? targetCharge.invoiceUrl ?? null,
-          bankSlipUrl: refreshedCharge.bankSlipUrl ?? targetCharge.bankSlipUrl ?? null,
-          pixQrCodeUrl: refreshedCharge.pixQrCodeUrl ?? targetCharge.pixQrCodeUrl ?? null,
-          pixCopyAndPaste: refreshedCharge.pixCopyAndPaste ?? targetCharge.pixCopyAndPaste ?? null,
-        },
-        executedAt: executedAt.toISOString(),
-      }),
-    });
-
-    const accessHint =
-      billingType === "PIX"
-        ? refreshedCharge.pixCopyAndPaste || refreshedCharge.pixQrCodeUrl
-          ? "PIX atualizado e pronto para compartilhamento."
-          : "PIX reenviado e sincronizado."
-        : refreshedCharge.bankSlipUrl || refreshedCharge.invoiceUrl
-          ? "Link do boleto/fatura atualizado para novo follow-up."
-          : "Cobranca reenviada e sincronizada.";
-
-    return {
-      success: true,
-      message: `Follow-up executado para ${targetCharge.description} (${dueDate}) no valor de R$ ${value.toFixed(2)}. ${accessHint}`,
-      executionKind: "charge_follow_up" as const,
-      targetChargeId: refreshedCharge.id ?? targetCharge.id,
-      billingType,
-      dueDate,
-      value,
-    };
-  }
-
-  if (action.actionType === "create_asaas_charge") {
-    const targetRevenue = await resolveChargeCreationTarget(userId, metadata);
-    if (!targetRevenue) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "Nao encontrei uma receita elegivel para gerar cobranca agora.",
-      });
-    }
-
-    const revenue = await asaasDb.getRevenueById(userId, targetRevenue.revenueId);
-    if (!revenue) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "A receita selecionada para cobranca nao existe mais.",
-      });
-    }
-    if (String(revenue.asaasPaymentId ?? "").trim()) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "Essa receita ja possui uma cobranca Asaas vinculada.",
-      });
-    }
-
-    const clients = await db.getClients(userId);
-    const matchedClient = clients.find(client =>
-      normalizeTextToken(client.name) === normalizeTextToken(targetRevenue.clientName || revenue.client)
-    );
-
-    if (!matchedClient) {
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "Nao encontrei um cliente correspondente para gerar a cobranca no Asaas.",
-      });
-    }
-
-    const createdCharge = await asaas.createAsaasCharge(userId, {
-      clientId: matchedClient.id,
-      revenueId: revenue.id,
-      description: revenue.description,
-      value: String(revenue.grossAmount ?? targetRevenue.value.toFixed(2)),
-      dueDate: revenue.dueDate,
-      billingType: targetRevenue.billingType,
-    });
-
-    const billingType = String(createdCharge.billingType || targetRevenue.billingType || "PIX").toUpperCase();
-    const dueDate = String(createdCharge.dueDate || revenue.dueDate || targetRevenue.dueDate);
-    const value = clampCurrency(toNumber(createdCharge.value ?? revenue.grossAmount ?? targetRevenue.value));
-
-    await whatsappDb.updateFinancialPlanAction(actionId, userId, {
-      status: "concluida",
-      metadata: buildExecutedActionMetadata(metadata, {
-        kind: "create_asaas_charge",
         targetRevenue: {
           revenueId: revenue.id,
           description: revenue.description,
-          clientName: matchedClient.name,
+          clientName: revenue.client ?? targetRevenue.clientName ?? null,
+          status: revenue.status,
           dueDate,
           value,
-          billingType,
-        },
-        targetCharge: {
-          id: createdCharge.id,
-          asaasChargeId: createdCharge.asaasChargeId,
-          description: createdCharge.description,
-          billingType,
-          status: createdCharge.status,
-          dueDate,
-          value,
-          invoiceUrl: createdCharge.invoiceUrl ?? null,
-          bankSlipUrl: createdCharge.bankSlipUrl ?? null,
-          pixQrCodeUrl: createdCharge.pixQrCodeUrl ?? null,
-          pixCopyAndPaste: createdCharge.pixCopyAndPaste ?? null,
         },
         executedAt: executedAt.toISOString(),
       }),
     });
 
-    const accessHint =
-      billingType === "PIX"
-        ? createdCharge.pixCopyAndPaste || createdCharge.pixQrCodeUrl
-          ? "PIX criado e pronto para compartilhamento."
-          : "Cobranca PIX criada e sincronizada."
-        : createdCharge.bankSlipUrl || createdCharge.invoiceUrl
-          ? "Boleto criado com link pronto para envio."
-          : "Cobranca criada e sincronizada no Asaas.";
-
     return {
       success: true,
-      message: `Cobranca criada para ${matchedClient.name} em ${dueDate}, no valor de R$ ${value.toFixed(2)}. ${accessHint}`,
-      executionKind: "create_asaas_charge" as const,
-      targetChargeId: createdCharge.id,
+      message: `Follow-up manual registrado para ${revenue.description} (${dueDate}), no valor de R$ ${value.toFixed(2)}. O recebimento continua pendente e sera monitorado.`,
+      executionKind: "charge_follow_up" as const,
       revenueId: revenue.id,
-      billingType,
       dueDate,
       value,
     };
@@ -2769,15 +2988,20 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
 
   if (action.actionType === "register_revenue_receipt") {
     const executedDate = getPartsInTimeZone(executedAt, DEFAULT_TIMEZONE).iso;
-    const targetRevenue = await resolveRevenueReceiptTarget(userId, metadata, executedDate);
+    const targetRevenue = await resolveRevenueReceiptTarget(
+      userId,
+      metadata,
+      executedDate
+    );
     if (!targetRevenue) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: "Nao encontrei uma receita elegivel para registrar recebimento agora.",
+        message:
+          "Nao encontrei uma receita elegivel para registrar recebimento agora.",
       });
     }
 
-    const revenue = await asaasDb.getRevenueById(userId, targetRevenue.revenueId);
+    const revenue = await db.getRevenueById(userId, targetRevenue.revenueId);
     if (!revenue) {
       throw new TRPCError({
         code: "NOT_FOUND",
@@ -2805,7 +3029,9 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
           description: revenue.description,
           clientName: revenue.client ?? null,
           dueDate: revenue.dueDate,
-          value: clampCurrency(toNumber(revenue.netAmount ?? revenue.grossAmount)),
+          value: clampCurrency(
+            toNumber(revenue.netAmount ?? revenue.grossAmount)
+          ),
         },
         receivedDate: executedDate,
         executedAt: executedAt.toISOString(),
@@ -2847,7 +3073,9 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
     }
 
     const renegotiationNote = `Renegociacao iniciada pelo mentor em ${executedAt.toISOString()}. Rever prazo, parcela e condicoes com ${debt.creditor}.`;
-    const nextNotes = [String(debt.notes ?? "").trim(), renegotiationNote].filter(Boolean).join(" | ");
+    const nextNotes = [String(debt.notes ?? "").trim(), renegotiationNote]
+      .filter(Boolean)
+      .join(" | ");
 
     await db.updateDebt(debt.id, userId, {
       status: "renegociada",
@@ -2865,7 +3093,9 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
           currentBalance: clampCurrency(toNumber(debt.currentBalance)),
           monthlyPayment: clampCurrency(toNumber(debt.monthlyPayment)),
           priority:
-            debt.priority === "alta" || debt.priority === "baixa" ? debt.priority : "media",
+            debt.priority === "alta" || debt.priority === "baixa"
+              ? debt.priority
+              : "media",
           status: "renegociada",
         },
         executedAt: executedAt.toISOString(),
@@ -2887,7 +3117,8 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
     action.actionType === "transfer_personal_reserve"
   ) {
     const target =
-      metadata.target === "pessoal" || action.actionType === "transfer_personal_reserve"
+      metadata.target === "pessoal" ||
+      action.actionType === "transfer_personal_reserve"
         ? ("pessoal" as const)
         : ("empresa" as const);
     const amount = clampCurrency(Math.max(toNumber(metadata.amount ?? 0), 0));
@@ -2895,7 +3126,8 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
     if (amount <= 0) {
       throw new TRPCError({
         code: "PRECONDITION_FAILED",
-        message: "Nao encontrei valor valido para executar o aporte de reserva.",
+        message:
+          "Nao encontrei valor valido para executar o aporte de reserva.",
       });
     }
 
@@ -2951,13 +3183,23 @@ export async function confirmFinancialAdvisorAction(userId: number, actionId: nu
   };
 }
 
-export async function snoozeFinancialAdvisorAlert(userId: number, eventId: number, hours = 24) {
+export async function snoozeFinancialAdvisorAlert(
+  userId: number,
+  eventId: number,
+  hours = 24
+) {
   const event = await whatsappDb.getNotificationEventById(userId, eventId);
   if (!event) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Alerta nao encontrado." });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Alerta nao encontrado.",
+    });
   }
   const snoozedUntil = new Date(Date.now() + hours * 60 * 60 * 1000);
-  await whatsappDb.updateNotificationEvent(eventId, userId, { status: "adiado", snoozedUntil });
+  await whatsappDb.updateNotificationEvent(eventId, userId, {
+    status: "adiado",
+    snoozedUntil,
+  });
   return { success: true, snoozedUntil };
 }
 
@@ -3007,7 +3249,9 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     referenceDate: params.referenceDate,
     persist: false,
   });
-  const memory = await getFinancialAdvisorMemory(params.userId, { currentSnapshot: snapshot });
+  const memory = await getFinancialAdvisorMemory(params.userId, {
+    currentSnapshot: snapshot,
+  });
   const mentorMode = getFinancialAdvisorMentorMode(memory);
   const memoryAlert =
     memory.historyMonths >= 2
@@ -3021,7 +3265,9 @@ export async function buildFinancialAdvisorAssistantReply(params: {
         "Posso registrar agora seu plano financeiro do mês com metas, limites de gasto, reservas e prioridades. Responda CONFIRMAR para eu criar esse plano no sistema.",
       summary: snapshot.summary,
       alerts: snapshot.counts.overdueItems
-        ? [`${snapshot.counts.overdueItems} item(ns) vencido(s) devem entrar na primeira linha do plano.`]
+        ? [
+            `${snapshot.counts.overdueItems} item(ns) vencido(s) devem entrar na primeira linha do plano.`,
+          ]
         : memoryAlert
           ? [memoryAlert]
           : [],
@@ -3059,20 +3305,23 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     params.intent === "installment_purchase_decision"
   ) {
     const amount = clampCurrency(Math.max(params.decisionAmount ?? 0, 0));
-    const installments = Math.max(Math.round(params.decisionInstallments ?? 0), 0);
+    const installments = Math.max(
+      Math.round(params.decisionInstallments ?? 0),
+      0
+    );
     if (amount <= 0) {
       const prompt =
         params.intent === "company_withdrawal_decision"
           ? "Posso avaliar isso, mas me diga o valor exato da retirada. Exemplo: 'Posso tirar R$ 3.000 da empresa hoje?'"
           : params.intent === "recurring_withdrawal_decision"
             ? "Me diga o valor mensal dessa retirada recorrente para eu medir o impacto no caixa. Exemplo: 'Posso tirar R$ 5.000 todo mes da empresa?'"
-          : params.intent === "personal_spend_decision"
-            ? "Me diga o valor exato do gasto para eu medir o impacto no seu mês. Exemplo: 'Posso gastar R$ 1.200 no pessoal este mês?'"
-            : params.intent === "monthly_cost_decision"
-              ? "Me diga o valor mensal desse novo custo para eu avaliar o impacto. Exemplo: 'Posso assumir um custo mensal de R$ 2.500?'"
-              : params.intent === "hiring_decision"
-                ? "Me diga o custo mensal dessa contratacao para eu avaliar o impacto. Exemplo: 'Posso contratar alguem por R$ 4.000 por mes?'"
-                : "Me diga o valor total da compra parcelada. Exemplo: 'Posso comprar um notebook de R$ 12.000 em 12x?'";
+            : params.intent === "personal_spend_decision"
+              ? "Me diga o valor exato do gasto para eu medir o impacto no seu mês. Exemplo: 'Posso gastar R$ 1.200 no pessoal este mês?'"
+              : params.intent === "monthly_cost_decision"
+                ? "Me diga o valor mensal desse novo custo para eu avaliar o impacto. Exemplo: 'Posso assumir um custo mensal de R$ 2.500?'"
+                : params.intent === "hiring_decision"
+                  ? "Me diga o custo mensal dessa contratacao para eu avaliar o impacto. Exemplo: 'Posso contratar alguem por R$ 4.000 por mes?'"
+                  : "Me diga o valor total da compra parcelada. Exemplo: 'Posso comprar um notebook de R$ 12.000 em 12x?'";
 
       return {
         snapshot,
@@ -3091,7 +3340,10 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       };
     }
 
-    if (params.intent === "installment_purchase_decision" && installments <= 0) {
+    if (
+      params.intent === "installment_purchase_decision" &&
+      installments <= 0
+    ) {
       return {
         snapshot,
         reply:
@@ -3111,26 +3363,31 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     }
 
     const scenarios = evaluateFinancialDecisionScenariosFromSnapshot(snapshot, {
-      withdrawalAmount: params.intent === "company_withdrawal_decision" ? amount : 0,
-      recurringWithdrawalAmount: params.intent === "recurring_withdrawal_decision" ? amount : 0,
-      personalSpendAmount: params.intent === "personal_spend_decision" ? amount : 0,
+      withdrawalAmount:
+        params.intent === "company_withdrawal_decision" ? amount : 0,
+      recurringWithdrawalAmount:
+        params.intent === "recurring_withdrawal_decision" ? amount : 0,
+      personalSpendAmount:
+        params.intent === "personal_spend_decision" ? amount : 0,
       monthlyCostAmount: params.intent === "monthly_cost_decision" ? amount : 0,
       hiringCostAmount: params.intent === "hiring_decision" ? amount : 0,
-      installmentPurchaseAmount: params.intent === "installment_purchase_decision" ? amount : 0,
-      installmentPurchaseMonths: params.intent === "installment_purchase_decision" ? installments : 0,
+      installmentPurchaseAmount:
+        params.intent === "installment_purchase_decision" ? amount : 0,
+      installmentPurchaseMonths:
+        params.intent === "installment_purchase_decision" ? installments : 0,
     });
     const assessment =
       params.intent === "company_withdrawal_decision"
         ? scenarios.scenarios.withdrawal
         : params.intent === "recurring_withdrawal_decision"
           ? scenarios.scenarios.recurringWithdrawal
-        : params.intent === "personal_spend_decision"
-          ? scenarios.scenarios.personalSpend
-          : params.intent === "monthly_cost_decision"
-            ? scenarios.scenarios.monthlyCost
-            : params.intent === "hiring_decision"
-              ? scenarios.scenarios.hiring
-              : scenarios.scenarios.installmentPurchase;
+          : params.intent === "personal_spend_decision"
+            ? scenarios.scenarios.personalSpend
+            : params.intent === "monthly_cost_decision"
+              ? scenarios.scenarios.monthlyCost
+              : params.intent === "hiring_decision"
+                ? scenarios.scenarios.hiring
+                : scenarios.scenarios.installmentPurchase;
     const metricMap = Object.fromEntries(
       assessment.metrics.map(metric => [metric.label, metric.value])
     ) as Record<string, number>;
@@ -3140,13 +3397,13 @@ export async function buildFinancialAdvisorAssistantReply(params: {
         ? `${assessment.summary} Depois disso, a folga operacional estimada ficaria em R$ ${(metricMap["Folga apos retirada"] ?? 0).toFixed(2)} e o caixa projetado da empresa em R$ ${(metricMap["Caixa projetado empresa"] ?? 0).toFixed(2)}.`
         : params.intent === "recurring_withdrawal_decision"
           ? `${assessment.summary} Com essa retirada fixa, a folga operacional cairia para R$ ${(metricMap["Folga apos retirada recorrente"] ?? 0).toFixed(2)}, o caixa projetado da empresa ficaria em R$ ${(metricMap["Caixa projetado empresa"] ?? 0).toFixed(2)} e o pessoal iria para R$ ${(metricMap["Caixa pessoal projetado"] ?? 0).toFixed(2)}.`
-        : params.intent === "personal_spend_decision"
-          ? `${assessment.summary} Depois desse gasto, sua folga pessoal estimada ficaria em R$ ${(metricMap["Folga pessoal apos gasto"] ?? 0).toFixed(2)} e o caixa pessoal projetado em R$ ${(metricMap["Caixa pessoal projetado"] ?? 0).toFixed(2)}.`
-          : params.intent === "monthly_cost_decision"
-            ? `${assessment.summary} Depois disso, o caixa projetado da empresa iria para R$ ${(metricMap["Caixa projetado apos custo"] ?? 0).toFixed(2)} e o limite seguro do mês cairia para R$ ${(metricMap["Limite seguro apos custo"] ?? 0).toFixed(2)}.`
-            : params.intent === "hiring_decision"
-              ? `${assessment.summary} Depois da contratacao, a folga operacional cairia para R$ ${(metricMap["Folga apos contratacao"] ?? 0).toFixed(2)} e a folha total estimada iria para R$ ${(metricMap["Folha total estimada"] ?? 0).toFixed(2)}.`
-              : `${assessment.summary} Nesse parcelamento, a parcela mensal ficaria em R$ ${(metricMap["Parcela mensal"] ?? 0).toFixed(2)} por ${Math.round(metricMap["Quantidade de parcelas"] ?? installments)} mes(es), deixando a folga em R$ ${(metricMap["Folga apos parcela"] ?? 0).toFixed(2)}.`;
+          : params.intent === "personal_spend_decision"
+            ? `${assessment.summary} Depois desse gasto, sua folga pessoal estimada ficaria em R$ ${(metricMap["Folga pessoal apos gasto"] ?? 0).toFixed(2)} e o caixa pessoal projetado em R$ ${(metricMap["Caixa pessoal projetado"] ?? 0).toFixed(2)}.`
+            : params.intent === "monthly_cost_decision"
+              ? `${assessment.summary} Depois disso, o caixa projetado da empresa iria para R$ ${(metricMap["Caixa projetado apos custo"] ?? 0).toFixed(2)} e o limite seguro do mês cairia para R$ ${(metricMap["Limite seguro apos custo"] ?? 0).toFixed(2)}.`
+              : params.intent === "hiring_decision"
+                ? `${assessment.summary} Depois da contratacao, a folga operacional cairia para R$ ${(metricMap["Folga apos contratacao"] ?? 0).toFixed(2)} e a folha total estimada iria para R$ ${(metricMap["Folha total estimada"] ?? 0).toFixed(2)}.`
+                : `${assessment.summary} Nesse parcelamento, a parcela mensal ficaria em R$ ${(metricMap["Parcela mensal"] ?? 0).toFixed(2)} por ${Math.round(metricMap["Quantidade de parcelas"] ?? installments)} mes(es), deixando a folga em R$ ${(metricMap["Folga apos parcela"] ?? 0).toFixed(2)}.`;
 
     const alerts = [
       assessment.tone !== "healthy"
@@ -3176,8 +3433,10 @@ export async function buildFinancialAdvisorAssistantReply(params: {
       reply: `A recomendação atual é separar R$ ${snapshot.companyReserveRecommendation.toFixed(2)} para a reserva da empresa e R$ ${snapshot.personalReserveRecommendation.toFixed(2)} para a reserva pessoal, desde que você confirme essa alocação.`,
       summary: snapshot.summary,
       alerts: memoryAlert ? [memoryAlert] : [],
-      suggestedActions: snapshot.topRecommendations.filter(action =>
-        action.kind === "transfer_company_reserve" || action.kind === "transfer_personal_reserve"
+      suggestedActions: snapshot.topRecommendations.filter(
+        action =>
+          action.kind === "transfer_company_reserve" ||
+          action.kind === "transfer_personal_reserve"
       ),
       requiresConfirmation: true,
       mentorMode,
@@ -3185,7 +3444,11 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     };
   }
 
-  if (params.intent === "payment_priority" || params.intent === "upcoming_bills" || params.intent === "overdue_items") {
+  if (
+    params.intent === "payment_priority" ||
+    params.intent === "upcoming_bills" ||
+    params.intent === "overdue_items"
+  ) {
     const topItems = snapshot.paymentPriority.slice(0, 3);
     return {
       snapshot,
@@ -3194,7 +3457,9 @@ export async function buildFinancialAdvisorAssistantReply(params: {
         : "Nao encontrei pagamentos pressionando o caixa agora, mas sigo monitorando o calendário do mês.",
       summary: snapshot.summary,
       alerts: snapshot.counts.overdueItems
-        ? [`${snapshot.counts.overdueItems} item(ns) vencido(s) estão no topo da prioridade.`]
+        ? [
+            `${snapshot.counts.overdueItems} item(ns) vencido(s) estão no topo da prioridade.`,
+          ]
         : memoryAlert
           ? [memoryAlert]
           : [],
@@ -3205,7 +3470,10 @@ export async function buildFinancialAdvisorAssistantReply(params: {
     };
   }
 
-  if (params.intent === "financial_health" || params.intent === "consolidated_analysis") {
+  if (
+    params.intent === "financial_health" ||
+    params.intent === "consolidated_analysis"
+  ) {
     const label =
       snapshot.cashRiskLevel === "critical"
         ? "crítico"

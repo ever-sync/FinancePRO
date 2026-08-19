@@ -1,4 +1,4 @@
-import { supabase } from "./supabase";
+import { supabase, supabaseConfigurationError } from "./supabase";
 import type { Session, User as SupabaseUser } from "@supabase/supabase-js";
 import {
   createContext,
@@ -15,8 +15,15 @@ type AuthState = {
 };
 
 type AuthContextValue = AuthState & {
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null }>;
+  signIn: (
+    email: string,
+    password: string
+  ) => Promise<{ error: string | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    name: string
+  ) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 };
 
@@ -30,6 +37,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
+    if (!supabase) {
+      setState({ session: null, user: null, loading: false });
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setState({ session, user: session?.user ?? null, loading: false });
     });
@@ -44,23 +56,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
-    return { error: null };
-  }, []);
-
-  const signUp = useCallback(async (email: string, password: string, name: string) => {
-    const { error } = await supabase.auth.signUp({
+    if (!supabase) return { error: supabaseConfigurationError };
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
-      options: { data: { name } },
     });
     if (error) return { error: error.message };
     return { error: null };
   }, []);
 
+  const signUp = useCallback(
+    async (email: string, password: string, name: string) => {
+      if (!supabase) return { error: supabaseConfigurationError };
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { name },
+          emailRedirectTo: window.location.origin,
+        },
+      });
+      if (error) return { error: error.message };
+      return { error: null };
+    },
+    []
+  );
+
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    await supabase?.auth.signOut();
   }, []);
 
   return (

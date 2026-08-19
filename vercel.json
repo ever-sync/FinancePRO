@@ -8,10 +8,6 @@
       "maxDuration": 30,
       "includeFiles": "dist/trpc-vercel.js"
     },
-    "api/asaas/webhook.ts": {
-      "maxDuration": 30,
-      "includeFiles": "dist/asaas-webhook.js"
-    },
     "api/whatsapp/uazapi/webhook.ts": {
       "maxDuration": 30,
       "includeFiles": "dist/whatsapp-webhook.js"
@@ -31,6 +27,9 @@
   },
   "rewrites": [
     { "source": "/api/trpc/:path*", "destination": "/api/trpc/[trpc]" },
-    { "source": "/((?!api/|assets/|favicon\\.svg$).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/|assets/|favicon\\.svg$).*)",
+      "destination": "/index.html"
+    }
   ]
 }

@@ -30,6 +30,17 @@ export async function getWhatsAppIntegration(userId: number) {
   return record;
 }
 
+export async function getWhatsAppIntegrationById(integrationId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [record] = await db
+    .select()
+    .from(whatsappIntegrations)
+    .where(eq(whatsappIntegrations.id, integrationId))
+    .limit(1);
+  return record;
+}
+
 export async function listEnabledWhatsAppIntegrations() {
   const db = await getDb();
   if (!db) return [];
@@ -68,7 +79,10 @@ export async function getWhatsAppIntegrationByApiToken(apiToken: string) {
 export async function upsertWhatsAppIntegration(
   userId: number,
   data: Partial<InsertWhatsAppIntegration> &
-    Pick<InsertWhatsAppIntegration, "provider" | "instanceId" | "apiBaseUrl" | "authorizedPhone">
+    Pick<
+      InsertWhatsAppIntegration,
+      "provider" | "instanceId" | "apiBaseUrl" | "authorizedPhone"
+    >
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -104,7 +118,10 @@ export async function upsertWhatsAppIntegration(
     lastMessageReceivedAt: data.lastMessageReceivedAt ?? null,
     lastMessageSentAt: data.lastMessageSentAt ?? null,
   };
-  const [created] = await db.insert(whatsappIntegrations).values(insertPayload).returning();
+  const [created] = await db
+    .insert(whatsappIntegrations)
+    .values(insertPayload)
+    .returning();
   return created;
 }
 
@@ -152,13 +169,21 @@ export async function touchWhatsAppOutbound(integrationId: number) {
     .where(eq(whatsappIntegrations.id, integrationId));
 }
 
-export async function getWhatsAppContactByPhone(userId: number, phoneNumber: string) {
+export async function getWhatsAppContactByPhone(
+  userId: number,
+  phoneNumber: string
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
     .select()
     .from(whatsappContacts)
-    .where(and(eq(whatsappContacts.userId, userId), eq(whatsappContacts.phoneNumber, phoneNumber)))
+    .where(
+      and(
+        eq(whatsappContacts.userId, userId),
+        eq(whatsappContacts.phoneNumber, phoneNumber)
+      )
+    )
     .limit(1);
   return record;
 }
@@ -193,7 +218,11 @@ export async function upsertWhatsAppContact(
   return created;
 }
 
-export async function getAssistantThread(userId: number, integrationId: number, contactId: number) {
+export async function getAssistantThread(
+  userId: number,
+  integrationId: number,
+  contactId: number
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
@@ -204,6 +233,27 @@ export async function getAssistantThread(userId: number, integrationId: number, 
         eq(assistantThreads.userId, userId),
         eq(assistantThreads.integrationId, integrationId),
         eq(assistantThreads.contactId, contactId)
+      )
+    )
+    .limit(1);
+  return record;
+}
+
+export async function getAssistantThreadById(
+  userId: number,
+  integrationId: number,
+  threadId: number
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [record] = await db
+    .select()
+    .from(assistantThreads)
+    .where(
+      and(
+        eq(assistantThreads.id, threadId),
+        eq(assistantThreads.userId, userId),
+        eq(assistantThreads.integrationId, integrationId)
       )
     )
     .limit(1);
@@ -248,7 +298,10 @@ export async function listAssistantThreads(userId: number) {
     .select()
     .from(assistantThreads)
     .where(eq(assistantThreads.userId, userId))
-    .orderBy(desc(assistantThreads.lastMessageAt), desc(assistantThreads.updatedAt));
+    .orderBy(
+      desc(assistantThreads.lastMessageAt),
+      desc(assistantThreads.updatedAt)
+    );
 }
 
 export async function createWhatsAppMessage(data: InsertWhatsAppMessage) {
@@ -258,22 +311,66 @@ export async function createWhatsAppMessage(data: InsertWhatsAppMessage) {
   return created;
 }
 
-export async function updateWhatsAppMessage(messageId: number, data: Partial<InsertWhatsAppMessage>) {
+export async function createInboundWhatsAppMessageIfNew(
+  data: InsertWhatsAppMessage
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(whatsappMessages).set(data).where(eq(whatsappMessages.id, messageId));
+  const [created] = await db
+    .insert(whatsappMessages)
+    .values(data)
+    .onConflictDoNothing()
+    .returning();
+  return created;
+}
+
+export async function updateWhatsAppMessage(
+  messageId: number,
+  data: Partial<InsertWhatsAppMessage>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(whatsappMessages)
+    .set(data)
+    .where(eq(whatsappMessages.id, messageId));
 }
 
 export async function listWhatsAppMessages(userId: number, threadId?: number) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [eq(whatsappMessages.userId, userId)];
-  if (threadId != null) conditions.push(eq(whatsappMessages.threadId, threadId));
+  if (threadId != null)
+    conditions.push(eq(whatsappMessages.threadId, threadId));
   return db
     .select()
     .from(whatsappMessages)
     .where(and(...conditions))
     .orderBy(desc(whatsappMessages.createdAt));
+}
+
+export async function listRecentWhatsAppMessages(
+  userId: number,
+  threadId: number,
+  limit = 12
+) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      direction: whatsappMessages.direction,
+      textContent: whatsappMessages.textContent,
+      createdAt: whatsappMessages.createdAt,
+    })
+    .from(whatsappMessages)
+    .where(
+      and(
+        eq(whatsappMessages.userId, userId),
+        eq(whatsappMessages.threadId, threadId)
+      )
+    )
+    .orderBy(desc(whatsappMessages.createdAt))
+    .limit(Math.max(1, Math.min(limit, 20)));
 }
 
 export async function createAssistantRun(data: InsertAssistantRun) {
@@ -283,7 +380,10 @@ export async function createAssistantRun(data: InsertAssistantRun) {
   return created;
 }
 
-export async function updateAssistantRun(runId: number, data: Partial<InsertAssistantRun>) {
+export async function updateAssistantRun(
+  runId: number,
+  data: Partial<InsertAssistantRun>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(assistantRuns).set(data).where(eq(assistantRuns.id, runId));
@@ -300,7 +400,10 @@ export async function getAssistantRunById(userId: number, runId: number) {
   return record;
 }
 
-export async function getLatestPendingAssistantRun(userId: number, threadId: number) {
+export async function getLatestPendingAssistantRun(
+  userId: number,
+  threadId: number
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
@@ -328,7 +431,11 @@ export async function listAssistantRuns(userId: number) {
     .orderBy(desc(assistantRuns.createdAt));
 }
 
-export async function getFinancialPlanByPeriod(userId: number, periodMonth: number, periodYear: number) {
+export async function getFinancialPlanByPeriod(
+  userId: number,
+  periodMonth: number,
+  periodYear: number
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
@@ -348,22 +455,35 @@ export async function getFinancialPlanByPeriod(userId: number, periodMonth: numb
 export async function upsertFinancialPlan(data: InsertFinancialPlan) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const existing = await getFinancialPlanByPeriod(data.userId, data.periodMonth, data.periodYear);
+  const existing = await getFinancialPlanByPeriod(
+    data.userId,
+    data.periodMonth,
+    data.periodYear
+  );
   if (existing) {
-    await db.update(financialPlans).set(data).where(eq(financialPlans.id, existing.id));
+    await db
+      .update(financialPlans)
+      .set(data)
+      .where(eq(financialPlans.id, existing.id));
     return { ...existing, ...data };
   }
   const [created] = await db.insert(financialPlans).values(data).returning();
   return created;
 }
 
-export async function updateFinancialPlan(planId: number, userId: number, data: Partial<InsertFinancialPlan>) {
+export async function updateFinancialPlan(
+  planId: number,
+  userId: number,
+  data: Partial<InsertFinancialPlan>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db
     .update(financialPlans)
     .set(data)
-    .where(and(eq(financialPlans.id, planId), eq(financialPlans.userId, userId)));
+    .where(
+      and(eq(financialPlans.id, planId), eq(financialPlans.userId, userId))
+    );
 }
 
 export async function listFinancialPlans(userId: number) {
@@ -376,7 +496,10 @@ export async function listFinancialPlans(userId: number) {
     .orderBy(desc(financialPlans.periodYear), desc(financialPlans.periodMonth));
 }
 
-export async function listFinancialPlanActions(userId: number, planId?: number) {
+export async function listFinancialPlanActions(
+  userId: number,
+  planId?: number
+) {
   const db = await getDb();
   if (!db) return [];
   const conditions = [eq(financialPlanActions.userId, userId)];
@@ -397,7 +520,12 @@ export async function replaceFinancialPlanActions(
   if (!db) throw new Error("Database not available");
   await db
     .delete(financialPlanActions)
-    .where(and(eq(financialPlanActions.userId, userId), eq(financialPlanActions.planId, planId)));
+    .where(
+      and(
+        eq(financialPlanActions.userId, userId),
+        eq(financialPlanActions.planId, planId)
+      )
+    );
   if (actions.length === 0) return [];
   return db
     .insert(financialPlanActions)
@@ -415,16 +543,29 @@ export async function updateFinancialPlanAction(
   await db
     .update(financialPlanActions)
     .set(data)
-    .where(and(eq(financialPlanActions.id, actionId), eq(financialPlanActions.userId, userId)));
+    .where(
+      and(
+        eq(financialPlanActions.id, actionId),
+        eq(financialPlanActions.userId, userId)
+      )
+    );
 }
 
-export async function getFinancialPlanActionById(userId: number, actionId: number) {
+export async function getFinancialPlanActionById(
+  userId: number,
+  actionId: number
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
     .select()
     .from(financialPlanActions)
-    .where(and(eq(financialPlanActions.userId, userId), eq(financialPlanActions.id, actionId)))
+    .where(
+      and(
+        eq(financialPlanActions.userId, userId),
+        eq(financialPlanActions.id, actionId)
+      )
+    )
     .limit(1);
   return record;
 }
@@ -432,11 +573,17 @@ export async function getFinancialPlanActionById(userId: number, actionId: numbe
 export async function createNotificationEvent(data: InsertNotificationEvent) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const [created] = await db.insert(notificationEvents).values(data).returning();
+  const [created] = await db
+    .insert(notificationEvents)
+    .values(data)
+    .returning();
   return created;
 }
 
-export async function getNotificationEventByDedupeKey(integrationId: number, dedupeKey: string) {
+export async function getNotificationEventByDedupeKey(
+  integrationId: number,
+  dedupeKey: string
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
@@ -472,16 +619,29 @@ export async function updateNotificationEvent(
   await db
     .update(notificationEvents)
     .set(data)
-    .where(and(eq(notificationEvents.id, eventId), eq(notificationEvents.userId, userId)));
+    .where(
+      and(
+        eq(notificationEvents.id, eventId),
+        eq(notificationEvents.userId, userId)
+      )
+    );
 }
 
-export async function getNotificationEventById(userId: number, eventId: number) {
+export async function getNotificationEventById(
+  userId: number,
+  eventId: number
+) {
   const db = await getDb();
   if (!db) return undefined;
   const [record] = await db
     .select()
     .from(notificationEvents)
-    .where(and(eq(notificationEvents.userId, userId), eq(notificationEvents.id, eventId)))
+    .where(
+      and(
+        eq(notificationEvents.userId, userId),
+        eq(notificationEvents.id, eventId)
+      )
+    )
     .limit(1);
   return record;
 }

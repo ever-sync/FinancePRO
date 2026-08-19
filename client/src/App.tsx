@@ -26,13 +26,6 @@ const IntegracoesBancarias = lazy(() => import("./pages/IntegracoesBancarias"));
 const DRE = lazy(() => import("./pages/DRE"));
 const Calendario = lazy(() => import("./pages/Calendario"));
 const Configuracoes = lazy(() => import("./pages/Configuracoes"));
-const AsaasIntegracao = lazy(() => import("./pages/AsaasIntegracao"));
-const AsaasCobrancas = lazy(() => import("./pages/AsaasCobrancas"));
-const AsaasAssinaturas = lazy(() => import("./pages/AsaasAssinaturas"));
-const AsaasNotas = lazy(() => import("./pages/AsaasNotas"));
-const AsaasTransferencias = lazy(() => import("./pages/AsaasTransferencias"));
-const AsaasExtrato = lazy(() => import("./pages/AsaasExtrato"));
-const AsaasEventos = lazy(() => import("./pages/AsaasEventos"));
 const WhatsAppIntegracao = lazy(() => import("./pages/WhatsAppIntegracao"));
 const WhatsAppConversas = lazy(() => import("./pages/WhatsAppConversas"));
 const WhatsAppAutomacao = lazy(() => import("./pages/WhatsAppAutomacao"));
@@ -70,17 +63,13 @@ function Router() {
           <Route path="/investimentos" component={Investimentos} />
           <Route path="/fundo-reserva" component={FundoReserva} />
           <Route path="/importador" component={ImportadorFinanceiro} />
-          <Route path="/integracoes-bancarias" component={IntegracoesBancarias} />
+          <Route
+            path="/integracoes-bancarias"
+            component={IntegracoesBancarias}
+          />
           <Route path="/dre" component={DRE} />
           <Route path="/calendario" component={Calendario} />
           <Route path="/configuracoes" component={Configuracoes} />
-          <Route path="/asaas/integracao" component={AsaasIntegracao} />
-          <Route path="/asaas/cobrancas" component={AsaasCobrancas} />
-          <Route path="/asaas/assinaturas" component={AsaasAssinaturas} />
-          <Route path="/asaas/notas" component={AsaasNotas} />
-          <Route path="/asaas/transferencias" component={AsaasTransferencias} />
-          <Route path="/asaas/extrato" component={AsaasExtrato} />
-          <Route path="/asaas/eventos" component={AsaasEventos} />
           <Route path="/whatsapp/integracao" component={WhatsAppIntegracao} />
           <Route path="/whatsapp/conversas" component={WhatsAppConversas} />
           <Route path="/whatsapp/automacao" component={WhatsAppAutomacao} />

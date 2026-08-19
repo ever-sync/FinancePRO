@@ -1,15 +1,33 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AlertCircle, BellRing, MessageCircle, Sparkles } from "lucide-react";
 
 type InboxFilter = "todos" | "pendencias" | "alertas" | "mensagens";
-type SourceFilter = "todas" | "whatsapp" | "painel" | "automacao" | "previa" | "plano";
+type SourceFilter =
+  | "todas"
+  | "whatsapp"
+  | "painel"
+  | "automacao"
+  | "previa"
+  | "plano";
 
 type InboxItem = {
   id: string;
@@ -87,8 +105,15 @@ function getMentorMessageSource(rawPayload?: string | null): {
   }
 
   try {
-    const parsed = JSON.parse(rawPayload) as { source?: string; origin?: string };
-    if (parsed.source === "dashboard_chat" || parsed.source === "dashboard_confirmation" || parsed.origin === "app") {
+    const parsed = JSON.parse(rawPayload) as {
+      source?: string;
+      origin?: string;
+    };
+    if (
+      parsed.source === "dashboard_chat" ||
+      parsed.source === "dashboard_confirmation" ||
+      parsed.origin === "app"
+    ) {
       return { key: "painel", label: "Painel" };
     }
     if (parsed.source === "financial_advisor_preview") {
@@ -101,7 +126,10 @@ function getMentorMessageSource(rawPayload?: string | null): {
   return { key: "whatsapp", label: "WhatsApp" };
 }
 
-function getRunSource(contextPayload?: string | null, triggerType?: string | null): {
+function getRunSource(
+  contextPayload?: string | null,
+  triggerType?: string | null
+): {
   key: SourceFilter;
   label: string;
 } {
@@ -158,12 +186,14 @@ function getHoursSince(value?: string | Date | null) {
 }
 
 function getPlanActionLabel(actionType?: string | null) {
-  if (actionType === "charge_follow_up") return "Executar cobranca";
-  if (actionType === "create_asaas_charge") return "Criar cobranca Asaas";
+  if (actionType === "charge_follow_up") return "Marcar contato feito";
   if (actionType === "register_revenue_receipt") return "Registrar recebimento";
   if (actionType === "renegotiate_debt") return "Marcar renegociacao";
   if (actionType === "pay_priority_items") return "Regularizar prioridade";
-  if (actionType === "transfer_company_reserve" || actionType === "transfer_personal_reserve") {
+  if (
+    actionType === "transfer_company_reserve" ||
+    actionType === "transfer_personal_reserve"
+  ) {
     return "Executar aporte";
   }
   return "Executar acao";
@@ -171,8 +201,7 @@ function getPlanActionLabel(actionType?: string | null) {
 
 function formatPlanActionType(actionType?: string | null) {
   const labels: Record<string, string> = {
-    charge_follow_up: "cobranca Asaas",
-    create_asaas_charge: "nova cobranca Asaas",
+    charge_follow_up: "cobranca manual",
     register_revenue_receipt: "recebimento confirmado",
     renegotiate_debt: "renegociacao de divida",
     pay_priority_items: "prioridade financeira",
@@ -245,7 +274,10 @@ function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
     impact = item.source === "painel" ? "medio" : "baixo";
     actionLabel = item.threadId ? "Abrir thread" : "Revisar mensagem";
 
-    if (item.intentLabel?.includes("retirada da empresa") || item.intentLabel?.includes("novo custo mensal")) {
+    if (
+      item.intentLabel?.includes("retirada da empresa") ||
+      item.intentLabel?.includes("novo custo mensal")
+    ) {
       baseScore += 14;
       urgency = "media";
       impact = "medio";
@@ -270,10 +302,6 @@ function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
       baseScore = 82;
       urgency = "alta";
       impact = "alto";
-    } else if (item.actionType === "create_asaas_charge") {
-      baseScore = 84;
-      urgency = "alta";
-      impact = "alto";
     } else if (item.actionType === "pay_priority_items") {
       baseScore = 94;
       urgency = "alta";
@@ -296,7 +324,11 @@ function prioritizeInboxItem(item: InboxItem): PrioritizedInboxItem {
   if (item.status === "agendado" || item.status === "adiado") {
     baseScore += 6;
   }
-  if (item.status === "enviado" || item.status === "executado" || item.status === "descartado") {
+  if (
+    item.status === "enviado" ||
+    item.status === "executado" ||
+    item.status === "descartado"
+  ) {
     baseScore -= 12;
   }
 
@@ -349,10 +381,7 @@ function getAttackPlanReason(item: PrioritizedInboxItem, index: number) {
 
   if (item.kind === "plano") {
     if (item.actionType === "charge_follow_up") {
-      return "Ativa a cobranca mais urgente do plano e reduz atraso de recebimento sem sair da inbox.";
-    }
-    if (item.actionType === "create_asaas_charge") {
-      return "Transforma uma receita pendente em cobranca real no Asaas para acelerar recebimento e previsibilidade.";
+      return "Confirma o contato manual da receita mais urgente e mantém o recebimento sob acompanhamento.";
     }
     if (item.actionType === "register_revenue_receipt") {
       return "Fecha uma entrada pendente como recebida e melhora imediatamente a leitura real de caixa.";
@@ -407,14 +436,18 @@ function getMentorModeDescription(memory?: {
   trendDirection: "improving" | "stable" | "worsening";
   summary?: string;
 }) {
-  if (!memory) return "A inbox organiza as proximas acoes com base no contexto atual do mentor.";
+  if (!memory)
+    return "A inbox organiza as proximas acoes com base no contexto atual do mentor.";
   if (memory.executionScore <= 42) {
     return "O mentor encurtou a execucao: menos frentes abertas e mais foco em acoes simples que saem do papel hoje.";
   }
   if (memory.executionScore >= 72 && memory.trendDirection === "improving") {
     return "O mentor entrou em modo estrategico: a inbox pode puxar reserva, margem e protecao com mais ambicao.";
   }
-  return memory.summary || "O mentor esta calibrando ritmo e prioridade com base no seu padrao recente.";
+  return (
+    memory.summary ||
+    "O mentor esta calibrando ritmo e prioridade com base no seu padrao recente."
+  );
 }
 
 function getOperationalActionLead(item: PrioritizedInboxItem) {
@@ -440,10 +473,7 @@ function getOperationalActionLead(item: PrioritizedInboxItem) {
 
   if (item.kind === "plano") {
     if (item.actionType === "charge_follow_up") {
-      return "O mentor ja encontrou a cobranca certa; falta so executar o follow-up.";
-    }
-    if (item.actionType === "create_asaas_charge") {
-      return "O mentor encontrou uma receita elegivel; falta so transformar isso em cobranca real no Asaas.";
+      return "O mentor ja encontrou a receita certa; falta confirmar que o contato de cobranca foi realizado.";
     }
     if (item.actionType === "register_revenue_receipt") {
       return "O mentor encontrou uma entrada elegivel; falta so confirmar esse recebimento no financeiro.";
@@ -531,35 +561,39 @@ export default function WhatsAppConversas() {
     },
     onError: error => toast.error(error.message),
   });
-  const refreshAdvisorStateMut = trpc.financialAdvisor.refreshState.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.financialAdvisor.getSnapshot.invalidate(),
-        utils.financialAdvisor.getMemory.invalidate(),
-        utils.financialAdvisor.getDailyDigest.invalidate(),
-        utils.financialAdvisor.getMonthClose.invalidate(),
-        utils.assistantAutomation.list.invalidate(),
-        utils.assistantInbox.list.invalidate(),
-      ]);
-      toast.success("Leituras do mentor recalculadas.");
-    },
-    onError: error => toast.error(error.message),
-  });
-  const generatePlanMut = trpc.financialAdvisor.generateMonthlyPlan.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.assistantPlans.getCurrent.invalidate(),
-        utils.assistantPlans.list.invalidate(),
-        utils.financialAdvisor.getMemory.invalidate(),
-        utils.financialAdvisor.getSnapshot.invalidate(),
-        utils.financialAdvisor.getDailyDigest.invalidate(),
-        utils.financialAdvisor.getMonthClose.invalidate(),
-        utils.assistantAutomation.list.invalidate(),
-      ]);
-      toast.success("Plano mensal gerado a partir da inbox.");
-    },
-    onError: error => toast.error(error.message),
-  });
+  const refreshAdvisorStateMut = trpc.financialAdvisor.refreshState.useMutation(
+    {
+      onSuccess: async () => {
+        await Promise.all([
+          utils.financialAdvisor.getSnapshot.invalidate(),
+          utils.financialAdvisor.getMemory.invalidate(),
+          utils.financialAdvisor.getDailyDigest.invalidate(),
+          utils.financialAdvisor.getMonthClose.invalidate(),
+          utils.assistantAutomation.list.invalidate(),
+          utils.assistantInbox.list.invalidate(),
+        ]);
+        toast.success("Leituras do mentor recalculadas.");
+      },
+      onError: error => toast.error(error.message),
+    }
+  );
+  const generatePlanMut = trpc.financialAdvisor.generateMonthlyPlan.useMutation(
+    {
+      onSuccess: async () => {
+        await Promise.all([
+          utils.assistantPlans.getCurrent.invalidate(),
+          utils.assistantPlans.list.invalidate(),
+          utils.financialAdvisor.getMemory.invalidate(),
+          utils.financialAdvisor.getSnapshot.invalidate(),
+          utils.financialAdvisor.getDailyDigest.invalidate(),
+          utils.financialAdvisor.getMonthClose.invalidate(),
+          utils.assistantAutomation.list.invalidate(),
+        ]);
+        toast.success("Plano mensal gerado a partir da inbox.");
+      },
+      onError: error => toast.error(error.message),
+    }
+  );
   const confirmPlanActionMut = trpc.assistantPlans.confirmAction.useMutation({
     onSuccess: async data => {
       await Promise.all([
@@ -576,16 +610,17 @@ export default function WhatsAppConversas() {
     },
     onError: error => toast.error(error.message),
   });
-  const sendAdvisorPreviewMut = trpc.whatsappIntegration.sendAdvisorPreview.useMutation({
-    onSuccess: async () => {
-      await Promise.all([
-        utils.assistantInbox.list.invalidate(),
-        utils.whatsappIntegration.syncStatus.invalidate(),
-      ]);
-      toast.success("Resumo enviado para o WhatsApp.");
-    },
-    onError: error => toast.error(error.message),
-  });
+  const sendAdvisorPreviewMut =
+    trpc.whatsappIntegration.sendAdvisorPreview.useMutation({
+      onSuccess: async () => {
+        await Promise.all([
+          utils.assistantInbox.list.invalidate(),
+          utils.whatsappIntegration.syncStatus.invalidate(),
+        ]);
+        toast.success("Resumo enviado para o WhatsApp.");
+      },
+      onError: error => toast.error(error.message),
+    });
 
   useEffect(() => {
     if (!inbox?.threads.length) {
@@ -593,15 +628,22 @@ export default function WhatsAppConversas() {
       return;
     }
 
-    if (!selectedThreadId || !inbox.threads.some(thread => thread.id === selectedThreadId)) {
+    if (
+      !selectedThreadId ||
+      !inbox.threads.some(thread => thread.id === selectedThreadId)
+    ) {
       setSelectedThreadId(inbox.threads[0].id);
     }
   }, [inbox?.threads, selectedThreadId]);
 
   const selectedThread =
-    inbox?.threads.find(thread => thread.id === selectedThreadId) ?? inbox?.threads[0] ?? null;
+    inbox?.threads.find(thread => thread.id === selectedThreadId) ??
+    inbox?.threads[0] ??
+    null;
   const selectedThreadMessages = (inbox?.messages ?? [])
-    .filter(message => (selectedThread ? message.threadId === selectedThread.id : true))
+    .filter(message =>
+      selectedThread ? message.threadId === selectedThread.id : true
+    )
     .slice(0, 30);
 
   const pendingRunItems: InboxItem[] = (inbox?.runs ?? [])
@@ -611,7 +653,8 @@ export default function WhatsAppConversas() {
       return {
         id: `run-${run.id}`,
         kind: "pendencia",
-        title: formatMentorIntent(run.normalizedIntent) || "Confirmacao pendente",
+        title:
+          formatMentorIntent(run.normalizedIntent) || "Confirmacao pendente",
         description:
           run.assistantResponse ||
           run.userMessage ||
@@ -622,7 +665,8 @@ export default function WhatsAppConversas() {
         createdAt: run.createdAt,
         threadId: run.threadId,
         runId: run.id,
-        intentLabel: formatMentorIntent(run.normalizedIntent) || run.normalizedIntent,
+        intentLabel:
+          formatMentorIntent(run.normalizedIntent) || run.normalizedIntent,
         metaLabel: run.triggerType,
       };
     });
@@ -655,30 +699,48 @@ export default function WhatsAppConversas() {
       createdAt: action.createdAt,
       actionId: action.id,
       actionType: action.actionType,
-      metaLabel: formatPlanActionType(action.actionType) || action.actionType || "acao do plano",
+      metaLabel:
+        formatPlanActionType(action.actionType) ||
+        action.actionType ||
+        "acao do plano",
     }));
 
-  const messageItems: InboxItem[] = (inbox?.messages ?? []).slice(0, 40).map(message => {
-    const source = getMentorMessageSource(message.rawPayload);
-    return {
-      id: `message-${message.id}`,
-      kind: "mensagem",
-      title: message.direction === "inbound" ? "Mensagem recebida" : "Mensagem enviada",
-      description: message.textContent || "Mensagem sem texto",
-      status: message.status,
-      source: source.key,
-      sourceLabel: source.label,
-      createdAt: message.createdAt,
-      threadId: message.threadId,
-      intentLabel: formatMentorIntent(message.detectedIntent) || message.detectedIntent,
-    };
-  });
+  const messageItems: InboxItem[] = (inbox?.messages ?? [])
+    .slice(0, 40)
+    .map(message => {
+      const source = getMentorMessageSource(message.rawPayload);
+      return {
+        id: `message-${message.id}`,
+        kind: "mensagem",
+        title:
+          message.direction === "inbound"
+            ? "Mensagem recebida"
+            : "Mensagem enviada",
+        description: message.textContent || "Mensagem sem texto",
+        status: message.status,
+        source: source.key,
+        sourceLabel: source.label,
+        createdAt: message.createdAt,
+        threadId: message.threadId,
+        intentLabel:
+          formatMentorIntent(message.detectedIntent) || message.detectedIntent,
+      };
+    });
 
-  const inboxItems = [...pendingRunItems, ...planActionItems, ...alertItems, ...messageItems]
+  const inboxItems = [
+    ...pendingRunItems,
+    ...planActionItems,
+    ...alertItems,
+    ...messageItems,
+  ]
     .map(prioritizeInboxItem)
     .sort((a, b) => {
-      if (b.priorityScore !== a.priorityScore) return b.priorityScore - a.priorityScore;
-      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      if (b.priorityScore !== a.priorityScore)
+        return b.priorityScore - a.priorityScore;
+      return (
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime()
+      );
     });
 
   const filteredInboxItems = inboxItems.filter(item => {
@@ -699,19 +761,30 @@ export default function WhatsAppConversas() {
       .join(" ")
       .toLowerCase();
 
-    if (search.trim() && !searchable.includes(search.trim().toLowerCase())) return false;
+    if (search.trim() && !searchable.includes(search.trim().toLowerCase()))
+      return false;
     return true;
   });
 
   const pendingConfirmationCount = pendingRunItems.length;
-  const activeAlertCount = alertItems.filter(item => item.status !== "enviado" && item.status !== "descartado").length;
-  const panelMessageCount = messageItems.filter(item => item.source === "painel" || item.source === "previa").length;
+  const activeAlertCount = alertItems.filter(
+    item => item.status !== "enviado" && item.status !== "descartado"
+  ).length;
+  const panelMessageCount = messageItems.filter(
+    item => item.source === "painel" || item.source === "previa"
+  ).length;
   const threadCount = inbox?.threads.length ?? 0;
-  const topPriorityItems = inboxItems.filter(item => item.priorityScore >= 55).slice(0, 3);
+  const topPriorityItems = inboxItems
+    .filter(item => item.priorityScore >= 55)
+    .slice(0, 3);
   const focusItem = topPriorityItems[0] ?? null;
-  const attackPlanItems = inboxItems.filter(item => item.priorityScore >= 45).slice(0, 3);
+  const attackPlanItems = inboxItems
+    .filter(item => item.priorityScore >= 45)
+    .slice(0, 3);
   const attackPlanLead = getAttackPlanLead(attackPlanItems);
-  const operationalSuggestions = topPriorityItems.length ? topPriorityItems : attackPlanItems;
+  const operationalSuggestions = topPriorityItems.length
+    ? topPriorityItems
+    : attackPlanItems;
   const primaryOperationalSuggestion = operationalSuggestions[0] ?? null;
   const supportingOperationalSuggestions = operationalSuggestions.slice(1, 3);
   const alertActionBusy =
@@ -720,10 +793,13 @@ export default function WhatsAppConversas() {
     refreshAdvisorStateMut.isPending ||
     generatePlanMut.isPending ||
     sendAdvisorPreviewMut.isPending;
-  const runActionBusy = confirmPendingRunMut.isPending || snoozePendingRunMut.isPending;
+  const runActionBusy =
+    confirmPendingRunMut.isPending || snoozePendingRunMut.isPending;
   const planActionBusy = confirmPlanActionMut.isPending;
 
-  const buildInboxItemActions = (item: PrioritizedInboxItem): InboxActionSpec[] => {
+  const buildInboxItemActions = (
+    item: PrioritizedInboxItem
+  ): InboxActionSpec[] => {
     const actions: InboxActionSpec[] = [];
     const openContextAction = item.threadId
       ? {
@@ -798,14 +874,19 @@ export default function WhatsAppConversas() {
           }),
       });
 
-      if (item.eventId && item.status !== "enviado" && item.status !== "descartado") {
+      if (
+        item.eventId &&
+        item.status !== "enviado" &&
+        item.status !== "descartado"
+      ) {
         actions.push({
           key: `snooze-alert-${item.id}`,
           label: "Adiar 24h",
           pendingLabel: "Adiando...",
           variant: "outline",
           disabled: alertActionBusy,
-          onClick: () => snoozeAlertMut.mutate({ eventId: item.eventId!, hours: 24 }),
+          onClick: () =>
+            snoozeAlertMut.mutate({ eventId: item.eventId!, hours: 24 }),
         });
       }
 
@@ -830,7 +911,8 @@ export default function WhatsAppConversas() {
         label: getPlanActionLabel(item.actionType),
         pendingLabel: "Executando...",
         disabled: planActionBusy,
-        onClick: () => confirmPlanActionMut.mutate({ actionId: item.actionId! }),
+        onClick: () =>
+          confirmPlanActionMut.mutate({ actionId: item.actionId! }),
       });
       return actions;
     }
@@ -846,7 +928,11 @@ export default function WhatsAppConversas() {
   };
 
   if (isLoading) {
-    return <div className="text-sm text-muted-foreground">Carregando inbox do mentor...</div>;
+    return (
+      <div className="text-sm text-muted-foreground">
+        Carregando inbox do mentor...
+      </div>
+    );
   }
 
   return (
@@ -854,7 +940,8 @@ export default function WhatsAppConversas() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Inbox do mentor</h1>
         <p className="text-sm text-muted-foreground">
-          Central operacional da IA com pendencias, alertas e conversas do WhatsApp e do painel.
+          Central operacional da IA com pendencias, alertas e conversas do
+          WhatsApp e do painel.
         </p>
       </div>
 
@@ -862,7 +949,9 @@ export default function WhatsAppConversas() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Pendencias abertas</CardDescription>
-            <CardTitle className="text-xl">{pendingConfirmationCount}</CardTitle>
+            <CardTitle className="text-xl">
+              {pendingConfirmationCount}
+            </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
             Confirmacoes aguardando decisao para o mentor seguir.
@@ -883,7 +972,8 @@ export default function WhatsAppConversas() {
             <CardTitle className="text-xl">{panelMessageCount}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            Interacoes registradas dentro do app e persistidas na trilha do assistente.
+            Interacoes registradas dentro do app e persistidas na trilha do
+            assistente.
           </CardContent>
         </Card>
         <Card>
@@ -903,26 +993,34 @@ export default function WhatsAppConversas() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <CardTitle>Modo atual do mentor</CardTitle>
-                <CardDescription>{getMentorModeDescription(mentorMemory)}</CardDescription>
+                <CardDescription>
+                  {getMentorModeDescription(mentorMemory)}
+                </CardDescription>
               </div>
               <StatusBadge status={mentorMemory.recurringRiskLevel} />
             </div>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border bg-zinc-50/70 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Modo</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+                Modo
+              </p>
               <p className="mt-1 text-base font-semibold text-zinc-900">
                 {getMentorModeLabel(mentorMemory)}
               </p>
             </div>
             <div className="rounded-2xl border bg-zinc-50/70 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Execucao</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+                Execucao
+              </p>
               <p className="mt-1 text-base font-semibold text-zinc-900">
                 {mentorMemory.executionScore}%
               </p>
             </div>
             <div className="rounded-2xl border bg-zinc-50/70 px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">Tendencia</p>
+              <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+                Tendencia
+              </p>
               <p className="mt-1 text-base font-semibold text-zinc-900">
                 {mentorMemory.trendDirection === "improving"
                   ? "melhora"
@@ -939,7 +1037,8 @@ export default function WhatsAppConversas() {
         <CardHeader>
           <CardTitle>Foco do dia</CardTitle>
           <CardDescription>
-            Priorizacao inteligente da inbox considerando tipo, risco, recencia e o modo atual do mentor.
+            Priorizacao inteligente da inbox considerando tipo, risco, recencia
+            e o modo atual do mentor.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -957,7 +1056,9 @@ export default function WhatsAppConversas() {
                         score {focusItem.priorityScore}/100
                       </span>
                     </div>
-                    <p className="mt-3 text-lg font-semibold text-zinc-900">{focusItem.title}</p>
+                    <p className="mt-3 text-lg font-semibold text-zinc-900">
+                      {focusItem.title}
+                    </p>
                     <p className="mt-2 text-sm leading-6 text-muted-foreground">
                       {focusItem.description}
                     </p>
@@ -968,7 +1069,9 @@ export default function WhatsAppConversas() {
                   <div className="space-y-3 text-right text-xs uppercase tracking-[0.16em] text-zinc-400">
                     <div>
                       <div>{focusItem.sourceLabel}</div>
-                      <div className="mt-1">{formatDateTimeLabel(focusItem.createdAt)}</div>
+                      <div className="mt-1">
+                        {formatDateTimeLabel(focusItem.createdAt)}
+                      </div>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
                       {buildInboxItemActions(focusItem)
@@ -981,7 +1084,9 @@ export default function WhatsAppConversas() {
                             onClick={action.onClick}
                             disabled={action.disabled}
                           >
-                            {action.disabled && action.pendingLabel ? action.pendingLabel : action.label}
+                            {action.disabled && action.pendingLabel
+                              ? action.pendingLabel
+                              : action.label}
                           </Button>
                         ))}
                     </div>
@@ -991,15 +1096,22 @@ export default function WhatsAppConversas() {
 
               <div className="grid gap-3 md:grid-cols-3">
                 {topPriorityItems.map(item => (
-                  <div key={`top-${item.id}`} className="rounded-2xl border p-4">
+                  <div
+                    key={`top-${item.id}`}
+                    className="rounded-2xl border p-4"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <StatusBadge status={item.urgency} />
                       <span className="text-xs uppercase tracking-[0.16em] text-zinc-400">
                         {item.priorityScore}/100
                       </span>
                     </div>
-                    <p className="mt-3 font-medium text-zinc-900">{item.title}</p>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.actionLabel}</p>
+                    <p className="mt-3 font-medium text-zinc-900">
+                      {item.title}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      {item.actionLabel}
+                    </p>
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-zinc-400">
                       <span>{item.kind}</span>
                       <span>{item.sourceLabel}</span>
@@ -1020,7 +1132,8 @@ export default function WhatsAppConversas() {
         <CardHeader>
           <CardTitle>Plano de ataque do dia</CardTitle>
           <CardDescription>
-            Sequencia sugerida de execucao para sair da teoria e transformar a inbox em acao.
+            Sequencia sugerida de execucao para sair da teoria e transformar a
+            inbox em acao.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1030,7 +1143,8 @@ export default function WhatsAppConversas() {
                 {attackPlanLead}
                 {mentorMemory ? (
                   <span className="block pt-2 text-xs uppercase tracking-[0.16em] text-zinc-500">
-                    {getMentorModeLabel(mentorMemory)} · {getMentorModeDescription(mentorMemory)}
+                    {getMentorModeLabel(mentorMemory)} ·{" "}
+                    {getMentorModeDescription(mentorMemory)}
                   </span>
                 ) : null}
               </div>
@@ -1039,14 +1153,19 @@ export default function WhatsAppConversas() {
                 {attackPlanItems.map((item, index) => {
                   const attackActions = buildInboxItemActions(item).slice(0, 3);
                   return (
-                    <div key={`attack-${item.id}`} className="rounded-2xl border p-4">
+                    <div
+                      key={`attack-${item.id}`}
+                      className="rounded-2xl border p-4"
+                    >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="inline-flex size-7 items-center justify-center rounded-full bg-orange-50 text-xs font-semibold text-orange-600">
                               {index + 1}
                             </span>
-                            <p className="font-medium text-zinc-900">{item.title}</p>
+                            <p className="font-medium text-zinc-900">
+                              {item.title}
+                            </p>
                             <StatusBadge status={item.urgency} />
                           </div>
                           <p className="text-sm leading-6 text-muted-foreground">
@@ -1069,7 +1188,9 @@ export default function WhatsAppConversas() {
                                 onClick={action.onClick}
                                 disabled={action.disabled}
                               >
-                                {action.disabled && action.pendingLabel ? action.pendingLabel : action.label}
+                                {action.disabled && action.pendingLabel
+                                  ? action.pendingLabel
+                                  : action.label}
                               </Button>
                             ))}
                           </div>
@@ -1082,7 +1203,8 @@ export default function WhatsAppConversas() {
             </>
           ) : (
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              O plano do dia esta leve: mantenha a rotina e acompanhe a inbox conforme novos sinais aparecerem.
+              O plano do dia esta leve: mantenha a rotina e acompanhe a inbox
+              conforme novos sinais aparecerem.
             </div>
           )}
         </CardContent>
@@ -1092,7 +1214,8 @@ export default function WhatsAppConversas() {
         <CardHeader>
           <CardTitle>Sugestoes do mentor</CardTitle>
           <CardDescription>
-            A camada mais direta da inbox: uma acao principal e ate duas de apoio, todas executaveis daqui.
+            A camada mais direta da inbox: uma acao principal e ate duas de
+            apoio, todas executaveis daqui.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1102,7 +1225,9 @@ export default function WhatsAppConversas() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="max-w-3xl">
                     <div className="flex flex-wrap items-center gap-2">
-                      <StatusBadge status={primaryOperationalSuggestion.urgency} />
+                      <StatusBadge
+                        status={primaryOperationalSuggestion.urgency}
+                      />
                       <span className="text-xs uppercase tracking-[0.16em] text-zinc-400">
                         impacto {primaryOperationalSuggestion.impact}
                       </span>
@@ -1120,14 +1245,17 @@ export default function WhatsAppConversas() {
                       {primaryOperationalSuggestion.description}
                     </p>
                     <p className="mt-3 text-sm text-zinc-600">
-                      Proxima melhor acao: {primaryOperationalSuggestion.actionLabel}.
+                      Proxima melhor acao:{" "}
+                      {primaryOperationalSuggestion.actionLabel}.
                     </p>
                   </div>
                   <div className="space-y-3 text-right text-xs uppercase tracking-[0.16em] text-zinc-400">
                     <div>
                       <div>{primaryOperationalSuggestion.sourceLabel}</div>
                       <div className="mt-1">
-                        {formatDateTimeLabel(primaryOperationalSuggestion.createdAt)}
+                        {formatDateTimeLabel(
+                          primaryOperationalSuggestion.createdAt
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-wrap justify-end gap-2">
@@ -1141,7 +1269,9 @@ export default function WhatsAppConversas() {
                             onClick={action.onClick}
                             disabled={action.disabled}
                           >
-                            {action.disabled && action.pendingLabel ? action.pendingLabel : action.label}
+                            {action.disabled && action.pendingLabel
+                              ? action.pendingLabel
+                              : action.label}
                           </Button>
                         ))}
                     </div>
@@ -1152,17 +1282,24 @@ export default function WhatsAppConversas() {
               {supportingOperationalSuggestions.length ? (
                 <div className="grid gap-3 md:grid-cols-2">
                   {supportingOperationalSuggestions.map(item => (
-                    <div key={`support-${item.id}`} className="rounded-2xl border p-4">
+                    <div
+                      key={`support-${item.id}`}
+                      className="rounded-2xl border p-4"
+                    >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-medium text-zinc-900">{item.title}</p>
+                            <p className="font-medium text-zinc-900">
+                              {item.title}
+                            </p>
                             <StatusBadge status={item.urgency} />
                           </div>
                           <p className="text-sm leading-6 text-zinc-600">
                             {getOperationalActionSupport(item)}
                           </p>
-                          <p className="text-sm leading-6 text-muted-foreground">{item.description}</p>
+                          <p className="text-sm leading-6 text-muted-foreground">
+                            {item.description}
+                          </p>
                           <div className="flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.16em] text-zinc-400">
                             <span>{item.actionLabel}</span>
                             <span>{item.sourceLabel}</span>
@@ -1180,7 +1317,9 @@ export default function WhatsAppConversas() {
                                 onClick={action.onClick}
                                 disabled={action.disabled}
                               >
-                                {action.disabled && action.pendingLabel ? action.pendingLabel : action.label}
+                                {action.disabled && action.pendingLabel
+                                  ? action.pendingLabel
+                                  : action.label}
                               </Button>
                             ))}
                         </div>
@@ -1192,7 +1331,8 @@ export default function WhatsAppConversas() {
             </>
           ) : (
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              O mentor nao encontrou nenhuma acao operacional urgente agora. A inbox esta sob controle.
+              O mentor nao encontrou nenhuma acao operacional urgente agora. A
+              inbox esta sob controle.
             </div>
           )}
         </CardContent>
@@ -1202,7 +1342,8 @@ export default function WhatsAppConversas() {
         <CardHeader>
           <CardTitle>Fila operacional</CardTitle>
           <CardDescription>
-            Filtre o que precisa de atencao agora por tipo, origem e texto livre.
+            Filtre o que precisa de atencao agora por tipo, origem e texto
+            livre.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -1237,7 +1378,10 @@ export default function WhatsAppConversas() {
               onChange={event => setSearch(event.target.value)}
               placeholder="Buscar por texto, leitura, origem ou tipo..."
             />
-            <Select value={sourceFilter} onValueChange={value => setSourceFilter(value as SourceFilter)}>
+            <Select
+              value={sourceFilter}
+              onValueChange={value => setSourceFilter(value as SourceFilter)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Origem" />
               </SelectTrigger>
@@ -1261,18 +1405,26 @@ export default function WhatsAppConversas() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-medium text-zinc-900">{item.title}</p>
+                          <p className="font-medium text-zinc-900">
+                            {item.title}
+                          </p>
                           <StatusBadge status={item.status} />
                           <StatusBadge status={item.urgency} />
                         </div>
-                        <p className="text-sm leading-6 text-muted-foreground">{item.description}</p>
+                        <p className="text-sm leading-6 text-muted-foreground">
+                          {item.description}
+                        </p>
                         <div className="flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.16em] text-zinc-400">
                           <span>score {item.priorityScore}</span>
                           <span>{item.kind}</span>
                           <span>{item.sourceLabel}</span>
                           <span>impacto {item.impact}</span>
-                          {item.intentLabel ? <span>{item.intentLabel}</span> : null}
-                          {item.metaLabel ? <span>{item.metaLabel}</span> : null}
+                          {item.intentLabel ? (
+                            <span>{item.intentLabel}</span>
+                          ) : null}
+                          {item.metaLabel ? (
+                            <span>{item.metaLabel}</span>
+                          ) : null}
                           <span>{formatDateTimeLabel(item.createdAt)}</span>
                         </div>
                         <p className="text-xs uppercase tracking-[0.16em] text-zinc-500">
@@ -1289,7 +1441,9 @@ export default function WhatsAppConversas() {
                             onClick={action.onClick}
                             disabled={action.disabled}
                           >
-                            {action.disabled && action.pendingLabel ? action.pendingLabel : action.label}
+                            {action.disabled && action.pendingLabel
+                              ? action.pendingLabel
+                              : action.label}
                           </Button>
                         ))}
                       </div>
@@ -1310,46 +1464,60 @@ export default function WhatsAppConversas() {
         <Card>
           <CardHeader>
             <CardTitle>Threads</CardTitle>
-            <CardDescription>Escolha uma conversa para abrir o historico detalhado.</CardDescription>
+            <CardDescription>
+              Escolha uma conversa para abrir o historico detalhado.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {inbox?.threads.length ? inbox.threads.map(thread => (
-              <button
-                key={thread.id}
-                type="button"
-                onClick={() => setSelectedThreadId(thread.id)}
-                className={`w-full rounded-2xl border p-4 text-left transition ${
-                  selectedThread?.id === thread.id
-                    ? "border-orange-200 bg-orange-50/40"
-                    : "hover:border-zinc-300"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium">Thread #{thread.id}</p>
-                    <p className="text-sm text-muted-foreground">
-                      Ultima mensagem: {thread.latestMessage?.textContent || "Sem mensagens"}
-                    </p>
-                    <p className="mt-2 text-xs uppercase tracking-[0.16em] text-zinc-400">
-                      {thread.lastMessageAt
-                        ? formatDateTimeLabel(thread.lastMessageAt)
-                        : "Sem atividade recente"}
-                    </p>
+            {inbox?.threads.length ? (
+              inbox.threads.map(thread => (
+                <button
+                  key={thread.id}
+                  type="button"
+                  onClick={() => setSelectedThreadId(thread.id)}
+                  className={`w-full rounded-2xl border p-4 text-left transition ${
+                    selectedThread?.id === thread.id
+                      ? "border-orange-200 bg-orange-50/40"
+                      : "hover:border-zinc-300"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium">Thread #{thread.id}</p>
+                      <p className="text-sm text-muted-foreground">
+                        Ultima mensagem:{" "}
+                        {thread.latestMessage?.textContent || "Sem mensagens"}
+                      </p>
+                      <p className="mt-2 text-xs uppercase tracking-[0.16em] text-zinc-400">
+                        {thread.lastMessageAt
+                          ? formatDateTimeLabel(thread.lastMessageAt)
+                          : "Sem atividade recente"}
+                      </p>
+                    </div>
+                    <StatusBadge
+                      status={thread.pendingRun?.status || "ativo"}
+                    />
                   </div>
-                  <StatusBadge status={thread.pendingRun?.status || "ativo"} />
-                </div>
-              </button>
-            )) : (
-              <p className="text-sm text-muted-foreground">Nenhuma conversa registrada ainda.</p>
+                </button>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Nenhuma conversa registrada ainda.
+              </p>
             )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>{selectedThread ? `Thread #${selectedThread.id}` : "Historico da conversa"}</CardTitle>
+            <CardTitle>
+              {selectedThread
+                ? `Thread #${selectedThread.id}`
+                : "Historico da conversa"}
+            </CardTitle>
             <CardDescription>
-              Abertura detalhada da thread selecionada para decidir e agir com contexto.
+              Abertura detalhada da thread selecionada para decidir e agir com
+              contexto.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1359,7 +1527,9 @@ export default function WhatsAppConversas() {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="size-4" />
-                      <p className="font-medium text-amber-900">Confirmacao pendente</p>
+                      <p className="font-medium text-amber-900">
+                        Confirmacao pendente
+                      </p>
                     </div>
                     <p className="leading-6">
                       {selectedThread.pendingRun.assistantResponse ||
@@ -1367,28 +1537,52 @@ export default function WhatsAppConversas() {
                     </p>
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-amber-700/80">
                       <span>
-                        {formatMentorIntent(selectedThread.pendingRun.normalizedIntent) ||
+                        {formatMentorIntent(
+                          selectedThread.pendingRun.normalizedIntent
+                        ) ||
                           selectedThread.pendingRun.normalizedIntent ||
                           "confirmacao"}
                       </span>
-                      <span>{formatDateTimeLabel(selectedThread.pendingRun.createdAt)}</span>
+                      <span>
+                        {formatDateTimeLabel(
+                          selectedThread.pendingRun.createdAt
+                        )}
+                      </span>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"
-                      onClick={() => confirmPendingRunMut.mutate({ runId: selectedThread.pendingRun!.id })}
-                      disabled={confirmPendingRunMut.isPending || snoozePendingRunMut.isPending}
+                      onClick={() =>
+                        confirmPendingRunMut.mutate({
+                          runId: selectedThread.pendingRun!.id,
+                        })
+                      }
+                      disabled={
+                        confirmPendingRunMut.isPending ||
+                        snoozePendingRunMut.isPending
+                      }
                     >
-                      {confirmPendingRunMut.isPending ? "Confirmando..." : "Confirmar no app"}
+                      {confirmPendingRunMut.isPending
+                        ? "Confirmando..."
+                        : "Confirmar no app"}
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => snoozePendingRunMut.mutate({ runId: selectedThread.pendingRun!.id })}
-                      disabled={confirmPendingRunMut.isPending || snoozePendingRunMut.isPending}
+                      onClick={() =>
+                        snoozePendingRunMut.mutate({
+                          runId: selectedThread.pendingRun!.id,
+                        })
+                      }
+                      disabled={
+                        confirmPendingRunMut.isPending ||
+                        snoozePendingRunMut.isPending
+                      }
                     >
-                      {snoozePendingRunMut.isPending ? "Adiando..." : "Adiar no app"}
+                      {snoozePendingRunMut.isPending
+                        ? "Adiando..."
+                        : "Adiar no app"}
                     </Button>
                   </div>
                 </div>
@@ -1407,7 +1601,9 @@ export default function WhatsAppConversas() {
                         ) : (
                           <Sparkles className="size-4 text-orange-500" />
                         )}
-                        {message.direction === "inbound" ? "Recebida" : "Enviada"}
+                        {message.direction === "inbound"
+                          ? "Recebida"
+                          : "Enviada"}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs uppercase tracking-[0.16em] text-zinc-400">
@@ -1422,7 +1618,10 @@ export default function WhatsAppConversas() {
                     <div className="mt-3 flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.16em] text-zinc-400">
                       <span>{source.label}</span>
                       {message.detectedIntent ? (
-                        <span>{formatMentorIntent(message.detectedIntent) || message.detectedIntent}</span>
+                        <span>
+                          {formatMentorIntent(message.detectedIntent) ||
+                            message.detectedIntent}
+                        </span>
                       ) : null}
                     </div>
                   </div>
@@ -1440,7 +1639,8 @@ export default function WhatsAppConversas() {
               <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
                 <div className="flex items-center gap-2">
                   <BellRing className="size-4" />
-                  Selecione uma thread ou use a fila operacional acima para agir sobre alertas e confirmacoes.
+                  Selecione uma thread ou use a fila operacional acima para agir
+                  sobre alertas e confirmacoes.
                 </div>
               </div>
             ) : null}

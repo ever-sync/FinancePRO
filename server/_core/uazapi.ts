@@ -1,4 +1,7 @@
 import axios, { AxiosError, type AxiosInstance } from "axios";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { ENV } from "./env";
 
 export class UazapiRequestError extends Error {
   status: number;
@@ -19,7 +22,119 @@ export type UazapiConfig = {
 };
 
 function isLegacyRouteError(error: unknown) {
-  return error instanceof UazapiRequestError && (error.status === 404 || error.status === 405);
+  return (
+    error instanceof UazapiRequestError &&
+    (error.status === 404 || error.status === 405)
+  );
+}
+
+function isPrivateIpAddress(address: string) {
+  const normalized = address
+    .toLowerCase()
+    .split("%")[0]
+    .replace(/^\[|\]$/g, "");
+  if (normalized.startsWith("::ffff:")) {
+    const mapped = normalized.slice("::ffff:".length);
+    if (mapped.includes(".")) return isPrivateIpAddress(mapped);
+    const [highPart, lowPart] = mapped.split(":");
+    const high = Number.parseInt(highPart, 16);
+    const low = Number.parseInt(lowPart, 16);
+    if (Number.isFinite(high) && Number.isFinite(low)) {
+      return isPrivateIpAddress(
+        `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`
+      );
+    }
+  }
+  const ipVersion = isIP(normalized);
+
+  if (ipVersion === 4) {
+    const [a, b] = normalized.split(".").map(Number);
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && (b === 0 || b === 168)) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      a >= 224
+    );
+  }
+
+  if (ipVersion === 6) {
+    return (
+      normalized === "::" ||
+      normalized === "::1" ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      /^fe[89ab]/.test(normalized) ||
+      normalized.startsWith("ff")
+    );
+  }
+
+  return false;
+}
+
+export function normalizeUazapiBaseUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("A URL base da Uazapi e invalida.");
+  }
+
+  const allowPrivate = ENV.allowPrivateUazapiUrls;
+  if (
+    url.protocol !== "https:" &&
+    !(allowPrivate && url.protocol === "http:")
+  ) {
+    throw new Error("A URL base da Uazapi deve usar HTTPS.");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error(
+      "A URL base da Uazapi nao pode conter credenciais, query string ou fragmento."
+    );
+  }
+
+  const hostname = url.hostname.toLowerCase();
+  if (
+    !hostname ||
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    isPrivateIpAddress(hostname)
+  ) {
+    if (!allowPrivate) {
+      throw new Error(
+        "A URL base da Uazapi deve apontar para um host publico."
+      );
+    }
+  }
+
+  return url.toString().replace(/\/$/, "");
+}
+
+async function assertPublicHostname(hostname: string) {
+  if (ENV.allowPrivateUazapiUrls) return;
+  const normalizedHostname = hostname.replace(/^\[|\]$/g, "");
+  if (isIP(normalizedHostname)) {
+    if (isPrivateIpAddress(normalizedHostname))
+      throw new Error("Host privado bloqueado para a integracao Uazapi.");
+    return;
+  }
+
+  const addresses = await lookup(normalizedHostname, {
+    all: true,
+    verbatim: true,
+  });
+  if (
+    addresses.length === 0 ||
+    addresses.some(result => isPrivateIpAddress(result.address))
+  ) {
+    throw new Error(
+      "O host da Uazapi resolveu para uma rede privada e foi bloqueado."
+    );
+  }
 }
 
 export class UazapiClient {
@@ -29,13 +144,20 @@ export class UazapiClient {
   constructor(config: UazapiConfig) {
     this.instanceId = config.instanceId;
     this.client = axios.create({
-      baseURL: config.apiBaseUrl.replace(/\/$/, ""),
+      baseURL: normalizeUazapiBaseUrl(config.apiBaseUrl),
       timeout: 20_000,
+      maxRedirects: 0,
       headers: {
         token: config.apiToken,
         apikey: config.apiToken,
         "Content-Type": "application/json",
       },
+    });
+    this.client.interceptors.request.use(async request => {
+      const requestUrl = new URL(this.client.getUri(request));
+      normalizeUazapiBaseUrl(requestUrl.origin);
+      await assertPublicHostname(requestUrl.hostname);
+      return request;
     });
   }
 
@@ -57,7 +179,10 @@ export class UazapiClient {
     }
   }
 
-  private async withLegacyFallback<T>(primary: () => Promise<T>, legacy: () => Promise<T>): Promise<T> {
+  private async withLegacyFallback<T>(
+    primary: () => Promise<T>,
+    legacy: () => Promise<T>
+  ): Promise<T> {
     try {
       return await primary();
     } catch (error) {

@@ -11,10 +11,7 @@ const {
   updateDebt,
   getDebts,
   createReserveFund,
-  getClients,
   getRevenueById,
-  resendAsaasCharge,
-  createAsaasCharge,
 } = vi.hoisted(() => ({
   getFinancialPlanActionById: vi.fn(),
   updateFinancialPlanAction: vi.fn(),
@@ -26,10 +23,7 @@ const {
   updateDebt: vi.fn(),
   getDebts: vi.fn(),
   createReserveFund: vi.fn(),
-  getClients: vi.fn(),
   getRevenueById: vi.fn(),
-  resendAsaasCharge: vi.fn(),
-  createAsaasCharge: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -41,7 +35,7 @@ vi.mock("./db", () => ({
   updateDebt,
   getDebts,
   createReserveFund,
-  getClients,
+  getRevenueById,
 }));
 
 vi.mock("./db/whatsapp", () => ({
@@ -49,13 +43,6 @@ vi.mock("./db/whatsapp", () => ({
   updateFinancialPlanAction,
 }));
 
-vi.mock("./asaas", () => ({
-  resendAsaasCharge,
-  createAsaasCharge,
-}));
-vi.mock("./db/asaas", () => ({
-  getRevenueById,
-}));
 vi.mock("./db/financial-advisor", () => ({}));
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
@@ -98,7 +85,9 @@ describe("financial advisor plan action execution", () => {
 
     const result = await confirmFinancialAdvisorAction(7, 10);
 
-    expect(updateCompanyFixedCost).toHaveBeenCalledWith(42, 7, { status: "pago" });
+    expect(updateCompanyFixedCost).toHaveBeenCalledWith(42, 7, {
+      status: "pago",
+    });
     expect(updateFinancialPlanAction).toHaveBeenCalledTimes(1);
     const actionUpdate = updateFinancialPlanAction.mock.calls[0]?.[2];
     const parsedMetadata = JSON.parse(String(actionUpdate?.metadata || "{}"));
@@ -159,131 +148,56 @@ describe("financial advisor plan action execution", () => {
     });
   });
 
-  it("executes a real follow-up for the most urgent Asaas charge", async () => {
+  it("confirms a manual follow-up for the most urgent receivable", async () => {
     getFinancialPlanActionById.mockResolvedValue({
       id: 12,
       status: "pendente",
       actionType: "charge_follow_up",
-      title: "Atuar nas cobrancas abertas do Asaas",
+      title: "Cobrar recebimentos em aberto",
       metadata: JSON.stringify({
-        targetCharge: {
-          id: 88,
-          asaasChargeId: "pay_123",
+        targetRevenue: {
+          revenueId: 88,
           description: "Mensalidade ACME",
-          billingType: "PIX",
-          status: "OVERDUE",
+          clientName: "ACME LTDA",
+          status: "atrasado",
           dueDate: "2026-04-10",
           value: 850,
         },
       }),
     });
-    resendAsaasCharge.mockResolvedValue({
+    getRevenueById.mockResolvedValue({
       id: 88,
-      asaasChargeId: "pay_123",
       description: "Mensalidade ACME",
-      billingType: "PIX",
-      status: "PENDING",
+      client: "ACME LTDA",
+      status: "pendente",
       dueDate: "2026-04-10",
-      value: "850.00",
-      pixCopyAndPaste: "000201...",
+      netAmount: "850.00",
     });
 
     const result = await confirmFinancialAdvisorAction(7, 12);
 
-    expect(resendAsaasCharge).toHaveBeenCalledWith(7, 88);
+    expect(getRevenueById).toHaveBeenCalledWith(7, 88);
     expect(updateFinancialPlanAction).toHaveBeenCalledTimes(1);
     const actionUpdate = updateFinancialPlanAction.mock.calls[0]?.[2];
     const parsedMetadata = JSON.parse(String(actionUpdate?.metadata || "{}"));
     expect(parsedMetadata.execution).toMatchObject({
       kind: "charge_follow_up",
     });
-    expect(parsedMetadata.execution.targetCharge).toMatchObject({
-      id: 88,
+    expect(parsedMetadata.execution.targetRevenue).toMatchObject({
+      revenueId: 88,
       description: "Mensalidade ACME",
-      billingType: "PIX",
-      status: "PENDING",
+      clientName: "ACME LTDA",
+      status: "pendente",
       dueDate: "2026-04-10",
       value: 850,
-      pixCopyAndPaste: "000201...",
     });
     expect(result).toMatchObject({
       success: true,
       executionKind: "charge_follow_up",
-      targetChargeId: 88,
-      billingType: "PIX",
+      revenueId: 88,
       dueDate: "2026-04-10",
       value: 850,
       message: expect.stringContaining("Mensalidade ACME"),
-    });
-  });
-
-  it("creates a real Asaas charge for an eligible pending revenue", async () => {
-    getFinancialPlanActionById.mockResolvedValue({
-      id: 13,
-      status: "pendente",
-      actionType: "create_asaas_charge",
-      title: "Gerar cobranca Asaas para receita pendente",
-      metadata: JSON.stringify({
-        targetRevenue: {
-          revenueId: 51,
-          description: "Consultoria Abril",
-          clientName: "ACME LTDA",
-          dueDate: "2026-04-20",
-          value: 1900,
-          billingType: "PIX",
-        },
-      }),
-    });
-    getRevenueById.mockResolvedValue({
-      id: 51,
-      description: "Consultoria Abril",
-      client: "ACME LTDA",
-      dueDate: "2026-04-20",
-      grossAmount: "1900.00",
-      asaasPaymentId: null,
-    });
-    getClients.mockResolvedValue([{ id: 8, name: "ACME LTDA" }]);
-    createAsaasCharge.mockResolvedValue({
-      id: 144,
-      asaasChargeId: "pay_new_144",
-      description: "Consultoria Abril",
-      billingType: "PIX",
-      status: "PENDING",
-      dueDate: "2026-04-20",
-      value: "1900.00",
-      pixCopyAndPaste: "000201pix...",
-    });
-
-    const result = await confirmFinancialAdvisorAction(7, 13);
-
-    expect(createAsaasCharge).toHaveBeenCalledWith(7, {
-      clientId: 8,
-      revenueId: 51,
-      description: "Consultoria Abril",
-      value: "1900.00",
-      dueDate: "2026-04-20",
-      billingType: "PIX",
-    });
-    const actionUpdate = updateFinancialPlanAction.mock.calls[0]?.[2];
-    const parsedMetadata = JSON.parse(String(actionUpdate?.metadata || "{}"));
-    expect(parsedMetadata.execution).toMatchObject({
-      kind: "create_asaas_charge",
-    });
-    expect(parsedMetadata.execution.targetCharge).toMatchObject({
-      id: 144,
-      description: "Consultoria Abril",
-      billingType: "PIX",
-      status: "PENDING",
-    });
-    expect(result).toMatchObject({
-      success: true,
-      executionKind: "create_asaas_charge",
-      targetChargeId: 144,
-      revenueId: 51,
-      billingType: "PIX",
-      dueDate: "2026-04-20",
-      value: 1900,
-      message: expect.stringContaining("ACME LTDA"),
     });
   });
 

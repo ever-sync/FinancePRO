@@ -1,6 +1,7 @@
 # Sistema Financeiro Empresarial - TODO
 
 ## Infraestrutura
+
 - [x] Schema do banco de dados (todas as tabelas)
 - [x] Migrações SQL executadas
 - [x] API backend (tRPC routers e db helpers)
@@ -9,6 +10,7 @@
 - [x] Testes unitários (vitest)
 
 ## Páginas - Empresa (PJ)
+
 - [x] Dashboard Empresa (faturamento, custos, lucro, caixa, gráficos)
 - [x] Receitas (lançamento com deduções automáticas: 6% imposto)
 - [x] Custos Fixos Empresa (aluguel, contador, software, etc.)
@@ -18,6 +20,7 @@
 - [x] Fundo de Reserva Empresa (meta: 3 meses de custos operacionais)
 
 ## Páginas - Pessoal (PF)
+
 - [x] Dashboard Pessoal (pró-labore, dízimo, investimentos, saldo)
 - [x] Contas Fixas Pessoais (aluguel casa, plano saúde, etc.)
 - [x] Contas Variáveis Pessoais (mercado, lazer, etc.)
@@ -26,11 +29,13 @@
 - [x] Fundo de Reserva Pessoal (meta: 6 meses de despesas)
 
 ## Páginas - Geral
+
 - [x] DRE Simplificado (demonstrativo de resultado)
 - [x] Calendário de Pagamentos (visão mensal de vencimentos)
 - [x] Configurações (percentuais, pró-labore, categorias)
 
 ## Funcionalidades Transversais
+
 - [x] Separação PJ/PF (todo dinheiro entra na empresa primeiro)
 - [x] Cálculo automático de imposto 6% sobre receitas
 - [x] Cálculo automático de dízimo 10% sobre pró-labore líquido
@@ -45,13 +50,14 @@
 ## 🚀 Melhorias Futuras (Ver IMPROVEMENT_PLAN.md para detalhes completos)
 
 ### Fase 1: Fundação & Performance (Sprints 1-3)
+
 - [ ] Modularizar db.ts em repositórios menores
 - [ ] Implementar paginação em todas as listas
-- [ ] Criar índices no banco de dados
+- [x] Criar índices no banco de dados
 - [ ] Implementar Repository Pattern
 - [ ] Criar Service Layer para lógica de negócio
 - [ ] Validação rigorosa de inputs no backend
-- [ ] Rate limiting nas rotas da API
+- [x] Rate limiting nas rotas da API
 - [ ] CSRF Protection
 - [ ] Padronizar error handling
 - [ ] Audit logs para ações críticas
@@ -61,6 +67,7 @@
 - [ ] Husky pre-commit hooks
 
 ### Fase 2: Experiência do Usuário (Sprints 4-6)
+
 - [ ] Optimistic updates nas mutations
 - [ ] Skeletons específicos por página
 - [ ] Validação em tempo real
@@ -74,6 +81,7 @@
 - [ ] Acessibilidade (ARIA, contraste, navegação por teclado)
 
 ### Fase 3: Funcionalidades Financeiras (Sprints 7-10)
+
 - [ ] Exportação de relatórios em PDF
 - [ ] Exportação Excel/CSV
 - [ ] DRE avançado com comparativos
@@ -91,6 +99,7 @@
 - [ ] Guias de impostos (DARF, DAS, GPS)
 
 ### Fase 4: Infraestrutura & DevOps (Sprints 11-12)
+
 - [ ] Dockerizar aplicação
 - [ ] Docker Compose para stack completa
 - [ ] Ambiente de staging
@@ -102,6 +111,7 @@
 - [ ] Documentação de deploy
 
 ### Fase 5: Internacionalização & Mobile (Sprints 13-15)
+
 - [ ] i18n (i18next)
 - [ ] Traduções PT-BR e EN
 - [ ] Locale formatting (data, moeda)
@@ -111,6 +121,7 @@
 - [ ] Touch gestures
 
 ### Fase 6: Integrações Avançadas (Sprints 16-18)
+
 - [ ] Open Banking integration
 - [ ] Conciliação bancária automática
 - [ ] API de boletos
@@ -118,6 +129,18 @@
 - [ ] Webhook payments
 - [ ] IA para detecção de anomalias
 - [ ] Predictive analytics
+
+### Agente Financeiro n8n + WhatsApp
+
+- [x] Workflow n8n com AI Agent e modelo OpenAI isolado
+- [x] API de contexto e CRUD financeiro escopada pela integração
+- [x] Sessão curta assinada contra troca de usuário por prompt injection
+- [x] Confirmação única para criar, editar, baixar e excluir
+- [x] Auditoria e idempotência de comandos do agente
+- [x] Registros de transferências/aportes explicitamente manuais
+- [x] Fallback para o assistente interno quando o n8n falhar
+- [x] Testes automatizados de autorização, confirmação e escopo
+- [ ] Cadastrar a instância Uazapi e o número autorizado na conta do titular
 
 ---
 
@@ -129,12 +152,12 @@ Prioridade máxima para entrega rápida de valor:
 2. [ ] Confirmação de delete (2h)
 3. [ ] Skeletons específicos (4h)
 4. [ ] Validação em tempo real (5h)
-5. [ ] Índices no banco (3h)
-6. [ ] Rate limiting básico (3h)
+5. [x] Índices no banco (3h)
+6. [x] Rate limiting básico (3h)
 7. [ ] Error boundaries (3h)
 
 **Total estimado: 24h (3 dias)**
 
 ---
 
-*Para o plano completo e detalhado, consulte: [IMPROVEMENT_PLAN.md](./IMPROVEMENT_PLAN.md)*
+_Para o plano completo e detalhado, consulte: [IMPROVEMENT_PLAN.md](./IMPROVEMENT_PLAN.md)_

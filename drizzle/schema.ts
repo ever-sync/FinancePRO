@@ -1,18 +1,61 @@
-import { pgTable, pgEnum, serial, varchar, text, timestamp, integer, numeric, boolean } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  pgEnum,
+  serial,
+  varchar,
+  text,
+  timestamp,
+  integer,
+  numeric,
+  boolean,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 // ==================== ENUMS ====================
 export const userRoleEnum = pgEnum("user_role", ["user", "admin"]);
-export const revenueStatusEnum = pgEnum("revenue_status", ["pendente", "recebido", "atrasado", "cancelado"]);
-export const paymentStatusEnum = pgEnum("payment_status", ["pago", "pendente", "atrasado"]);
-export const employeeStatusEnum = pgEnum("employee_status", ["ativo", "inativo"]);
+export const revenueStatusEnum = pgEnum("revenue_status", [
+  "pendente",
+  "recebido",
+  "atrasado",
+  "cancelado",
+]);
+export const paymentStatusEnum = pgEnum("payment_status", [
+  "pago",
+  "pendente",
+  "atrasado",
+]);
+export const employeeStatusEnum = pgEnum("employee_status", [
+  "ativo",
+  "inativo",
+]);
 export const contractTypeEnum = pgEnum("contract_type", ["clt", "pj"]);
-export const debtStatusEnum = pgEnum("debt_status", ["ativa", "atrasada", "quitada", "renegociada"]);
-export const debtPriorityEnum = pgEnum("debt_priority", ["alta", "media", "baixa"]);
+export const debtStatusEnum = pgEnum("debt_status", [
+  "ativa",
+  "atrasada",
+  "quitada",
+  "renegociada",
+]);
+export const debtPriorityEnum = pgEnum("debt_priority", [
+  "alta",
+  "media",
+  "baixa",
+]);
 export const fundTypeEnum = pgEnum("fund_type", ["empresa", "pessoal"]);
-export const asaasEnvironmentEnum = pgEnum("asaas_environment", ["sandbox", "production"]);
-export const asaasSyncStatusEnum = pgEnum("asaas_sync_status", ["pendente", "sincronizado", "erro"]);
+export const asaasEnvironmentEnum = pgEnum("asaas_environment", [
+  "sandbox",
+  "production",
+]);
+export const asaasSyncStatusEnum = pgEnum("asaas_sync_status", [
+  "pendente",
+  "sincronizado",
+  "erro",
+]);
 export const whatsappProviderEnum = pgEnum("whatsapp_provider", ["uazapi"]);
-export const whatsappDirectionEnum = pgEnum("whatsapp_direction", ["inbound", "outbound"]);
+export const whatsappDirectionEnum = pgEnum("whatsapp_direction", [
+  "inbound",
+  "outbound",
+]);
 export const whatsappMessageStatusEnum = pgEnum("whatsapp_message_status", [
   "received",
   "processed",
@@ -43,18 +86,24 @@ export const financialPlanStatusEnum = pgEnum("financial_plan_status", [
   "fechado",
   "descartado",
 ]);
-export const financialPlanActionStatusEnum = pgEnum("financial_plan_action_status", [
-  "pendente",
-  "concluida",
-  "adiada",
-  "descartada",
-]);
+export const financialPlanActionStatusEnum = pgEnum(
+  "financial_plan_action_status",
+  ["pendente", "concluida", "adiada", "descartada"]
+);
 export const notificationEventStatusEnum = pgEnum("notification_event_status", [
   "agendado",
   "enviado",
   "falhou",
   "adiado",
   "descartado",
+]);
+export const agentCommandStatusEnum = pgEnum("agent_command_status", [
+  "pending",
+  "executing",
+  "executed",
+  "cancelled",
+  "expired",
+  "failed",
 ]);
 
 // ==================== USERS ====================
@@ -66,7 +115,10 @@ export const users = pgTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: userRoleEnum("role").default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
@@ -77,17 +129,38 @@ export type InsertUser = typeof users.$inferInsert;
 export const settings = pgTable("settings", {
   id: serial("id").primaryKey(),
   userId: integer("userId").notNull(),
-  taxPercent: numeric("taxPercent", { precision: 5, scale: 2 }).default("6.00").notNull(),
-  tithePercent: numeric("tithePercent", { precision: 5, scale: 2 }).default("10.00").notNull(),
-  investmentPercent: numeric("investmentPercent", { precision: 5, scale: 2 }).default("10.00").notNull(),
-  proLaboreGross: numeric("proLaboreGross", { precision: 12, scale: 2 }).default("0.00").notNull(),
+  taxPercent: numeric("taxPercent", { precision: 5, scale: 2 })
+    .default("6.00")
+    .notNull(),
+  tithePercent: numeric("tithePercent", { precision: 5, scale: 2 })
+    .default("10.00")
+    .notNull(),
+  investmentPercent: numeric("investmentPercent", { precision: 5, scale: 2 })
+    .default("10.00")
+    .notNull(),
+  proLaboreGross: numeric("proLaboreGross", { precision: 12, scale: 2 })
+    .default("0.00")
+    .notNull(),
   companyReserveMonths: integer("companyReserveMonths").default(3).notNull(),
   personalReserveMonths: integer("personalReserveMonths").default(6).notNull(),
-  companyMinCashMonths: numeric("companyMinCashMonths", { precision: 6, scale: 2 }).default("1.00").notNull(),
-  personalMinCashMonths: numeric("personalMinCashMonths", { precision: 6, scale: 2 }).default("1.00").notNull(),
+  companyMinCashMonths: numeric("companyMinCashMonths", {
+    precision: 6,
+    scale: 2,
+  })
+    .default("1.00")
+    .notNull(),
+  personalMinCashMonths: numeric("personalMinCashMonths", {
+    precision: 6,
+    scale: 2,
+  })
+    .default("1.00")
+    .notNull(),
   companyName: varchar("companyName", { length: 255 }).default("Minha Empresa"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Settings = typeof settings.$inferSelect;
@@ -99,8 +172,12 @@ export const bankConnections = pgTable("bank_connections", {
   userId: integer("userId").notNull(),
   label: varchar("label", { length: 255 }).notNull(),
   institution: varchar("institution", { length: 255 }).notNull(),
-  provider: varchar("provider", { length: 40 }).default("open_finance").notNull(),
-  sourceKind: varchar("sourceKind", { length: 30 }).default("bank_account").notNull(),
+  provider: varchar("provider", { length: 40 })
+    .default("open_finance")
+    .notNull(),
+  sourceKind: varchar("sourceKind", { length: 30 })
+    .default("bank_account")
+    .notNull(),
   scope: varchar("scope", { length: 20 }).default("misto").notNull(),
   syncMode: varchar("syncMode", { length: 20 }).default("file").notNull(),
   status: varchar("status", { length: 20 }).default("rascunho").notNull(),
@@ -110,7 +187,10 @@ export const bankConnections = pgTable("bank_connections", {
   lastSyncStatus: varchar("lastSyncStatus", { length: 40 }),
   lastSyncError: text("lastSyncError"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type BankConnection = typeof bankConnections.$inferSelect;
@@ -140,7 +220,10 @@ export const revenues = pgTable("revenues", {
   asaasSyncedAt: timestamp("asaasSyncedAt"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Revenue = typeof revenues.$inferSelect;
@@ -160,7 +243,10 @@ export const companyFixedCosts = pgTable("company_fixed_costs", {
   year: integer("year").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type CompanyFixedCost = typeof companyFixedCosts.$inferSelect;
@@ -181,11 +267,15 @@ export const companyVariableCosts = pgTable("company_variable_costs", {
   status: paymentStatusEnum("status").default("pendente").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type CompanyVariableCost = typeof companyVariableCosts.$inferSelect;
-export type InsertCompanyVariableCost = typeof companyVariableCosts.$inferInsert;
+export type InsertCompanyVariableCost =
+  typeof companyVariableCosts.$inferInsert;
 
 // ==================== FUNCIONÁRIOS ====================
 export const employees = pgTable("employees", {
@@ -196,15 +286,24 @@ export const employees = pgTable("employees", {
   contractType: contractTypeEnum("contractType").default("clt").notNull(),
   salary: numeric("salary", { precision: 12, scale: 2 }).notNull(),
   fgtsAmount: numeric("fgtsAmount", { precision: 12, scale: 2 }).notNull(),
-  thirteenthProvision: numeric("thirteenthProvision", { precision: 12, scale: 2 }).notNull(),
-  vacationProvision: numeric("vacationProvision", { precision: 12, scale: 2 }).notNull(),
+  thirteenthProvision: numeric("thirteenthProvision", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
+  vacationProvision: numeric("vacationProvision", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
   totalCost: numeric("totalCost", { precision: 12, scale: 2 }).notNull(),
   paymentDay: integer("paymentDay").default(5).notNull(),
   admissionDate: varchar("admissionDate", { length: 10 }),
   status: employeeStatusEnum("empStatus").default("ativo").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Employee = typeof employees.$inferSelect;
@@ -222,7 +321,10 @@ export const suppliers = pgTable("suppliers", {
   email: varchar("email", { length: 320 }),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Supplier = typeof suppliers.$inferSelect;
@@ -241,7 +343,10 @@ export const supplierPurchases = pgTable("supplier_purchases", {
   paymentMethod: varchar("paymentMethod", { length: 100 }),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type SupplierPurchase = typeof supplierPurchases.$inferSelect;
@@ -261,7 +366,10 @@ export const personalFixedCosts = pgTable("personal_fixed_costs", {
   year: integer("year").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type PersonalFixedCost = typeof personalFixedCosts.$inferSelect;
@@ -281,11 +389,15 @@ export const personalVariableCosts = pgTable("personal_variable_costs", {
   status: paymentStatusEnum("status").default("pendente").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type PersonalVariableCost = typeof personalVariableCosts.$inferSelect;
-export type InsertPersonalVariableCost = typeof personalVariableCosts.$inferInsert;
+export type InsertPersonalVariableCost =
+  typeof personalVariableCosts.$inferInsert;
 
 // ==================== DÍVIDAS PESSOAIS ====================
 export const debts = pgTable("debts", {
@@ -293,10 +405,21 @@ export const debts = pgTable("debts", {
   userId: integer("userId").notNull(),
   creditor: varchar("creditor", { length: 255 }).notNull(),
   description: varchar("description", { length: 500 }).notNull(),
-  originalAmount: numeric("originalAmount", { precision: 12, scale: 2 }).notNull(),
-  currentBalance: numeric("currentBalance", { precision: 12, scale: 2 }).notNull(),
-  monthlyPayment: numeric("monthlyPayment", { precision: 12, scale: 2 }).notNull(),
-  interestRate: numeric("interestRate", { precision: 5, scale: 2 }).default("0.00").notNull(),
+  originalAmount: numeric("originalAmount", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
+  currentBalance: numeric("currentBalance", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
+  monthlyPayment: numeric("monthlyPayment", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
+  interestRate: numeric("interestRate", { precision: 5, scale: 2 })
+    .default("0.00")
+    .notNull(),
   totalInstallments: integer("totalInstallments").notNull(),
   paidInstallments: integer("paidInstallments").default(0).notNull(),
   dueDay: integer("dueDay").notNull(),
@@ -304,7 +427,10 @@ export const debts = pgTable("debts", {
   priority: debtPriorityEnum("priority").default("media").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Debt = typeof debts.$inferSelect;
@@ -317,13 +443,23 @@ export const investments = pgTable("investments", {
   description: varchar("description", { length: 500 }).notNull(),
   institution: varchar("institution", { length: 255 }).notNull(),
   type: varchar("investType", { length: 100 }).notNull(),
-  depositAmount: numeric("depositAmount", { precision: 12, scale: 2 }).notNull(),
-  currentBalance: numeric("currentBalance", { precision: 12, scale: 2 }).default("0.00").notNull(),
-  yieldAmount: numeric("yieldAmount", { precision: 12, scale: 2 }).default("0.00").notNull(),
+  depositAmount: numeric("depositAmount", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
+  currentBalance: numeric("currentBalance", { precision: 12, scale: 2 })
+    .default("0.00")
+    .notNull(),
+  yieldAmount: numeric("yieldAmount", { precision: 12, scale: 2 })
+    .default("0.00")
+    .notNull(),
   date: varchar("date", { length: 10 }).notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Investment = typeof investments.$inferSelect;
@@ -341,12 +477,17 @@ export const clients = pgTable("clients", {
   email: varchar("email", { length: 320 }),
   address: varchar("address", { length: 500 }),
   asaasCustomerId: varchar("asaasCustomerId", { length: 64 }),
-  asaasSyncStatus: asaasSyncStatusEnum("asaasSyncStatus").default("pendente").notNull(),
+  asaasSyncStatus: asaasSyncStatusEnum("asaasSyncStatus")
+    .default("pendente")
+    .notNull(),
   asaasLastSyncError: text("asaasLastSyncError"),
   asaasLastSyncedAt: timestamp("asaasLastSyncedAt"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Client = typeof clients.$inferSelect;
@@ -365,29 +506,41 @@ export const services = pgTable("services", {
   status: varchar("status", { length: 20 }).default("ativo").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type Service = typeof services.$inferSelect;
 export type InsertService = typeof services.$inferInsert;
 
-// ==================== ASAAS ACCOUNT ====================
+// ==================== LEGACY ASAAS DATA (INACTIVE) ====================
+// Retained only so existing databases and migration history remain compatible.
+// Runtime routes, webhooks and external API calls were removed.
 export const asaasAccounts = pgTable("asaas_accounts", {
   id: serial("id").primaryKey(),
   userId: integer("userId").notNull(),
   scopeKey: varchar("scopeKey", { length: 100 }).default("default").notNull(),
-  accountName: varchar("accountName", { length: 255 }).default("Conta principal").notNull(),
+  accountName: varchar("accountName", { length: 255 })
+    .default("Conta principal")
+    .notNull(),
   environment: asaasEnvironmentEnum("environment").default("sandbox").notNull(),
   apiKey: text("apiKey").notNull(),
   apiBaseUrl: varchar("apiBaseUrl", { length: 255 }),
   webhookAuthToken: varchar("webhookAuthToken", { length: 255 }),
   webhookUrl: varchar("webhookUrl", { length: 500 }),
   enabled: boolean("enabled").default(true).notNull(),
-  lastConnectionStatus: varchar("lastConnectionStatus", { length: 40 }).default("pendente").notNull(),
+  lastConnectionStatus: varchar("lastConnectionStatus", { length: 40 })
+    .default("pendente")
+    .notNull(),
   lastConnectionMessage: text("lastConnectionMessage"),
   lastConnectionCheckedAt: timestamp("lastConnectionCheckedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AsaasAccount = typeof asaasAccounts.$inferSelect;
@@ -419,7 +572,10 @@ export const asaasCharges = pgTable("asaas_charges", {
   deletedAt: timestamp("deletedAt"),
   rawPayload: text("rawPayload"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AsaasCharge = typeof asaasCharges.$inferSelect;
@@ -445,7 +601,10 @@ export const asaasSubscriptions = pgTable("asaas_subscriptions", {
   lastSyncedAt: timestamp("lastSyncedAt"),
   rawPayload: text("rawPayload"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AsaasSubscription = typeof asaasSubscriptions.$inferSelect;
@@ -474,7 +633,10 @@ export const asaasInvoices = pgTable("asaas_invoices", {
   lastSyncedAt: timestamp("lastSyncedAt"),
   rawPayload: text("rawPayload"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AsaasInvoice = typeof asaasInvoices.$inferSelect;
@@ -501,37 +663,50 @@ export const asaasTransfers = pgTable("asaas_transfers", {
   cancelledAt: timestamp("cancelledAt"),
   rawPayload: text("rawPayload"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AsaasTransfer = typeof asaasTransfers.$inferSelect;
 export type InsertAsaasTransfer = typeof asaasTransfers.$inferInsert;
 
 // ==================== ASAAS FINANCIAL TRANSACTIONS ====================
-export const asaasFinancialTransactions = pgTable("asaas_financial_transactions", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  accountId: integer("accountId").notNull(),
-  asaasTransactionId: varchar("asaasTransactionId", { length: 120 }).notNull(),
-  transactionType: varchar("transactionType", { length: 60 }),
-  entryType: varchar("entryType", { length: 60 }),
-  status: varchar("status", { length: 60 }),
-  description: text("description"),
-  value: numeric("value", { precision: 12, scale: 2 }).notNull(),
-  balance: numeric("balance", { precision: 12, scale: 2 }),
-  transactionDate: varchar("transactionDate", { length: 10 }),
-  effectiveDate: varchar("effectiveDate", { length: 10 }),
-  asaasChargeId: varchar("asaasChargeId", { length: 64 }),
-  asaasTransferId: varchar("asaasTransferId", { length: 64 }),
-  asaasInvoiceId: varchar("asaasInvoiceId", { length: 64 }),
-  lastSyncedAt: timestamp("lastSyncedAt"),
-  rawPayload: text("rawPayload"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
-});
+export const asaasFinancialTransactions = pgTable(
+  "asaas_financial_transactions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    accountId: integer("accountId").notNull(),
+    asaasTransactionId: varchar("asaasTransactionId", {
+      length: 120,
+    }).notNull(),
+    transactionType: varchar("transactionType", { length: 60 }),
+    entryType: varchar("entryType", { length: 60 }),
+    status: varchar("status", { length: 60 }),
+    description: text("description"),
+    value: numeric("value", { precision: 12, scale: 2 }).notNull(),
+    balance: numeric("balance", { precision: 12, scale: 2 }),
+    transactionDate: varchar("transactionDate", { length: 10 }),
+    effectiveDate: varchar("effectiveDate", { length: 10 }),
+    asaasChargeId: varchar("asaasChargeId", { length: 64 }),
+    asaasTransferId: varchar("asaasTransferId", { length: 64 }),
+    asaasInvoiceId: varchar("asaasInvoiceId", { length: 64 }),
+    lastSyncedAt: timestamp("lastSyncedAt"),
+    rawPayload: text("rawPayload"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt")
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  }
+);
 
-export type AsaasFinancialTransaction = typeof asaasFinancialTransactions.$inferSelect;
-export type InsertAsaasFinancialTransaction = typeof asaasFinancialTransactions.$inferInsert;
+export type AsaasFinancialTransaction =
+  typeof asaasFinancialTransactions.$inferSelect;
+export type InsertAsaasFinancialTransaction =
+  typeof asaasFinancialTransactions.$inferInsert;
 
 // ==================== ASAAS WEBHOOK EVENTS ====================
 export const asaasWebhookEvents = pgTable("asaas_webhook_events", {
@@ -548,7 +723,10 @@ export const asaasWebhookEvents = pgTable("asaas_webhook_events", {
   payload: text("payload").notNull(),
   processedAt: timestamp("processedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AsaasWebhookEvent = typeof asaasWebhookEvents.$inferSelect;
@@ -565,20 +743,28 @@ export const whatsappIntegrations = pgTable("whatsapp_integrations", {
   authorizedPhone: varchar("authorizedPhone", { length: 32 }).notNull(),
   enabled: boolean("enabled").default(true).notNull(),
   automationHour: integer("automationHour").default(8).notNull(),
-  timezone: varchar("timezone", { length: 80 }).default("America/Sao_Paulo").notNull(),
+  timezone: varchar("timezone", { length: 80 })
+    .default("America/Sao_Paulo")
+    .notNull(),
   webhookUrl: varchar("webhookUrl", { length: 500 }),
-  lastConnectionStatus: varchar("lastConnectionStatus", { length: 40 }).default("pendente").notNull(),
+  lastConnectionStatus: varchar("lastConnectionStatus", { length: 40 })
+    .default("pendente")
+    .notNull(),
   lastConnectionMessage: text("lastConnectionMessage"),
   lastConnectionCheckedAt: timestamp("lastConnectionCheckedAt"),
   lastWebhookReceivedAt: timestamp("lastWebhookReceivedAt"),
   lastMessageReceivedAt: timestamp("lastMessageReceivedAt"),
   lastMessageSentAt: timestamp("lastMessageSentAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type WhatsAppIntegration = typeof whatsappIntegrations.$inferSelect;
-export type InsertWhatsAppIntegration = typeof whatsappIntegrations.$inferInsert;
+export type InsertWhatsAppIntegration =
+  typeof whatsappIntegrations.$inferInsert;
 
 // ==================== WHATSAPP CONTACTS ====================
 export const whatsappContacts = pgTable("whatsapp_contacts", {
@@ -590,7 +776,10 @@ export const whatsappContacts = pgTable("whatsapp_contacts", {
   isAuthorized: boolean("isAuthorized").default(false).notNull(),
   lastSeenAt: timestamp("lastSeenAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type WhatsAppContact = typeof whatsappContacts.$inferSelect;
@@ -606,30 +795,48 @@ export const assistantThreads = pgTable("assistant_threads", {
   status: varchar("status", { length: 40 }).default("active").notNull(),
   lastMessageAt: timestamp("lastMessageAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AssistantThread = typeof assistantThreads.$inferSelect;
 export type InsertAssistantThread = typeof assistantThreads.$inferInsert;
 
 // ==================== WHATSAPP MESSAGES ====================
-export const whatsappMessages = pgTable("whatsapp_messages", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  integrationId: integer("integrationId").notNull(),
-  contactId: integer("contactId").notNull(),
-  threadId: integer("threadId").notNull(),
-  providerMessageId: varchar("providerMessageId", { length: 255 }),
-  direction: whatsappDirectionEnum("direction").notNull(),
-  status: whatsappMessageStatusEnum("status").default("received").notNull(),
-  textContent: text("textContent").notNull(),
-  detectedIntent: varchar("detectedIntent", { length: 80 }),
-  requiresConfirmation: boolean("requiresConfirmation").default(false).notNull(),
-  rawPayload: text("rawPayload"),
-  deliveredAt: timestamp("deliveredAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
-});
+export const whatsappMessages = pgTable(
+  "whatsapp_messages",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    integrationId: integer("integrationId").notNull(),
+    contactId: integer("contactId").notNull(),
+    threadId: integer("threadId").notNull(),
+    providerMessageId: varchar("providerMessageId", { length: 255 }),
+    direction: whatsappDirectionEnum("direction").notNull(),
+    status: whatsappMessageStatusEnum("status").default("received").notNull(),
+    textContent: text("textContent").notNull(),
+    detectedIntent: varchar("detectedIntent", { length: 80 }),
+    requiresConfirmation: boolean("requiresConfirmation")
+      .default(false)
+      .notNull(),
+    rawPayload: text("rawPayload"),
+    deliveredAt: timestamp("deliveredAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt")
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("whatsapp_messages_provider_direction_idx").on(
+      table.integrationId,
+      table.providerMessageId,
+      table.direction
+    ),
+  ]
+);
 
 export type WhatsAppMessage = typeof whatsappMessages.$inferSelect;
 export type InsertWhatsAppMessage = typeof whatsappMessages.$inferInsert;
@@ -648,12 +855,17 @@ export const assistantRuns = pgTable("assistant_runs", {
   assistantResponse: text("assistantResponse"),
   suggestedActions: text("suggestedActions"),
   executedActions: text("executedActions"),
-  requiresConfirmation: boolean("requiresConfirmation").default(false).notNull(),
+  requiresConfirmation: boolean("requiresConfirmation")
+    .default(false)
+    .notNull(),
   confirmedAt: timestamp("confirmedAt"),
   expiresAt: timestamp("expiresAt"),
   errorMessage: text("errorMessage"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type AssistantRun = typeof assistantRuns.$inferSelect;
@@ -674,7 +886,10 @@ export const financialPlans = pgTable("financial_plans", {
   generatedAt: timestamp("generatedAt").defaultNow().notNull(),
   confirmedAt: timestamp("confirmedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type FinancialPlan = typeof financialPlans.$inferSelect;
@@ -694,11 +909,15 @@ export const financialPlanActions = pgTable("financial_plan_actions", {
   snoozedUntil: timestamp("snoozedUntil"),
   metadata: text("metadata"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type FinancialPlanAction = typeof financialPlanActions.$inferSelect;
-export type InsertFinancialPlanAction = typeof financialPlanActions.$inferInsert;
+export type InsertFinancialPlanAction =
+  typeof financialPlanActions.$inferInsert;
 
 // ==================== NOTIFICATION EVENTS ====================
 export const notificationEvents = pgTable("notification_events", {
@@ -719,48 +938,114 @@ export const notificationEvents = pgTable("notification_events", {
   snoozedUntil: timestamp("snoozedUntil"),
   lastError: text("lastError"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type NotificationEvent = typeof notificationEvents.$inferSelect;
 export type InsertNotificationEvent = typeof notificationEvents.$inferInsert;
 
 // ==================== FINANCIAL ADVISOR SNAPSHOTS ====================
-export const financialAdvisorSnapshots = pgTable("financial_advisor_snapshots", {
-  id: serial("id").primaryKey(),
-  userId: integer("userId").notNull(),
-  integrationId: integer("integrationId"),
-  relatedPlanId: integer("relatedPlanId"),
-  snapshotType: varchar("snapshotType", { length: 40 }).notNull(),
-  referenceDate: varchar("referenceDate", { length: 10 }).notNull(),
-  periodMonth: integer("periodMonth").notNull(),
-  periodYear: integer("periodYear").notNull(),
-  status: varchar("status", { length: 40 }).default("generated").notNull(),
-  cashRiskLevel: varchar("cashRiskLevel", { length: 20 }).notNull(),
-  summary: text("summary").notNull(),
-  confidenceScore: numeric("confidenceScore", { precision: 4, scale: 2 }).default("1.00").notNull(),
-  snapshotPayload: text("snapshotPayload").notNull(),
-  recommendationsPayload: text("recommendationsPayload"),
-  confirmedAt: timestamp("confirmedAt"),
-  executedAt: timestamp("executedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
-});
+export const financialAdvisorSnapshots = pgTable(
+  "financial_advisor_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    integrationId: integer("integrationId"),
+    relatedPlanId: integer("relatedPlanId"),
+    snapshotType: varchar("snapshotType", { length: 40 }).notNull(),
+    referenceDate: varchar("referenceDate", { length: 10 }).notNull(),
+    periodMonth: integer("periodMonth").notNull(),
+    periodYear: integer("periodYear").notNull(),
+    status: varchar("status", { length: 40 }).default("generated").notNull(),
+    cashRiskLevel: varchar("cashRiskLevel", { length: 20 }).notNull(),
+    summary: text("summary").notNull(),
+    confidenceScore: numeric("confidenceScore", { precision: 4, scale: 2 })
+      .default("1.00")
+      .notNull(),
+    snapshotPayload: text("snapshotPayload").notNull(),
+    recommendationsPayload: text("recommendationsPayload"),
+    confirmedAt: timestamp("confirmedAt"),
+    executedAt: timestamp("executedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt")
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  }
+);
 
-export type FinancialAdvisorSnapshot = typeof financialAdvisorSnapshots.$inferSelect;
-export type InsertFinancialAdvisorSnapshot = typeof financialAdvisorSnapshots.$inferInsert;
+export type FinancialAdvisorSnapshot =
+  typeof financialAdvisorSnapshots.$inferSelect;
+export type InsertFinancialAdvisorSnapshot =
+  typeof financialAdvisorSnapshots.$inferInsert;
+
+// ==================== N8N AGENT COMMANDS ====================
+// Every model-requested mutation is staged here and can only be executed after
+// the authorized WhatsApp user repeats the one-time confirmation code.
+export const agentCommands = pgTable(
+  "agent_commands",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("userId").notNull(),
+    integrationId: integer("integrationId").notNull(),
+    threadId: integer("threadId"),
+    requestId: varchar("requestId", { length: 160 }).notNull(),
+    operation: varchar("operation", { length: 20 }).notNull(),
+    entityType: varchar("entityType", { length: 40 }).notNull(),
+    entityId: integer("entityId"),
+    payload: text("payload").notNull(),
+    summary: text("summary").notNull(),
+    confirmationCodeHash: varchar("confirmationCodeHash", {
+      length: 64,
+    }).notNull(),
+    status: agentCommandStatusEnum("status").default("pending").notNull(),
+    resultPayload: text("resultPayload"),
+    expiresAt: timestamp("expiresAt").notNull(),
+    confirmedAt: timestamp("confirmedAt"),
+    executedAt: timestamp("executedAt"),
+    errorMessage: text("errorMessage"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt")
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("agent_commands_user_request_idx").on(
+      table.userId,
+      table.requestId
+    ),
+    index("agent_commands_pending_idx").on(
+      table.integrationId,
+      table.status,
+      table.expiresAt
+    ),
+  ]
+);
+
+export type AgentCommand = typeof agentCommands.$inferSelect;
+export type InsertAgentCommand = typeof agentCommands.$inferInsert;
 
 // ==================== FUNDO DE RESERVA ====================
 export const reserveFunds = pgTable("reserve_funds", {
   id: serial("id").primaryKey(),
   userId: integer("userId").notNull(),
   type: fundTypeEnum("fundType").notNull(),
-  depositAmount: numeric("depositAmount", { precision: 12, scale: 2 }).notNull(),
+  depositAmount: numeric("depositAmount", {
+    precision: 12,
+    scale: 2,
+  }).notNull(),
   date: varchar("date", { length: 10 }).notNull(),
   description: varchar("description", { length: 500 }),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 });
 
 export type ReserveFund = typeof reserveFunds.$inferSelect;
