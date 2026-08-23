@@ -109,8 +109,9 @@ Mensagens recebidas são deduplicadas. Mensagens de saída entram em `whatsapp_o
 Importe [n8n/financepro-agent.workflow.json](n8n/financepro-agent.workflow.json) inicialmente como inativo. Configure no n8n:
 
 - uma credencial do modelo de IA;
-- uma credencial Header Auth com `X-Agent-Secret: <N8N_AGENT_SECRET>`;
-- acesso ao FinancePRO, preferencialmente pela URL privada Railway `http://financepro.railway.internal:8080`.
+- uma credencial Header Auth de entrada com `X-Agent-Secret: <N8N_AGENT_SECRET>`;
+- uma credencial Header Auth de saída com `Authorization: Bearer <N8N_AGENT_SECRET>`;
+- acesso ao FinancePRO por HTTPS quando n8n e app estiverem em projetos Railway diferentes, ou pela rede privada quando estiverem no mesmo projeto.
 
 No FinancePRO, configure `N8N_AGENT_WEBHOOK_URL` e `N8N_AGENT_SECRET`. O endpoint privado é `POST /api/n8n/finance/tool` e exige simultaneamente o segredo e `X-Agent-Session` assinado pelo FinancePRO.
 
@@ -129,6 +130,8 @@ Authorization: Bearer <CRON_SECRET>
 
 Esse endpoint agenda notificações canônicas, despacha as vencidas e drena a outbox. Todos os alertas respeitam timezone, opt-in, pausa e silêncio das 21h às 8h. As chaves idempotentes evitam alertas duplicados. Também permanecem disponíveis os endpoints legados `financial-daily`, `financial-month-start` e `financial-month-end`.
 
+O arquivo [n8n/financepro-automation.workflow.json](n8n/financepro-automation.workflow.json) já contém o gatilho de 15 minutos. Importe-o como inativo, associe uma credencial Header Auth `Authorization: Bearer <CRON_SECRET>`, publique e reinicie o processo principal do n8n para registrar o agendamento.
+
 ## Railway
 
 O [railway.json](railway.json) já define build, migração pré-deploy, start, healthcheck `/ready` e reinício em falha. No serviço principal:
@@ -137,7 +140,7 @@ O [railway.json](railway.json) já define build, migração pré-deploy, start, 
 2. configure as variáveis de [.env.example](.env.example) sem incluir segredos no Git;
 3. gere um domínio público;
 4. valide `/health` e `/ready` após o deploy;
-5. configure um cron externo ou serviço Railway para chamar `financial-automation` a cada 15 minutos.
+5. importe e publique os dois workflows n8n, incluindo o agendador de `financial-automation`.
 
 O gateway Baileys usa seu próprio [railway.json](services/baileys-gateway/railway.json) e healthcheck `/healthz`.
 
@@ -151,4 +154,4 @@ O gateway Baileys usa seu próprio [railway.json](services/baileys-gateway/railw
 - logs operacionais sem tokens, payload financeiro completo ou segredos;
 - exportação JSON e solicitação de exclusão sujeita a revisão segura.
 
-Não use `ALLOW_PRIVATE_UAZAPI_URLS` ou `ALLOW_PRIVATE_BAILEYS_URLS` em produção.
+Mantenha `ALLOW_PRIVATE_UAZAPI_URLS=false`. Use `ALLOW_PRIVATE_BAILEYS_URLS=true` somente quando `BAILEYS_GATEWAY_URL` for o domínio privado e controlado do serviço Railway; para um gateway público HTTPS, mantenha-o `false`.

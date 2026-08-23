@@ -1,0 +1,73 @@
+[
+  {
+    "id": "financepro-financial-automation-v1",
+    "name": "FinancePRO - Automação Financeira 15 min",
+    "active": false,
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 15
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [-240, 0],
+        "id": "de3cff4b-7714-45ed-a700-a7ff81ad91a7",
+        "name": "A cada 15 minutos"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://financepro-production-81b2.up.railway.app/api/cron/financial-automation",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [20, 0],
+        "id": "a6173474-d1ec-430c-8fb1-03834f5b9412",
+        "name": "Executar automação FinancePRO",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "financepro-cron-secret-v1",
+            "name": "FinancePRO Cron Secret"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "A cada 15 minutos": {
+        "main": [
+          [
+            {
+              "node": "Executar automação FinancePRO",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "saveDataErrorExecution": "all",
+      "saveDataSuccessExecution": "none",
+      "saveManualExecutions": true,
+      "timezone": "America/Sao_Paulo"
+    },
+    "staticData": null,
+    "pinData": {},
+    "versionId": "7a3be708-c2b1-46d3-b7b3-e5e47c2acfd4",
+    "meta": {},
+    "tags": []
+  }
+]

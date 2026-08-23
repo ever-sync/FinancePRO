@@ -53,9 +53,10 @@ O gateway guarda as credenciais de sessão criptografadas e persiste eventos des
 Importe [financepro-agent.workflow.json](../n8n/financepro-agent.workflow.json) como inativo. Configure:
 
 - credencial do modelo de IA;
-- credencial Header Auth `X-Agent-Secret` com o mesmo `N8N_AGENT_SECRET` do FinancePRO;
+- credencial Header Auth de entrada `X-Agent-Secret` com o mesmo `N8N_AGENT_SECRET` do FinancePRO;
+- credencial Header Auth de saída `Authorization: Bearer <N8N_AGENT_SECRET>`;
 - webhook de produção do workflow;
-- URL privada do FinancePRO no nó de ferramentas, quando os serviços estiverem no mesmo projeto Railway.
+- URL HTTPS do FinancePRO no nó de ferramentas quando os serviços estiverem em projetos Railway diferentes; use a URL privada somente no mesmo projeto.
 
 No FinancePRO:
 
@@ -129,6 +130,8 @@ O endpoint:
 - despacha notificações vencidas;
 - drena a outbox do WhatsApp.
 
+O workflow [financepro-automation.workflow.json](../n8n/financepro-automation.workflow.json) executa esse endpoint a cada 15 minutos. Associe a ele uma credencial Header Auth `Authorization: Bearer <CRON_SECRET>`, publique-o e reinicie o processo principal do n8n para registrar o gatilho.
+
 `scheduled_notifications` e `whatsapp_outbox` possuem chaves idempotentes. Falhas usam backoff exponencial; após oito tentativas o item vai para `dead_letter`. O modelo de entrega é pelo menos uma vez, porque nenhum provedor externo consegue participar da mesma transação PostgreSQL.
 
 ## Endpoints públicos protegidos
@@ -164,4 +167,4 @@ Os endpoints `/health`, `/ready` e `/metrics` ajudam a separar falha de app, ban
 - credenciais do gateway criptografadas;
 - mudanças financeiras e consentimentos auditados.
 
-Em produção, mantenha `ALLOW_PRIVATE_UAZAPI_URLS=false` e `ALLOW_PRIVATE_BAILEYS_URLS=false`.
+Em produção, mantenha `ALLOW_PRIVATE_UAZAPI_URLS=false`. Defina `ALLOW_PRIVATE_BAILEYS_URLS=true` apenas para o domínio privado controlado do gateway Railway; gateways públicos HTTPS não precisam dessa exceção.
