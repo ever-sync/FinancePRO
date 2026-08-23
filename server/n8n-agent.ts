@@ -6,6 +6,8 @@ import * as agentDb from "./db/agent";
 import * as whatsappDb from "./db/whatsapp";
 import * as financialAdvisor from "./financial-advisor";
 import * as canonicalDb from "./db/financial-core";
+import * as operationsDb from "./db/financial-operations";
+import * as lifelongDb from "./db/lifelong-plan";
 import {
   getCanonicalBudgetStatus,
   getCanonicalFinancialSnapshot,
@@ -17,13 +19,33 @@ import { parseBrazilianMoneyExpression } from "../shared/financial-core";
 
 const CANONICAL_AGENT_ACTIONS = [
   "get_financial_snapshot",
+  "get_registration_context",
+  "list_financial_items",
+  "list_financial_calendar",
   "get_upcoming_cashflow",
   "get_budget_status",
   "list_financial_transactions",
   "set_financial_account_balance",
   "record_financial_transaction",
+  "record_expense",
+  "record_income",
   "record_financial_transfer",
+  "create_transfer",
   "undo_financial_transaction",
+  "create_financial_account",
+  "update_financial_account",
+  "archive_financial_account",
+  "create_payable",
+  "create_receivable",
+  "create_recurrence",
+  "create_installment_plan",
+  "create_card_purchase",
+  "settle_payable",
+  "settle_receivable",
+  "update_financial_item",
+  "update_recurrence",
+  "cancel_financial_item",
+  "undo_financial_action",
   "categorize_financial_transaction",
   "allocate_income",
   "create_financial_goal",
@@ -35,6 +57,18 @@ const CANONICAL_AGENT_ACTIONS = [
   "confirm_project_payment",
   "simulate_purchase",
   "simulate_car",
+  "get_lifelong_plan",
+  "propose_income_allocation",
+  "confirm_income_allocation",
+  "confirm_financial_phase",
+  "set_income_2027_confirmation",
+  "record_credit_health",
+  "update_credit_cleanup_task",
+  "upsert_asset",
+  "record_car_quote",
+  "set_investment_policy",
+  "upsert_investment_position",
+  "record_dividend",
   "create_reminder",
   "pause_notifications",
   "set_notification_preference",
@@ -630,6 +664,45 @@ function canonicalActor(integrationId: number, threadId?: number | null) {
   };
 }
 
+function operationalWriteContext(
+  input: AgentToolRequest,
+  integrationId: number,
+  actor: ReturnType<typeof canonicalActor>
+) {
+  const request = requireValue(input.requestId, "requestId e obrigatorio");
+  return {
+    actor,
+    idempotencyKey: `n8n:${integrationId}:${request}`,
+    conversationId:
+      input.threadId == null ? null : `whatsapp-thread:${input.threadId}`,
+    messageId: request,
+  };
+}
+
+const financialItemScopeSchema = z.enum([
+  "THIS_OCCURRENCE",
+  "THIS_AND_FUTURE",
+  "ALL_OCCURRENCES",
+]);
+
+const incomeKindSchema = z.enum([
+  "salary_fixed",
+  "owner_draw",
+  "profit_distribution",
+  "project_payment",
+  "saas_recurring_revenue",
+  "asset_sale",
+  "refund",
+  "bonus",
+  "tax_refund",
+  "dividend",
+  "interest",
+  "gift",
+  "loan_proceeds",
+  "transfer_between_own_accounts",
+  "unknown",
+]);
+
 async function handleCanonicalAgentAction(
   input: AgentToolRequest,
   integration: NonNullable<
@@ -639,12 +712,509 @@ async function handleCanonicalAgentAction(
   const scope = await canonicalDb.resolveFinancialScope(integration.userId);
   const actor = canonicalActor(integration.id, input.threadId);
 
+  if (input.action === "get_registration_context") {
+    return {
+      ok: true,
+      context: await operationsDb.getRegistrationContextV3(scope),
+    };
+  }
+  if (
+    input.action === "list_financial_items" ||
+    input.action === "list_financial_calendar"
+  ) {
+    const parsed = z
+      .object({
+        kind: z.enum(["payable", "receivable"]).optional(),
+        status: z.string().trim().min(1).max(32).optional(),
+        startDate: canonicalIsoDateSchema.optional(),
+        endDate: canonicalIsoDateSchema.optional(),
+        limit: z.number().int().min(1).max(500).default(200),
+      })
+      .strict()
+      .refine(
+        value =>
+          !value.startDate ||
+          !value.endDate ||
+          value.startDate <= value.endDate,
+        "periodo invalido"
+      )
+      .parse(input.payload == null ? {} : canonicalPayload(input));
+    const items = await operationsDb.listFinancialItemsV3(scope, parsed);
+    return { ok: true, count: items.length, items };
+  }
+  if (input.action === "get_lifelong_plan") {
+    return {
+      ok: true,
+      plan: await lifelongDb.getLifelongPlanData(scope),
+    };
+  }
+
   if (input.action === "get_financial_snapshot") {
     return {
       ok: true,
       snapshot: await getCanonicalFinancialSnapshot(integration.userId, {
         expectedTenantId: scope.tenantId,
       }),
+    };
+  }
+  if (input.action === "create_financial_account") {
+    const parsed = z
+      .object({
+        name: z.string().trim().min(1).max(255),
+        code: z.string().trim().min(1).max(120).nullable().optional(),
+        ownerType: z.enum(["personal", "business"]),
+        accountType: z.enum([
+          "checking",
+          "savings",
+          "reserve",
+          "credit_card",
+          "cash",
+          "investment",
+          "goal_wallet",
+          "other",
+        ]),
+        institution: z.string().trim().max(255).nullable().optional(),
+        currency: z.string().trim().length(3).default("BRL"),
+        initialBalanceCents: z
+          .number()
+          .int()
+          .min(-Number.MAX_SAFE_INTEGER)
+          .max(Number.MAX_SAFE_INTEGER)
+          .nullable()
+          .optional(),
+        balanceAsOf: canonicalDateSchema.nullable().optional(),
+        includeInOperatingCash: z.boolean().optional(),
+        protected: z.boolean().optional(),
+        needsConfirmation: z.boolean().optional(),
+        closingDay: z.number().int().min(1).max(31).nullable().optional(),
+        dueDay: z.number().int().min(1).max(31).nullable().optional(),
+        creditLimitCents: canonicalCentsSchema.nullable().optional(),
+        paymentAccountId: positiveIdSchema.nullable().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.createFinancialAccountV3(
+        scope,
+        {
+          ...parsed,
+          balanceAsOf: parsed.balanceAsOf ? new Date(parsed.balanceAsOf) : null,
+        },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "update_financial_account") {
+    const parsed = z
+      .object({
+        accountId: positiveIdSchema,
+        patch: z
+          .object({
+            name: z.string().trim().min(1).max(255).optional(),
+            code: z.string().trim().min(1).max(120).nullable().optional(),
+            institution: z.string().trim().max(255).nullable().optional(),
+            includeInOperatingCash: z.boolean().optional(),
+            protected: z.boolean().optional(),
+            needsConfirmation: z.boolean().optional(),
+            closingDay: z.number().int().min(1).max(31).nullable().optional(),
+            dueDay: z.number().int().min(1).max(31).nullable().optional(),
+            creditLimitCents: canonicalCentsSchema.nullable().optional(),
+            paymentAccountId: positiveIdSchema.nullable().optional(),
+          })
+          .strict()
+          .refine(value => Object.keys(value).length > 0, "patch vazio"),
+        confirmation: z.literal("CONFIRMO ALTERACAO DE PROTECAO").optional(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (
+          value.patch.protected === false &&
+          value.confirmation !== "CONFIRMO ALTERACAO DE PROTECAO"
+        )
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["confirmation"],
+            message: "confirmacao explicita obrigatoria",
+          });
+      })
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.updateFinancialAccountV3(
+        scope,
+        { accountId: parsed.accountId, patch: parsed.patch },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "archive_financial_account") {
+    const parsed = z
+      .object({
+        accountId: positiveIdSchema,
+        reason: z.string().trim().min(1).max(1_000),
+        confirmation: z.literal("CONFIRMO ARQUIVAMENTO DA CONTA"),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.archiveFinancialAccountV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (
+    input.action === "create_payable" ||
+    input.action === "create_receivable"
+  ) {
+    const payload = canonicalPayload(input);
+    const parsed = z
+      .object({
+        amountCents: canonicalPositiveCentsSchema.optional(),
+        amountText: z.string().trim().min(1).max(120).optional(),
+        description: shortText,
+        dueDate: canonicalIsoDateSchema,
+        competenceDate: canonicalIsoDateSchema.optional(),
+        ownerType: z.enum(["personal", "business"]),
+        counterparty: z.string().trim().max(255).nullable().optional(),
+        categoryId: positiveIdSchema.nullable().optional(),
+        expectedAccountId: positiveIdSchema.nullable().optional(),
+        estimated: z.boolean().default(false),
+        needsConfirmation: z.boolean().default(false),
+        draft: z.boolean().default(false),
+        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+      })
+      .strict()
+      .parse(payload);
+    return {
+      ok: true,
+      ...(await operationsDb.createFinancialItemV3(
+        scope,
+        {
+          ...parsed,
+          kind: input.action === "create_payable" ? "payable" : "receivable",
+          amountCents: resolveCanonicalAmount(parsed),
+          origin: "whatsapp",
+          sourceMessageId: input.requestId,
+        },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "create_recurrence") {
+    const payload = canonicalPayload(input);
+    const parsed = z
+      .object({
+        itemKind: z.enum(["payable", "receivable"]),
+        ownerType: z.enum(["personal", "business"]),
+        description: shortText,
+        frequency: z.enum([
+          "daily",
+          "weekly",
+          "monthly",
+          "yearly",
+          "business_day_rule",
+        ]),
+        interval: z.number().int().min(1).max(365).default(1),
+        byWeekday: z
+          .array(z.number().int().min(0).max(6))
+          .nullable()
+          .optional(),
+        byMonthDay: z.number().int().min(1).max(31).nullable().optional(),
+        businessDayOrdinal: z
+          .number()
+          .int()
+          .min(1)
+          .max(31)
+          .nullable()
+          .optional(),
+        startDate: canonicalIsoDateSchema,
+        endDate: canonicalIsoDateSchema.nullable().optional(),
+        timezone: z.string().trim().min(1).max(80).default("America/Sao_Paulo"),
+        amountMode: z.enum(["fixed", "estimated", "variable"]).default("fixed"),
+        baseAmountCents: canonicalPositiveCentsSchema.optional(),
+        amountCents: canonicalPositiveCentsSchema.optional(),
+        amountText: z.string().trim().min(1).max(120).optional(),
+        expectedAccountId: positiveIdSchema.nullable().optional(),
+        categoryId: positiveIdSchema.nullable().optional(),
+        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+      })
+      .strict()
+      .parse(payload);
+    const baseAmountCents =
+      parsed.baseAmountCents ?? resolveCanonicalAmount(parsed);
+    return {
+      ok: true,
+      ...(await operationsDb.createRecurrenceV3(
+        scope,
+        {
+          ...parsed,
+          baseAmountCents,
+          sourceMessageId: input.requestId,
+        },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "create_installment_plan") {
+    const parsed = z
+      .object({
+        description: shortText,
+        planType: z
+          .enum(["purchase", "income", "debt", "card_purchase"])
+          .default("purchase"),
+        kind: z.enum(["payable", "receivable"]),
+        ownerType: z.enum(["personal", "business"]),
+        totalAmountCents: canonicalPositiveCentsSchema,
+        installmentCount: z.number().int().min(1).max(240),
+        firstDueDate: canonicalIsoDateSchema,
+        accountId: positiveIdSchema.nullable().optional(),
+        creditCardId: positiveIdSchema.nullable().optional(),
+        categoryId: positiveIdSchema.nullable().optional(),
+        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.createInstallmentPlanV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "create_card_purchase") {
+    const parsed = z
+      .object({
+        creditCardId: positiveIdSchema,
+        paymentAccountId: positiveIdSchema,
+        totalAmountCents: canonicalPositiveCentsSchema,
+        description: shortText,
+        occurredAt: canonicalDateSchema,
+        installmentCount: z.number().int().min(1).max(240),
+        firstDueDate: canonicalIsoDateSchema,
+        ownerType: z.enum(["personal", "business"]),
+        categoryId: positiveIdSchema.nullable().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.createCardPurchaseV3(
+        scope,
+        { ...parsed, occurredAt: new Date(parsed.occurredAt) },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (
+    input.action === "settle_payable" ||
+    input.action === "settle_receivable"
+  ) {
+    const payload = canonicalPayload(input);
+    const parsed = z
+      .object({
+        itemId: positiveIdSchema,
+        amountCents: canonicalPositiveCentsSchema.optional(),
+        amountText: z.string().trim().min(1).max(120).optional(),
+        settledAt: canonicalDateSchema,
+        accountId: positiveIdSchema,
+        protectedWithdrawalConfirmation: z
+          .literal("CONFIRMO USO DA RESERVA")
+          .optional(),
+        incomeKind: incomeKindSchema.default("unknown"),
+      })
+      .strict()
+      .parse(payload);
+    const expectedKind =
+      input.action === "settle_payable" ? "payable" : "receivable";
+    const matched = (
+      await operationsDb.listFinancialItemsV3(scope, { limit: 500 })
+    ).find(candidate => candidate.id === parsed.itemId);
+    if (!matched || matched.kind !== expectedKind)
+      throw new AgentToolError(
+        404,
+        expectedKind === "payable"
+          ? "Conta a pagar nao encontrada"
+          : "Conta a receber nao encontrada",
+        "FINANCIAL_ITEM_NOT_FOUND"
+      );
+    const context = operationalWriteContext(input, integration.id, actor);
+    const settlement = await operationsDb.settleFinancialItemV3(
+      scope,
+      {
+        itemId: parsed.itemId,
+        amountCents: resolveCanonicalAmount(parsed),
+        settledAt: new Date(parsed.settledAt),
+        accountId: parsed.accountId,
+        protectedWithdrawalConfirmed:
+          parsed.protectedWithdrawalConfirmation === "CONFIRMO USO DA RESERVA",
+      },
+      context
+    );
+    const transactionId =
+      "transaction" in settlement
+        ? settlement.transaction.id
+        : Number(
+            (settlement.result as unknown as Record<string, unknown>)
+              .transactionId
+          );
+    const allocation =
+      expectedKind === "receivable" &&
+      Number.isInteger(transactionId) &&
+      transactionId > 0
+        ? await lifelongDb.proposeIncomeAllocationV3(scope, {
+            transactionId,
+            incomeKind: parsed.incomeKind,
+            idempotencyKey: `${context.idempotencyKey}:allocation`,
+            actor,
+            conversationId: context.conversationId,
+            messageId: context.messageId,
+          })
+        : null;
+    return {
+      ok: true,
+      ...settlement,
+      allocation,
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "update_financial_item") {
+    const parsed = z
+      .object({
+        itemId: positiveIdSchema,
+        scope: financialItemScopeSchema,
+        patch: z
+          .object({
+            amountCents: canonicalPositiveCentsSchema.optional(),
+            description: shortText.optional(),
+            counterparty: z.string().trim().max(255).nullable().optional(),
+            categoryId: positiveIdSchema.nullable().optional(),
+            expectedAccountId: positiveIdSchema.nullable().optional(),
+            dueDate: canonicalIsoDateSchema.optional(),
+            competenceDate: canonicalIsoDateSchema.optional(),
+            estimated: z.boolean().optional(),
+            needsConfirmation: z.boolean().optional(),
+          })
+          .strict()
+          .refine(
+            value => Object.keys(value).length > 0,
+            "informe o que editar"
+          ),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.updateFinancialItemV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "update_recurrence") {
+    const parsed = z
+      .object({
+        recurrenceId: positiveIdSchema,
+        effectiveFrom: canonicalIsoDateSchema,
+        patch: z
+          .object({
+            description: shortText.optional(),
+            baseAmountCents: canonicalPositiveCentsSchema.optional(),
+            frequency: z
+              .enum([
+                "daily",
+                "weekly",
+                "monthly",
+                "yearly",
+                "business_day_rule",
+              ])
+              .optional(),
+            interval: z.number().int().min(1).max(365).optional(),
+            byWeekday: z
+              .array(z.number().int().min(0).max(6))
+              .nullable()
+              .optional(),
+            byMonthDay: z.number().int().min(1).max(31).nullable().optional(),
+            businessDayOrdinal: z
+              .number()
+              .int()
+              .min(1)
+              .max(31)
+              .nullable()
+              .optional(),
+            endDate: canonicalIsoDateSchema.nullable().optional(),
+            amountMode: z.enum(["fixed", "estimated", "variable"]).optional(),
+            expectedAccountId: positiveIdSchema.nullable().optional(),
+            categoryId: positiveIdSchema.nullable().optional(),
+            status: z.enum(["active", "paused", "cancelled"]).optional(),
+          })
+          .strict()
+          .refine(
+            value => Object.keys(value).length > 0,
+            "informe o que editar"
+          ),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.updateRecurrenceRuleV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "cancel_financial_item") {
+    const parsed = z
+      .object({
+        itemId: positiveIdSchema,
+        scope: financialItemScopeSchema,
+        reason: z.string().trim().min(1).max(500),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.cancelFinancialItemV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "undo_financial_action") {
+    const parsed = z
+      .object({
+        actionId: positiveIdSchema.nullable().optional(),
+        reason: z.string().trim().min(1).max(500).optional(),
+      })
+      .strict()
+      .parse(input.payload == null ? {} : canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await operationsDb.undoFinancialActionV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+      externalBankMovement: false,
     };
   }
   if (input.action === "get_upcoming_cashflow") {
@@ -697,6 +1267,7 @@ async function handleCanonicalAgentAction(
     return { ok: true, count: records.length, records };
   }
   if (input.action === "set_financial_account_balance") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
     const parsed = z
       .object({
         accountId: positiveIdSchema,
@@ -712,29 +1283,34 @@ async function handleCanonicalAgentAction(
       })
       .strict()
       .parse(canonicalPayload(input));
+    const result = await canonicalDb.setFinancialAccountBalance(scope, {
+      accountId: parsed.accountId,
+      balanceCents: parsed.balanceCents,
+      balanceAsOf: parsed.balanceAsOf
+        ? new Date(parsed.balanceAsOf)
+        : new Date(),
+      protectedReductionConfirmed:
+        parsed.protectedReductionConfirmation === "CONFIRMO REDUCAO DA RESERVA",
+      idempotencyKey: `n8n:${integration.id}:${requestId}`,
+      actor,
+    });
     return {
       ok: true,
-      account: await canonicalDb.setFinancialAccountBalance(scope, {
-        accountId: parsed.accountId,
-        balanceCents: parsed.balanceCents,
-        balanceAsOf: parsed.balanceAsOf
-          ? new Date(parsed.balanceAsOf)
-          : new Date(),
-        protectedReductionConfirmed:
-          parsed.protectedReductionConfirmation ===
-          "CONFIRMO REDUCAO DA RESERVA",
-        actor,
-      }),
+      ...result,
       externalBankMovement: false,
     };
   }
-  if (input.action === "record_financial_transaction") {
+  if (
+    input.action === "record_financial_transaction" ||
+    input.action === "record_expense" ||
+    input.action === "record_income"
+  ) {
     const requestId = requireValue(input.requestId, "requestId e obrigatorio");
     const payload = canonicalPayload(input);
     const parsed = z
       .object({
         accountId: positiveIdSchema,
-        type: z.enum(["income", "expense"]),
+        type: z.enum(["income", "expense"]).optional(),
         amountCents: canonicalPositiveCentsSchema.optional(),
         amountText: z.string().trim().min(1).max(120).optional(),
         occurredAt: canonicalDateSchema.optional(),
@@ -745,27 +1321,61 @@ async function handleCanonicalAgentAction(
           .default("confirmed"),
         counterparty: z.string().trim().max(255).nullable().optional(),
         documentNumber: z.string().trim().max(120).nullable().optional(),
+        incomeKind: incomeKindSchema.default("unknown"),
       })
       .strict()
       .parse(payload);
     const amountCents = resolveCanonicalAmount(parsed);
+    const type =
+      input.action === "record_expense"
+        ? "expense"
+        : input.action === "record_income"
+          ? "income"
+          : parsed.type;
+    if (!type)
+      throw new AgentToolError(
+        400,
+        "Informe o tipo income ou expense",
+        "INVALID_TRANSACTION_TYPE"
+      );
     const result = await canonicalDb.recordFinancialTransaction(scope, {
       accountId: parsed.accountId,
-      type: parsed.type,
+      type,
       amountCents,
       occurredAt: parsed.occurredAt ? new Date(parsed.occurredAt) : new Date(),
       description: parsed.description,
       categoryId: parsed.categoryId,
-      status: parsed.status,
+      status:
+        input.action === "record_income"
+          ? "received"
+          : input.action === "record_expense"
+            ? "paid"
+            : parsed.status,
       counterparty: parsed.counterparty,
       documentNumber: parsed.documentNumber,
       source: "whatsapp",
       idempotencyKey: `n8n:${integration.id}:${requestId}`,
       actor,
     });
+    const allocation =
+      type === "income" &&
+      ["confirmed", "received"].includes(result.transaction.status)
+        ? await lifelongDb.proposeIncomeAllocationV3(scope, {
+            transactionId: result.transaction.id,
+            incomeKind: parsed.incomeKind,
+            idempotencyKey: `n8n:${integration.id}:${requestId}:allocation`,
+            actor,
+            conversationId:
+              input.threadId == null
+                ? null
+                : `whatsapp-thread:${input.threadId}`,
+            messageId: requestId,
+          })
+        : null;
     return {
       ok: true,
       ...result,
+      allocation,
       externalBankMovement: false,
       undoAvailableUntil: new Date(Date.now() + 15 * 60_000).toISOString(),
       message: result.alreadyProcessed
@@ -773,7 +1383,10 @@ async function handleCanonicalAgentAction(
         : "Lancamento registrado no FinancePRO. Se precisar, diga 'desfazer' em ate 15 minutos.",
     };
   }
-  if (input.action === "record_financial_transfer") {
+  if (
+    input.action === "record_financial_transfer" ||
+    input.action === "create_transfer"
+  ) {
     const requestId = requireValue(input.requestId, "requestId e obrigatorio");
     const payload = canonicalPayload(input);
     const parsed = z
@@ -1113,6 +1726,23 @@ async function handleCanonicalAgentAction(
         overdraftUsedCents: canonicalCentsSchema.default(0),
         fixedCostsConfirmed: z.boolean().optional(),
         priorityAPlanComplete: z.boolean().optional(),
+        overdueDebtCents: canonicalCentsSchema.optional(),
+        creditIssueResolved: z.boolean().optional(),
+        cleanCreditMonths: z.number().int().min(0).max(600).optional(),
+        minimumCleanCreditMonths: z.number().int().min(1).max(24).optional(),
+        income2027Confirmed: z.boolean().optional(),
+        minimumReserveTargetCents: canonicalCentsSchema.optional(),
+        cashDownPaymentCents: canonicalCentsSchema.optional(),
+        cashDownPaymentTargetCents: canonicalCentsSchema.optional(),
+        acquisitionCostFundCents: canonicalCentsSchema.optional(),
+        acquisitionCostFundTargetCents: canonicalCentsSchema.optional(),
+        tradeInNetCents: canonicalCentsSchema.optional(),
+        tradeInTargetCents: canonicalCentsSchema.optional(),
+        financedAmountCents: canonicalCentsSchema.optional(),
+        financedAmountTargetMaxCents: canonicalCentsSchema.optional(),
+        quotesComplete: z.boolean().optional(),
+        reconciledDays: z.number().int().min(0).max(3650).optional(),
+        concurrentFormalProposals: z.number().int().min(0).max(20).optional(),
       })
       .strict()
       .parse(canonicalPayload(input));
@@ -1122,6 +1752,367 @@ async function handleCanonicalAgentAction(
         ...parsed,
         expectedTenantId: scope.tenantId,
       }),
+    };
+  }
+  if (input.action === "propose_income_allocation") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
+    const parsed = z
+      .object({
+        transactionId: positiveIdSchema,
+        incomeKind: incomeKindSchema,
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.proposeIncomeAllocationV3(scope, {
+        ...parsed,
+        idempotencyKey: `n8n:${integration.id}:${requestId}:allocation`,
+        actor,
+        conversationId:
+          input.threadId == null ? null : `whatsapp-thread:${input.threadId}`,
+        messageId: requestId,
+      })),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "confirm_income_allocation") {
+    const parsed = z
+      .object({ executionId: positiveIdSchema })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.confirmIncomeAllocationV3(scope, {
+        ...parsed,
+        ...operationalWriteContext(input, integration.id, actor),
+      })),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "confirm_financial_phase") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
+    const parsed = z
+      .object({
+        phase: z.enum([
+          "CLEANUP",
+          "CAR_PREPARATION",
+          "CAR_PURCHASE_READY",
+          "POST_CAR_RESERVE",
+          "WEALTH_WITH_CAR_DEBT",
+          "WEALTH_ACCUMULATION",
+          "FINANCIAL_INDEPENDENCE",
+        ]),
+        reason: z.string().trim().min(1).max(1_000),
+        confirmation: z.literal("CONFIRMO MUDANCA DE FASE"),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.confirmFinancialPhaseV3(scope, {
+        phase: parsed.phase,
+        reason: parsed.reason,
+        idempotencyKey: `n8n:${integration.id}:${requestId}:phase`,
+        actor,
+        conversationId:
+          input.threadId == null ? null : `whatsapp-thread:${input.threadId}`,
+        messageId: requestId,
+      })),
+    };
+  }
+  if (input.action === "set_income_2027_confirmation") {
+    const parsed = z
+      .object({ confirmed: z.boolean() })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.setIncome2027ConfirmationV3(scope, {
+        ...parsed,
+        ...operationalWriteContext(input, integration.id, actor),
+      })),
+    };
+  }
+  if (input.action === "record_credit_health") {
+    const parsed = z
+      .object({
+        sourceMonth: z.string().regex(/^\d{4}-\d{2}$/, "use AAAA-MM"),
+        currentDebtCents: canonicalCentsSchema,
+        overdueCents: canonicalCentsSchema,
+        unusedLimitsCents: canonicalCentsSchema,
+        overdraftUsedCents: canonicalCentsSchema,
+        revolvingCreditCents: canonicalCentsSchema,
+        cleanMonths: z.number().int().min(0).max(600),
+        status: z
+          .enum(["confirmed", "needs_confirmation"])
+          .default("confirmed"),
+        issues: z.unknown().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.recordCreditHealthSnapshotV3(scope, {
+        ...parsed,
+        ...operationalWriteContext(input, integration.id, actor),
+      })),
+    };
+  }
+  if (input.action === "update_credit_cleanup_task") {
+    const parsed = z
+      .object({
+        taskId: positiveIdSchema,
+        status: z.enum([
+          "needs_confirmation",
+          "open",
+          "in_progress",
+          "paid",
+          "completed",
+          "cancelled",
+        ]),
+        currentAmountCents: canonicalCentsSchema.nullable().optional(),
+        proof: z.unknown().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.updateCreditCleanupTaskV3(scope, {
+        ...parsed,
+        ...operationalWriteContext(input, integration.id, actor),
+      })),
+    };
+  }
+  if (input.action === "upsert_asset") {
+    const parsed = z
+      .object({
+        assetId: positiveIdSchema.optional(),
+        description: z.string().trim().min(1).max(500),
+        assetType: z.string().trim().min(1).max(40),
+        ownerType: z.enum(["personal", "business"]),
+        estimatedValueCents: canonicalCentsSchema,
+        debtBalanceCents: canonicalCentsSchema.default(0),
+        incomeGenerating: z.boolean().default(false),
+        intendedUse: z.string().trim().max(80).nullable().optional(),
+        status: z
+          .enum(["estimated", "confirmed", "owned", "sold", "archived"])
+          .default("estimated"),
+        needsConfirmation: z.boolean().default(true),
+        valuationSource: z.string().trim().max(160).nullable().optional(),
+        valuedAt: canonicalDateSchema.optional(),
+        metadata: z.unknown().optional(),
+        confirmation: z.literal("CONFIRMO ARQUIVAMENTO DO ATIVO").optional(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (
+          ["sold", "archived"].includes(value.status) &&
+          value.confirmation !== "CONFIRMO ARQUIVAMENTO DO ATIVO"
+        )
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["confirmation"],
+            message: "confirmacao explicita obrigatoria",
+          });
+      })
+      .parse(canonicalPayload(input));
+    const { confirmation: _confirmation, ...asset } = parsed;
+    return {
+      ok: true,
+      ...(await lifelongDb.upsertAssetV3(
+        scope,
+        {
+          ...asset,
+          valuedAt: asset.valuedAt ? new Date(asset.valuedAt) : undefined,
+        },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+    };
+  }
+  if (input.action === "record_car_quote") {
+    const expiresAt = canonicalDateSchema.nullable().optional();
+    const parsed = z
+      .object({
+        description: z.string().trim().min(1).max(500),
+        seller: z.string().trim().max(255).nullable().optional(),
+        priceCents: canonicalPositiveCentsSchema,
+        cashDiscountCents: canonicalCentsSchema.default(0),
+        initialCostsCents: canonicalCentsSchema.default(0),
+        expiresAt,
+        metadata: z.unknown().optional(),
+        tradeIn: z
+          .object({
+            assetId: positiveIdSchema,
+            dealer: z.string().trim().min(1).max(255),
+            offeredCents: canonicalPositiveCentsSchema,
+            deductionsCents: canonicalCentsSchema.default(0),
+            expiresAt,
+          })
+          .strict()
+          .nullable()
+          .optional(),
+        insurance: z
+          .object({
+            insurer: z.string().trim().min(1).max(255),
+            annualPremiumCents: canonicalPositiveCentsSchema,
+            deductibleCents: canonicalCentsSchema.nullable().optional(),
+            coverage: z.unknown().optional(),
+            expiresAt,
+          })
+          .strict()
+          .nullable()
+          .optional(),
+        financing: z
+          .object({
+            lender: z.string().trim().min(1).max(255),
+            downPaymentCents: canonicalCentsSchema,
+            tradeInCents: canonicalCentsSchema.default(0),
+            financedCents: canonicalPositiveCentsSchema,
+            nominalMonthlyBasisPoints: z
+              .number()
+              .int()
+              .min(0)
+              .max(1_000_000)
+              .nullable()
+              .optional(),
+            cetAnnualBasisPoints: z.number().int().min(0).max(1_000_000),
+            termMonths: z.number().int().min(1).max(240),
+            installmentCents: canonicalPositiveCentsSchema,
+            totalPaidCents: canonicalPositiveCentsSchema,
+            feesCents: canonicalCentsSchema.default(0),
+            hardCreditInquiry: z.boolean().default(false),
+            expiresAt,
+          })
+          .strict()
+          .nullable()
+          .optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.recordCarQuoteV3(
+        scope,
+        {
+          ...parsed,
+          expiresAt: parsed.expiresAt ? new Date(parsed.expiresAt) : null,
+          tradeIn: parsed.tradeIn
+            ? {
+                ...parsed.tradeIn,
+                expiresAt: parsed.tradeIn.expiresAt
+                  ? new Date(parsed.tradeIn.expiresAt)
+                  : null,
+              }
+            : parsed.tradeIn,
+          insurance: parsed.insurance
+            ? {
+                ...parsed.insurance,
+                expiresAt: parsed.insurance.expiresAt
+                  ? new Date(parsed.insurance.expiresAt)
+                  : null,
+              }
+            : parsed.insurance,
+          financing: parsed.financing
+            ? {
+                ...parsed.financing,
+                expiresAt: parsed.financing.expiresAt
+                  ? new Date(parsed.financing.expiresAt)
+                  : null,
+              }
+            : parsed.financing,
+        },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+    };
+  }
+  if (input.action === "set_investment_policy") {
+    const parsed = z
+      .object({
+        riskProfile: z.string().trim().min(1).max(40),
+        horizonYears: z.number().int().min(1).max(100).nullable().optional(),
+        liquidityNeeds: z.string().trim().max(2_000).nullable().optional(),
+        targetAllocationBasisPoints: z.record(
+          z.string().trim().min(1).max(80),
+          z.number().int().min(0).max(10_000)
+        ),
+        concentrationLimits: z.unknown().optional(),
+        suitabilityConfirmed: z.boolean(),
+        version: z.string().trim().min(1).max(40),
+        status: z.enum(["draft", "active"]),
+        confirmation: z.literal("CONFIRMO SUITABILITY E POLITICA").optional(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (
+          value.status === "active" &&
+          value.confirmation !== "CONFIRMO SUITABILITY E POLITICA"
+        )
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["confirmation"],
+            message: "confirmacao explicita obrigatoria",
+          });
+      })
+      .parse(canonicalPayload(input));
+    const { confirmation: _confirmation, ...policy } = parsed;
+    return {
+      ok: true,
+      ...(await lifelongDb.setInvestmentPolicyV3(
+        scope,
+        policy,
+        operationalWriteContext(input, integration.id, actor)
+      )),
+    };
+  }
+  if (input.action === "upsert_investment_position") {
+    const parsed = z
+      .object({
+        institution: z.string().trim().min(1).max(255),
+        bucket: z.enum(["emergency", "long_term", "other"]),
+        currency: z.string().trim().length(3).default("BRL"),
+        assetCode: z.string().trim().min(1).max(80),
+        assetClass: z.string().trim().min(1).max(80),
+        quantityMicrounits: canonicalCentsSchema,
+        costBasisCents: canonicalCentsSchema,
+        marketValueCents: canonicalCentsSchema,
+        valuedAt: canonicalDateSchema,
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.upsertInvestmentPositionV3(
+        scope,
+        { ...parsed, valuedAt: new Date(parsed.valuedAt) },
+        operationalWriteContext(input, integration.id, actor)
+      )),
+    };
+  }
+  if (input.action === "record_dividend") {
+    const parsed = z
+      .object({
+        investmentPositionId: positiveIdSchema.nullable().optional(),
+        assetCode: z.string().trim().min(1).max(80),
+        exDate: canonicalIsoDateSchema.nullable().optional(),
+        paymentDate: canonicalIsoDateSchema,
+        grossCents: canonicalPositiveCentsSchema,
+        withholdingCents: canonicalCentsSchema.default(0),
+        netCents: canonicalCentsSchema,
+        reinvestedCents: canonicalCentsSchema.default(0),
+        status: z
+          .enum(["expected", "received", "reinvested"])
+          .default("received"),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await lifelongDb.recordDividendV3(
+        scope,
+        parsed,
+        operationalWriteContext(input, integration.id, actor)
+      )),
     };
   }
   if (input.action === "create_reminder") {

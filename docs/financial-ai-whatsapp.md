@@ -82,25 +82,31 @@ Content-Type: application/json
 
 Ferramentas canônicas:
 
-- consultas: `get_financial_snapshot`, `get_upcoming_cashflow`, `get_budget_status`, `list_financial_transactions`;
-- contas e movimentos: `set_financial_account_balance`, `record_financial_transaction`, `record_financial_transfer`, `undo_financial_transaction`, `categorize_financial_transaction`, `allocate_income`;
-- plano: `create_financial_goal`, `update_financial_goal_item`, `update_recurring_cashflow`, `update_financial_debt`, `update_financial_task`;
-- projetos: `create_financial_project`, `confirm_project_payment`;
+- consultas: `get_financial_snapshot`, `get_registration_context`, `list_financial_items`, `list_financial_calendar`, `get_upcoming_cashflow`, `get_budget_status`, `list_financial_transactions`, `get_lifelong_plan`;
+- agenda: `create_financial_account`, `update_financial_account`, `archive_financial_account`, `create_payable`, `create_receivable`, `create_recurrence`, `create_installment_plan`, `create_card_purchase`, `settle_payable`, `settle_receivable`, `update_financial_item`, `update_recurrence`, `cancel_financial_item`, `undo_financial_action`;
+- movimentos confirmados: `record_income`, `record_expense`, `create_transfer`, além dos contratos canônicos anteriores de saldo, transação, transferência e categoria;
+- plano vitalício: `propose_income_allocation`, `confirm_income_allocation`, `confirm_financial_phase`, `set_income_2027_confirmation`, `record_credit_health`, `update_credit_cleanup_task`;
+- patrimônio: `upsert_asset`, `record_car_quote`, `set_investment_policy`, `upsert_investment_position`, `record_dividend`;
+- metas e projetos: `create_financial_goal`, `update_financial_goal_item`, `update_recurring_cashflow`, `update_financial_debt`, `update_financial_task`, `create_financial_project`, `confirm_project_payment`;
 - decisão: `simulate_purchase`, `simulate_car`;
-- agenda: `create_reminder`, `pause_notifications`, `set_notification_preference`.
+- automação: `create_reminder`, `pause_notifications`, `set_notification_preference`.
 
-Os valores dessas ferramentas são centavos inteiros. Uma expressão ambígua como “5000 mil” retorna erro de ambiguidade para o agente pedir confirmação.
+Os valores dessas ferramentas são centavos inteiros. Uma expressão ambígua como “5000 mil” retorna erro de ambiguidade para o agente pedir confirmação. Toda escrita V3 recebe `requestId` único e devolve `action_id`, `entity_id`, `human_summary`, impactos confirmados/esperados, avisos e a informação de que não houve movimentação bancária.
+
+Ao registrar uma receita confirmada, o backend cria uma proposta determinística de alocação conforme a fase atual. A proposta não transfere o dinheiro: `confirm_income_allocation` apenas registra a concordância do usuário. Ativos, posições, dividendos e cotações também são registros internos; o agente não compra, vende, investe nem solicita crédito.
 
 ## Confirmação e desfazer
 
-Escritas explícitas de baixo risco — lançamento, categoria, saldo, meta, projeto, tarefa e confirmação de pagamento — podem ser executadas diretamente e ficam auditadas. O agente deve informar o resultado e oferecer `desfazer` quando houver transação.
+Escritas explícitas de baixo risco — cadastro, lançamento, categoria, saldo, meta, projeto, tarefa e confirmação de pagamento — podem ser executadas diretamente e ficam auditadas. O agente deve informar o resultado e oferecer `desfazer` quando a resposta trouxer uma janela válida.
 
-O comando `undo_financial_transaction` é aceito por 15 minutos e cria uma transação de reversão; o histórico original não é apagado.
+O comando operacional `undo_financial_action` restaura o estado dentro da janela indicada e registra uma nova auditoria. O comando legado `undo_financial_transaction` continua aceito por 15 minutos e cria uma transação de reversão; o histórico original não é apagado.
 
 Exigem confirmação adicional:
 
 - retirada ou redução de conta protegida;
-- exclusões e mudanças destrutivas do cadastro legado;
+- cancelamento amplo de recorrência, arquivamento de ativo e mudanças destrutivas do cadastro legado;
+- ativação de política de investimentos após suitability;
+- mudança de fase financeira;
 - qualquer pedido cujo valor, conta ou intenção esteja ambíguo.
 
 As frases exigidas pela API para reserva não devem ser inferidas pelo agente. Mesmo após confirmação, nenhum PIX, TED ou pagamento externo é executado.
@@ -123,7 +129,8 @@ Authorization: Bearer <CRON_SECRET>
 O endpoint:
 
 - agenda contas, recebimentos esperados e tarefas;
-- alerta envelopes em 50%, 75%, 90% e 100%;
+- alerta envelopes em 70%, 85% e 100%;
+- gera ocorrências recorrentes por 90 dias, atualiza atrasos e sincroniza o protocolo de risco;
 - produz revisão semanal e resumo de pequenos gastos;
 - cobra pipeline de projetos na segunda, quarta e sexta;
 - produz fechamento mensal;

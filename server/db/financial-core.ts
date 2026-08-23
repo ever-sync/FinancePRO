@@ -6,6 +6,7 @@ import {
   businessCalendarHolidays,
   dataSubjectRequests,
   financialAccounts,
+  financialActions,
   financialAuditEvents,
   financialCategories,
   financialDebts,
@@ -36,6 +37,7 @@ import {
 import {
   assertNonNegativeCents,
   calculateProjectSplit,
+  formatBRLCents,
   getNthBusinessDay,
 } from "../../shared/financial-core";
 import {
@@ -189,15 +191,31 @@ export async function setFinancialAccountBalance(
     balanceCents: number;
     balanceAsOf: Date;
     protectedReductionConfirmed?: boolean;
+    idempotencyKey: string;
     actor: FinancialActor;
   }
 ) {
   assertScope(scope);
   if (!Number.isSafeInteger(input.balanceCents))
     throw new Error("balanceCents deve ser um inteiro seguro");
+  const idempotencyKey = input.idempotencyKey.trim();
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 255)
+    throw new Error("Chave idempotente invalida");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   return db.transaction(async tx => {
+    const [existingAction] = await tx
+      .select()
+      .from(financialActions)
+      .where(
+        and(
+          eq(financialActions.tenantId, scope.tenantId),
+          eq(financialActions.userId, scope.userId),
+          eq(financialActions.idempotencyKey, idempotencyKey)
+        )
+      )
+      .limit(1);
+    if (existingAction) return replayCanonicalAction(existingAction);
     const [before] = await tx
       .select()
       .from(financialAccounts)
@@ -225,10 +243,41 @@ export async function setFinancialAccountBalance(
       .set({
         currentBalanceCents: input.balanceCents,
         balanceAsOf: input.balanceAsOf,
+        needsConfirmation: false,
         updatedAt: new Date(),
       })
       .where(eq(financialAccounts.id, before.id))
       .returning();
+    const reversibleUntil = new Date(Date.now() + 15 * 60_000);
+    const [action] = await tx
+      .insert(financialActions)
+      .values({
+        ...scope,
+        actionType: "account.balance.update",
+        entityType: "financial_account",
+        entityId: String(after.id),
+        beforeSnapshot: before,
+        afterSnapshot: after,
+        idempotencyKey,
+        reversibleUntil,
+      })
+      .returning();
+    const balanceDelta = after.currentBalanceCents - before.currentBalanceCents;
+    const result = canonicalWriteResult({
+      actionId: action.id,
+      entityType: "financial_account",
+      entityId: after.id,
+      operation: "updated",
+      summary: `Saldo de ${after.name} confirmado em ${formatBRLCents(after.currentBalanceCents)}.`,
+      confirmedDeltaCents: balanceDelta,
+      freeDeltaCents:
+        after.includeInOperatingCash && !after.protected ? balanceDelta : 0,
+      reversibleUntil,
+    });
+    await tx
+      .update(financialActions)
+      .set({ resultSnapshot: result })
+      .where(eq(financialActions.id, action.id));
     await tx.insert(financialAuditEvents).values({
       ...scope,
       actorType: input.actor.type,
@@ -244,8 +293,9 @@ export async function setFinancialAccountBalance(
         currentBalanceCents: after.currentBalanceCents,
         balanceAsOf: after.balanceAsOf,
       },
+      requestId: idempotencyKey,
     });
-    return after;
+    return { account: after, result, ...result, alreadyProcessed: false };
   });
 }
 
@@ -268,11 +318,17 @@ export async function upsertSeedAccount(
       ],
       set: {
         name: data.name,
+        code: data.code ?? null,
         ownerType: data.ownerType,
         accountType: data.accountType,
         institution: data.institution ?? null,
         includeInOperatingCash: data.includeInOperatingCash ?? true,
         protected: data.protected ?? false,
+        needsConfirmation: data.needsConfirmation ?? false,
+        closingDay: data.closingDay ?? null,
+        dueDay: data.dueDay ?? null,
+        creditLimitCents: data.creditLimitCents ?? null,
+        paymentAccountId: data.paymentAccountId ?? null,
         active: data.active ?? true,
         updatedAt: new Date(),
       },
@@ -411,6 +467,55 @@ function transactionBalanceEffect(input: {
   return 0;
 }
 
+function canonicalWriteResult(input: {
+  actionId: number;
+  entityType: string;
+  entityId: string | number;
+  operation: "created" | "updated";
+  summary: string;
+  confirmedDeltaCents?: number;
+  projectedDeltaCents?: number;
+  freeDeltaCents?: number;
+  warnings?: string[];
+  reversibleUntil?: Date | null;
+}) {
+  return {
+    success: true as const,
+    action_id: String(input.actionId),
+    entity_type: input.entityType,
+    entity_id: String(input.entityId),
+    operation: input.operation,
+    human_summary: input.summary,
+    financial_impact: {
+      confirmed_balance_delta_cents: input.confirmedDeltaCents ?? 0,
+      projected_balance_delta_cents: input.projectedDeltaCents ?? 0,
+      free_balance_delta_cents: input.freeDeltaCents ?? 0,
+    },
+    warnings: input.warnings ?? [],
+    undo_available_until: input.reversibleUntil?.toISOString() ?? null,
+    external_bank_movement: false as const,
+  };
+}
+
+function replayCanonicalAction(action: typeof financialActions.$inferSelect) {
+  const snapshot =
+    action.resultSnapshot && typeof action.resultSnapshot === "object"
+      ? (action.resultSnapshot as Record<string, unknown>)
+      : {};
+  const result = {
+    ...snapshot,
+    action_id: String(action.id),
+    entity_id: action.entityId,
+    external_bank_movement: false as const,
+  };
+  return {
+    result,
+    ...result,
+    alreadyProcessed: true,
+    already_processed: true,
+  };
+}
+
 function isoDateInSaoPaulo(date: Date) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
@@ -496,8 +601,9 @@ export async function recordFinancialTransaction(
   if (input.amountCents === 0)
     throw new Error("amountCents deve ser maior que zero");
   if (!input.description.trim()) throw new Error("Descricao obrigatoria");
-  if (!input.idempotencyKey.trim())
-    throw new Error("Chave idempotente obrigatoria");
+  const idempotencyKey = input.idempotencyKey.trim();
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 255)
+    throw new Error("Chave idempotente invalida");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -534,7 +640,7 @@ export async function recordFinancialTransaction(
       importId: input.importId ?? null,
       confidence: input.confidence ?? null,
       needsReview: input.needsReview ?? false,
-      idempotencyKey: input.idempotencyKey.trim(),
+      idempotencyKey,
     };
     const [created] = await tx
       .insert(financialTransactions)
@@ -549,15 +655,25 @@ export async function recordFinancialTransaction(
           and(
             eq(financialTransactions.tenantId, scope.tenantId),
             eq(financialTransactions.userId, scope.userId),
-            eq(
-              financialTransactions.idempotencyKey,
-              input.idempotencyKey.trim()
-            )
+            eq(financialTransactions.idempotencyKey, idempotencyKey)
           )
         )
         .limit(1);
       if (!existing) throw new Error("Falha de idempotencia da transacao");
-      return { transaction: existing, alreadyProcessed: true };
+      const [action] = await tx
+        .select()
+        .from(financialActions)
+        .where(
+          and(
+            eq(financialActions.tenantId, scope.tenantId),
+            eq(financialActions.userId, scope.userId),
+            eq(financialActions.idempotencyKey, idempotencyKey)
+          )
+        )
+        .limit(1);
+      return action
+        ? { transaction: existing, ...replayCanonicalAction(action) }
+        : { transaction: existing, alreadyProcessed: true };
     }
 
     const effect = transactionBalanceEffect(created);
@@ -580,6 +696,41 @@ export async function recordFinancialTransaction(
         created.amountCents
       );
     }
+    const reversibleUntil = new Date(Date.now() + 15 * 60_000);
+    const [action] = await tx
+      .insert(financialActions)
+      .values({
+        ...scope,
+        actionType: "transaction.create",
+        entityType: "financial_transaction",
+        entityId: String(created.id),
+        beforeSnapshot: null,
+        afterSnapshot: created,
+        idempotencyKey,
+        reversibleUntil,
+      })
+      .returning();
+    const projectedDirection =
+      created.type === "income" ? created.amountCents : -created.amountCents;
+    const result = {
+      ...canonicalWriteResult({
+        actionId: action.id,
+        entityType: "financial_transaction",
+        entityId: created.id,
+        operation: "created",
+        summary: `${created.type === "income" ? "Receita" : "Despesa"} de ${formatBRLCents(created.amountCents)} registrada em ${account.name}.`,
+        confirmedDeltaCents: effect,
+        projectedDeltaCents: effect === 0 ? projectedDirection : effect,
+        freeDeltaCents:
+          account.includeInOperatingCash && !account.protected ? effect : 0,
+        reversibleUntil,
+      }),
+      transactionId: created.id,
+    };
+    await tx
+      .update(financialActions)
+      .set({ resultSnapshot: result })
+      .where(eq(financialActions.id, action.id));
     await tx.insert(financialAuditEvents).values({
       ...scope,
       actorType: input.actor.type,
@@ -589,9 +740,14 @@ export async function recordFinancialTransaction(
       entityId: String(created.id),
       before: null,
       after: created,
-      requestId: input.idempotencyKey,
+      requestId: idempotencyKey,
     });
-    return { transaction: created, alreadyProcessed: false };
+    return {
+      transaction: created,
+      result,
+      ...result,
+      alreadyProcessed: false,
+    };
   });
 }
 
@@ -615,6 +771,9 @@ export async function recordFinancialTransfer(
     throw new Error("amountCents deve ser maior que zero");
   if (input.fromAccountId === input.toAccountId)
     throw new Error("Contas de origem e destino devem ser diferentes");
+  const idempotencyKey = input.idempotencyKey.trim();
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 240)
+    throw new Error("Chave idempotente invalida");
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -653,15 +812,26 @@ export async function recordFinancialTransfer(
         and(
           eq(financialTransactions.tenantId, scope.tenantId),
           eq(financialTransactions.userId, scope.userId),
-          eq(
-            financialTransactions.idempotencyKey,
-            `${input.idempotencyKey}:out`
-          )
+          eq(financialTransactions.idempotencyKey, `${idempotencyKey}:out`)
         )
       )
       .limit(1);
-    if (existing)
-      return { sourceTransaction: existing, alreadyProcessed: true };
+    if (existing) {
+      const [action] = await tx
+        .select()
+        .from(financialActions)
+        .where(
+          and(
+            eq(financialActions.tenantId, scope.tenantId),
+            eq(financialActions.userId, scope.userId),
+            eq(financialActions.idempotencyKey, idempotencyKey)
+          )
+        )
+        .limit(1);
+      return action
+        ? { sourceTransaction: existing, ...replayCanonicalAction(action) }
+        : { sourceTransaction: existing, alreadyProcessed: true };
+    }
 
     const base = {
       ...scope,
@@ -680,7 +850,7 @@ export async function recordFinancialTransfer(
         ...base,
         accountId: sourceAccount.id,
         transferDirection: "out",
-        idempotencyKey: `${input.idempotencyKey}:out`,
+        idempotencyKey: `${idempotencyKey}:out`,
       })
       .returning();
     const [incoming] = await tx
@@ -689,7 +859,7 @@ export async function recordFinancialTransfer(
         ...base,
         accountId: destinationAccount.id,
         transferDirection: "in",
-        idempotencyKey: `${input.idempotencyKey}:in`,
+        idempotencyKey: `${idempotencyKey}:in`,
         transferPairId: outgoing.id,
       })
       .returning();
@@ -713,6 +883,53 @@ export async function recordFinancialTransfer(
         updatedAt: new Date(),
       })
       .where(eq(financialAccounts.id, destinationAccount.id));
+    const sourceTransaction = { ...outgoing, transferPairId: incoming.id };
+    const reversibleUntil = new Date(Date.now() + 15 * 60_000);
+    const [action] = await tx
+      .insert(financialActions)
+      .values({
+        ...scope,
+        actionType: "transfer.create",
+        entityType: "financial_transfer",
+        entityId: `${outgoing.id}:${incoming.id}`,
+        beforeSnapshot: {
+          sourceAccount,
+          destinationAccount,
+        },
+        afterSnapshot: {
+          sourceTransaction,
+          destinationTransaction: incoming,
+        },
+        idempotencyKey,
+        reversibleUntil,
+      })
+      .returning();
+    const freeDelta =
+      (destinationAccount.includeInOperatingCash &&
+      !destinationAccount.protected
+        ? input.amountCents
+        : 0) -
+      (sourceAccount.includeInOperatingCash && !sourceAccount.protected
+        ? input.amountCents
+        : 0);
+    const result = {
+      ...canonicalWriteResult({
+        actionId: action.id,
+        entityType: "financial_transfer",
+        entityId: `${outgoing.id}:${incoming.id}`,
+        operation: "created",
+        summary: `${formatBRLCents(input.amountCents)} transferidos internamente de ${sourceAccount.name} para ${destinationAccount.name}.`,
+        freeDeltaCents: freeDelta,
+        reversibleUntil,
+        warnings: ["Registro interno; nenhum PIX ou TED foi executado."],
+      }),
+      sourceTransactionId: outgoing.id,
+      destinationTransactionId: incoming.id,
+    };
+    await tx
+      .update(financialActions)
+      .set({ resultSnapshot: result })
+      .where(eq(financialActions.id, action.id));
     await tx.insert(financialAuditEvents).values({
       ...scope,
       actorType: input.actor.type,
@@ -725,11 +942,13 @@ export async function recordFinancialTransfer(
         toAccountId: destinationAccount.id,
         amountCents: input.amountCents,
       },
-      requestId: input.idempotencyKey,
+      requestId: idempotencyKey,
     });
     return {
-      sourceTransaction: { ...outgoing, transferPairId: incoming.id },
+      sourceTransaction,
       destinationTransaction: incoming,
+      result,
+      ...result,
       alreadyProcessed: false,
     };
   });

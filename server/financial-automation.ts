@@ -1,5 +1,7 @@
 import { formatBRLCents } from "../shared/financial-core";
 import * as coreDb from "./db/financial-core";
+import * as operationsDb from "./db/financial-operations";
+import * as lifelongDb from "./db/lifelong-plan";
 import * as whatsappDb from "./db/whatsapp";
 import { getCanonicalFinancialSnapshot } from "./financial-core";
 import { sendScheduledFinancialMessage } from "./whatsapp";
@@ -37,6 +39,14 @@ function addIsoDays(iso: string, days: number) {
   const date = new Date(`${iso}T12:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function differenceInIsoDays(from: string, to: string) {
+  return Math.round(
+    (new Date(`${to}T12:00:00.000Z`).getTime() -
+      new Date(`${from}T12:00:00.000Z`).getTime()) /
+      86_400_000
+  );
 }
 
 function lastDayOfMonth(year: number, month: number) {
@@ -121,32 +131,63 @@ export async function scheduleCanonicalNotificationsForUser(
 ) {
   const scope = await coreDb.resolveFinancialScope(userId);
   const profile = await coreDb.getFinancialProfile(scope);
-  if (!profile || !profile.notificationsOptIn)
-    return { scheduled: 0, skipped: true };
+  if (!profile) return { scheduled: 0, skipped: true };
+  const local = localDateParts(now, profile.timezone);
+  const tomorrow = addIsoDays(local.iso, 1);
+  const generationEnd = addIsoDays(local.iso, 90);
+  const holidays = await coreDb.listBusinessHolidays(
+    scope,
+    local.iso,
+    generationEnd
+  );
+  await operationsDb.generateFinancialOccurrencesV3(scope, {
+    windowStart: local.iso,
+    windowEnd: generationEnd,
+    holidays: holidays.map(holiday => holiday.date),
+  });
+  await operationsDb.markFinancialItemsOverdueV3(scope, local.iso);
+  try {
+    await lifelongDb.syncRiskProtocolV3(scope);
+  } catch (error) {
+    console.warn("[Financial Automation] Risk protocol sync failed", {
+      userId,
+      error: error instanceof Error ? error.message : "unknown",
+    });
+  }
+  if (!profile.notificationsOptIn) return { scheduled: 0, skipped: true };
   if (
     profile.notificationsPausedUntil &&
     profile.notificationsPausedUntil.getTime() > now.getTime()
   ) {
     return { scheduled: 0, skipped: true };
   }
-  const local = localDateParts(now, profile.timezone);
-  const tomorrow = addIsoDays(local.iso, 1);
   const weekStart = new Date(now.getTime() - 7 * 86_400_000);
-  const [recurring, tasks, uncategorized, snapshot, weeklyTransactions] =
-    await Promise.all([
-      coreDb.listRecurringCashflows(scope),
-      coreDb.listFinancialTasks(scope),
-      coreDb.listUncategorizedTransactions(scope),
-      getCanonicalFinancialSnapshot(userId, {
-        expectedTenantId: scope.tenantId,
-        asOf: now,
-      }),
-      coreDb.listFinancialTransactions(scope, {
-        start: weekStart,
-        end: now,
-        limit: 1_000,
-      }),
-    ]);
+  const [
+    recurring,
+    tasks,
+    uncategorized,
+    snapshot,
+    weeklyTransactions,
+    operationalItems,
+  ] = await Promise.all([
+    coreDb.listRecurringCashflows(scope),
+    coreDb.listFinancialTasks(scope),
+    coreDb.listUncategorizedTransactions(scope),
+    getCanonicalFinancialSnapshot(userId, {
+      expectedTenantId: scope.tenantId,
+      asOf: now,
+    }),
+    coreDb.listFinancialTransactions(scope, {
+      start: weekStart,
+      end: now,
+      limit: 1_000,
+    }),
+    operationsDb.listFinancialItemsV3(scope, {
+      startDate: addIsoDays(local.iso, -30),
+      endDate: addIsoDays(local.iso, 30),
+      limit: 500,
+    }),
+  ]);
   let scheduled = 0;
   const add = async (
     templateKey: string,
@@ -163,7 +204,56 @@ export async function scheduleCanonicalNotificationsForUser(
     if (!result.alreadyScheduled) scheduled += 1;
   };
 
+  const openOperationalItems = operationalItems.filter(
+    item =>
+      !["paid", "received", "cancelled", "written_off"].includes(item.status)
+  );
+  for (const item of openOperationalItems) {
+    const daysUntilDue = differenceInIsoDays(local.iso, item.dueDate);
+    if (item.kind === "payable") {
+      if (![3, 1, 0, -1].includes(daysUntilDue)) continue;
+      const timing =
+        daysUntilDue === 3
+          ? "vence em 3 dias"
+          : daysUntilDue === 1
+            ? "vence amanha"
+            : daysUntilDue === 0
+              ? "vence hoje"
+              : "venceu ontem";
+      const question =
+        daysUntilDue < 0
+          ? "Ainda esta aberta. Voce pagou?"
+          : "Avise quando pagar para eu dar baixa.";
+      await add(
+        daysUntilDue < 0 ? "payable_overdue" : "payable_due",
+        `financial-item:${item.id}:payable:${item.dueDate}:${daysUntilDue}`,
+        `${item.description}, ${formatBRLCents(item.openAmountCents)}, ${timing}. ${item.needsConfirmation ? "Confirme o valor real. " : ""}${question}`,
+        { financialItemId: item.id, dueDate: item.dueDate, daysUntilDue }
+      );
+      continue;
+    }
+    if (![0, -1].includes(daysUntilDue)) continue;
+    await add(
+      daysUntilDue === 0 ? "receivable_due" : "receivable_overdue",
+      `financial-item:${item.id}:receivable:${item.dueDate}:${daysUntilDue}`,
+      daysUntilDue === 0
+        ? `Hoje esta previsto ${item.description}, de ${formatBRLCents(item.openAmountCents)}. Entrou? So vou contar no saldo depois da sua confirmacao.`
+        : `${item.description}, de ${formatBRLCents(item.openAmountCents)}, ainda nao foi confirmado. Recebeu?`,
+      { financialItemId: item.id, dueDate: item.dueDate, daysUntilDue }
+    );
+  }
+
+  const operationalDescriptions = new Set(
+    openOperationalItems.map(item =>
+      item.description.trim().toLocaleLowerCase("pt-BR")
+    )
+  );
+
   for (const item of recurring) {
+    if (
+      operationalDescriptions.has(item.name.trim().toLocaleLowerCase("pt-BR"))
+    )
+      continue;
     if (!item.nextDueDate) continue;
     if (
       item.type === "income" &&
@@ -223,7 +313,7 @@ export async function scheduleCanonicalNotificationsForUser(
       const usedPercent = Math.floor(
         (envelope.spentCents / envelope.plannedCents) * 100
       );
-      const threshold = [100, 90, 75, 50].find(
+      const threshold = [100, 85, 70].find(
         candidate => usedPercent >= candidate
       );
       if (!threshold) continue;
@@ -236,7 +326,7 @@ export async function scheduleCanonicalNotificationsForUser(
           ? `${envelope.name} atingiu 100% do orcamento. Novos gastos opcionais nao sao recomendados ate revisar o plano.`
           : `${envelope.name} chegou a ${usedPercent}% do orcamento; restam ${formatBRLCents(remainingCents)}.`;
       await add(
-        threshold === 50 ? "daily_summary" : "budget_alert",
+        "budget_alert",
         `budget:${periodKey}:${envelope.id}:${threshold}`,
         text,
         { envelopeId: envelope.id, threshold, usedPercent }
@@ -259,6 +349,70 @@ export async function scheduleCanonicalNotificationsForUser(
         "urgent_debt",
         `urgent-debt:${userId}:${local.iso}`,
         `Ha ${formatBRLCents(snapshot.debts.urgentCents)} em divida urgente. Confirme vencimento e quitacao antes de comprometer novas compras.`
+      );
+    }
+    const lifelong = snapshot.lifelongPlan;
+    if (lifelong?.phaseChangePending) {
+      await add(
+        "financial_phase_review",
+        `phase-review:${userId}:${lifelong.currentPhase}:${lifelong.suggestedPhase}`,
+        `Os dados indicam mudanca da fase ${lifelong.currentPhase} para ${lifelong.suggestedPhase}. Quer revisar e confirmar a mudanca comigo?`,
+        {
+          currentPhase: lifelong.currentPhase,
+          suggestedPhase: lifelong.suggestedPhase,
+        }
+      );
+    }
+    if (lifelong?.riskLevel === "red") {
+      await add(
+        "financial_risk_red",
+        `risk-red:${userId}:${local.iso}`,
+        `Semaforo vermelho: ha atraso, uso de limite ou reserva abaixo de 3 meses. Saldo livre conservador: ${formatBRLCents(snapshot.balances.conservativeFreeCents)}. Pause gastos opcionais e vamos resolver a prioridade critica.`
+      );
+    }
+    const latestCreditObservedAt = lifelong?.creditHealth.latest?.observedAt;
+    if (
+      latestCreditObservedAt &&
+      now.getTime() - new Date(latestCreditObservedAt).getTime() >
+        45 * 86_400_000
+    ) {
+      await add(
+        "credit_snapshot_stale",
+        `credit-stale:${userId}:${local.year}-${local.month}`,
+        "A ultima fotografia de credito tem mais de 45 dias. Atualize o SCR antes de considerar o portao de credito do carro como confirmado."
+      );
+    }
+    const pendingDividendReinvestmentCents =
+      lifelong?.wealth.dividends
+        .filter(
+          dividend =>
+            dividend.status !== "expected" &&
+            dividend.reinvestedCents < dividend.netCents
+        )
+        .reduce(
+          (sum, dividend) => sum + dividend.netCents - dividend.reinvestedCents,
+          0
+        ) ?? 0;
+    if (
+      pendingDividendReinvestmentCents > 0 &&
+      lifelong?.currentPhase !== "FINANCIAL_INDEPENDENCE"
+    ) {
+      await add(
+        "dividend_reinvestment_pending",
+        `dividend-reinvestment:${userId}:${local.year}-${local.month}`,
+        `Ha ${formatBRLCents(pendingDividendReinvestmentCents)} em dividendos ainda sem reinvestimento registrado. Na fase de acumulacao, revise esse destino; nenhuma ordem sera executada automaticamente.`
+      );
+    }
+    const pendingAllocation =
+      lifelong?.recentAllocationExecutions.find(
+        execution => execution.status === "proposed"
+      ) ?? null;
+    if (pendingAllocation) {
+      await add(
+        "income_allocation_confirmation",
+        `allocation:${pendingAllocation.id}:confirmation`,
+        `Existe uma alocacao de ${formatBRLCents(pendingAllocation.totalCents)} aguardando confirmacao. Quer que eu mostre o destino de cada valor?`,
+        { allocationExecutionId: pendingAllocation.id }
       );
     }
 

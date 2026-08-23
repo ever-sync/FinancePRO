@@ -1,14 +1,21 @@
-export const RAPHAEL_PROFILE_KEY = "raphael-v1";
+export const RAPHAEL_PROFILE_KEY = "raphael-v3";
 
 export const RAPHAEL_PROFILE = {
+  planVersion: "3.0.0",
   displayName: "Raphael",
   locale: "pt-BR",
   currency: "BRL",
   timezone: "America/Sao_Paulo",
-  planningHorizon: "2026-12-31",
+  planningHorizon: "2027-01-31",
+  lifePlanningEnabled: true,
+  currentPhase: "CLEANUP",
+  monthlyIncomeTargetCents: 2_600_000,
+  income2027Confirmed: false,
+  businessDayMode: "banking",
+  day30Adjustment: "no_adjustment",
   tone: "objetivo, humano e firme",
   riskPreference: "baixo risco e alta liquidez",
-  operatingBufferCents: 500_000,
+  operatingBufferCents: 250_000,
   monthlyVariableBudgetCents: 300_000,
   emergencyFundReferenceCents: 818_000,
   emergencyFundTargetMonths: 6,
@@ -24,35 +31,83 @@ export const RAPHAEL_PROFILE = {
 export const RAPHAEL_ACCOUNTS = [
   {
     seedKey: "account-pf",
+    code: "PF_SANTANDER",
     name: "Conta PF",
     ownerType: "personal",
     accountType: "checking",
     includeInOperatingCash: true,
     protected: false,
+    needsConfirmation: true,
   },
   {
     seedKey: "account-pj",
+    code: "PJ_OPERACIONAL",
     name: "Conta PJ",
     ownerType: "business",
     accountType: "checking",
     includeInOperatingCash: true,
     protected: false,
+    needsConfirmation: true,
   },
   {
     seedKey: "account-reserve",
+    code: "RESERVA_EMERGENCIA",
     name: "Reserva de emergência",
     ownerType: "personal",
     accountType: "reserve",
     includeInOperatingCash: false,
     protected: true,
+    needsConfirmation: true,
   },
   {
-    seedKey: "account-car-fund",
-    name: "Fundo do carro",
+    seedKey: "account-car-cash",
+    code: "FUNDO_CARRO_ENTRADA",
+    name: "Entrada do carro",
     ownerType: "personal",
-    accountType: "savings",
+    accountType: "goal_wallet",
     includeInOperatingCash: false,
     protected: true,
+    needsConfirmation: false,
+  },
+  {
+    seedKey: "account-car-costs",
+    code: "FUNDO_CARRO_CUSTOS",
+    name: "Custos iniciais do carro",
+    ownerType: "personal",
+    accountType: "goal_wallet",
+    includeInOperatingCash: false,
+    protected: true,
+    needsConfirmation: false,
+  },
+  {
+    seedKey: "account-project-taxes",
+    code: "PROVISAO_TRIBUTOS_PROJETOS",
+    name: "Provisão de tributos dos projetos",
+    ownerType: "business",
+    accountType: "tax_provision",
+    includeInOperatingCash: false,
+    protected: true,
+    needsConfirmation: false,
+  },
+  {
+    seedKey: "account-project-costs",
+    code: "PROVISAO_CUSTOS_PROJETOS",
+    name: "Provisão de custos dos projetos",
+    ownerType: "business",
+    accountType: "business_cost_provision",
+    includeInOperatingCash: false,
+    protected: true,
+    needsConfirmation: false,
+  },
+  {
+    seedKey: "account-long-term-investments",
+    code: "INVESTIMENTOS_LONGO_PRAZO",
+    name: "Investimentos de longo prazo",
+    ownerType: "personal",
+    accountType: "investment",
+    includeInOperatingCash: false,
+    protected: true,
+    needsConfirmation: true,
   },
 ] as const;
 
@@ -329,11 +384,12 @@ export const RAPHAEL_RECURRING_CASHFLOWS = [
 export const RAPHAEL_GOALS = [
   {
     seedKey: "goal-operating-buffer",
-    name: "Colchão operacional",
+    name: "Piso operacional Santander",
     goalType: "operating_buffer",
-    targetCents: 500_000,
+    targetCents: 250_000,
     priority: "critical",
     protected: true,
+    targetDate: null,
   },
   {
     seedKey: "goal-emergency-min-current",
@@ -342,6 +398,7 @@ export const RAPHAEL_GOALS = [
     targetCents: 4_908_000,
     priority: "critical",
     protected: true,
+    targetDate: "2027-01-10",
   },
   {
     seedKey: "goal-emergency-ideal-current",
@@ -350,6 +407,7 @@ export const RAPHAEL_GOALS = [
     targetCents: 6_708_000,
     priority: "essential",
     protected: true,
+    targetDate: null,
   },
   {
     seedKey: "goal-emergency-min-post-car",
@@ -358,6 +416,7 @@ export const RAPHAEL_GOALS = [
     targetCents: 7_428_000,
     priority: "critical",
     protected: true,
+    targetDate: "2027-04-30",
   },
   {
     seedKey: "goal-emergency-ideal-post-car",
@@ -366,6 +425,7 @@ export const RAPHAEL_GOALS = [
     targetCents: 9_228_000,
     priority: "important",
     protected: true,
+    targetDate: null,
   },
   {
     seedKey: "goal-family-purchases",
@@ -374,16 +434,38 @@ export const RAPHAEL_GOALS = [
     targetCents: 2_609_750,
     priority: "essential",
     protected: false,
+    targetDate: null,
   },
   {
-    seedKey: "goal-car-fund",
-    name: "Entrada e custos iniciais do carro",
-    goalType: "car_fund",
-    targetCents: 0,
+    seedKey: "goal-car-cash",
+    name: "Entrada em dinheiro do carro",
+    goalType: "car_cash",
+    targetCents: 3_000_000,
+    priority: "critical",
+    protected: true,
+    targetDate: "2027-01-10",
+    notes: "Nunca usar a reserva de emergência como entrada.",
+  },
+  {
+    seedKey: "goal-car-costs",
+    name: "Custos iniciais do carro",
+    goalType: "car_costs",
+    targetCents: 300_000,
+    priority: "critical",
+    protected: true,
+    targetDate: "2027-01-10",
+    notes: "Documentação, vistoria, seguro inicial e margem de aquisição.",
+  },
+  {
+    seedKey: "goal-fi-post-car",
+    name: "Independência financeira em reais de hoje",
+    goalType: "financial_independence",
+    targetCents: 527_314_286,
     priority: "important",
     protected: true,
+    targetDate: null,
     notes:
-      "Meta bloqueada até informar valor do veículo, entrada, prazo e CET.",
+      "Cenário principal de retirada de 3,5%; recalcular anualmente pelo IPCA e custo real.",
   },
 ] as const;
 
@@ -485,7 +567,121 @@ export const RAPHAEL_GOAL_ITEMS: GoalItemSeed[] = [
   item("Casa", "panelas", "Panelas", 60_000, "essential"),
 ];
 
+export const RAPHAEL_OPERATIONAL_RECEIVABLES = [
+  {
+    seedKey: "item-computer-sale",
+    description: "Venda do computador",
+    amountCents: 500_000,
+    ownerType: "personal",
+    estimated: true,
+    needsConfirmation: true,
+    accountSeedKey: "account-pf",
+    categoryKey: "outros",
+  },
+  {
+    seedKey: "item-additional-receivable",
+    description: "Recebimento adicional",
+    amountCents: 250_000,
+    ownerType: "personal",
+    estimated: true,
+    needsConfirmation: true,
+    accountSeedKey: "account-pf",
+    categoryKey: "outros",
+  },
+] as const;
+
+export const RAPHAEL_ALLOCATION_POLICIES = [
+  {
+    seedKey: "policy-car-salary-v3",
+    phase: "CAR_PREPARATION",
+    incomeKind: "salary_fixed",
+    version: "3.0.0",
+    rules: {
+      receipt_2000000: {
+        essential_bills: 818_000,
+        emergency_fund: 760_000,
+        car_cash: 422_000,
+      },
+      receipt_600000: {
+        variable_budget: 300_000,
+        emergency_fund: 221_600,
+        car_cash: 78_400,
+      },
+      precedence: [
+        "overdue",
+        "essential_bills",
+        "operating_buffer",
+        "emergency_fund",
+        "car_cash",
+      ],
+    },
+  },
+  {
+    seedKey: "policy-project-v3",
+    phase: "CAR_PREPARATION",
+    incomeKind: "project_payment",
+    version: "3.0.0",
+    rules: {
+      taxes_basis_points: 1500,
+      delivery_costs_basis_points: 1000,
+      goals_basis_points: 7500,
+      precedence: [
+        "overdue",
+        "priority_a",
+        "car_cash",
+        "car_costs",
+        "priority_b",
+        "post_car_reserve",
+        "priority_c",
+      ],
+    },
+  },
+] as const;
+
+export const RAPHAEL_CREDIT_SEED = {
+  sourceMonth: "2026-07",
+  currentDebtCents: 187_048,
+  overdueCents: 8_936,
+  unusedLimitsCents: 2_507,
+  status: "needs_confirmation",
+  issues: [
+    {
+      institution: "Midway",
+      overdueCents: 8_936,
+      type: "credito_rotativo_cartao",
+    },
+  ],
+} as const;
+
+export const RAPHAEL_CAR_ASSET = {
+  seedKey: "asset-current-car",
+  description: "Veículo atual",
+  assetType: "vehicle",
+  ownerType: "personal",
+  estimatedValueCents: 2_000_000,
+  debtBalanceCents: 0,
+  incomeGenerating: false,
+  intendedUse: "trade_in",
+  status: "estimated",
+  needsConfirmation: true,
+} as const;
+
 export const RAPHAEL_INITIAL_TASKS = [
+  [
+    "confirm-income-net",
+    "Confirmar se os R$ 26.000 são líquidos para uso pessoal",
+    "critical",
+  ],
+  [
+    "confirm-first-income-cycle",
+    "Confirmar se o primeiro R$ 20.000 entra em 30/08/2026",
+    "critical",
+  ],
+  [
+    "confirm-business-day-rule",
+    "Confirmar a regra real do quinto dia útil e do dia 30",
+    "high",
+  ],
   [
     "confirm-computer-sale",
     "Confirmar valor e conclusão da venda do computador",
@@ -493,6 +689,16 @@ export const RAPHAEL_INITIAL_TASKS = [
   ],
   ["confirm-2500-date", "Confirmar data dos R$ 2.500 a receber", "high"],
   ["pay-asaas", "Cadastrar vencimento e quitar Asaas", "critical"],
+  [
+    "resolve-midway",
+    "Consultar, quitar e guardar comprovante da pendência Midway",
+    "critical",
+  ],
+  [
+    "confirm-nubank-digio",
+    "Confirmar se Nubank, Digio e demais compromissos estão em dia",
+    "critical",
+  ],
   ["confirm-fixed-costs", "Confirmar contas fixas estimadas", "high"],
   ["create-reserve-account", "Criar conta separada de reserva", "high"],
   [
@@ -514,6 +720,21 @@ export const RAPHAEL_INITIAL_TASKS = [
     "register-project-target",
     "Registrar meta mensal de R$ 10.000 em projetos",
     "high",
+  ],
+  [
+    "confirm-current-car",
+    "Confirmar quitação, débitos e valor líquido do veículo atual",
+    "high",
+  ],
+  [
+    "confirm-2027-income",
+    "Confirmar documentalmente a renda de janeiro a junho de 2027",
+    "high",
+  ],
+  [
+    "confirm-investor-profile",
+    "Confirmar perfil, horizonte e patrimônio investido",
+    "medium",
   ],
 ] as const;
 

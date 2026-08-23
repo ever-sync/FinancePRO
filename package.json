@@ -13,7 +13,7 @@
     "build:vercel": "vite build && npm run build:trpc-vercel && npm run build:whatsapp-webhook && npm run build:assistant-cron",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "check": "tsc --noEmit",
-    "lint": "prettier --check client/src/App.tsx client/src/components/DashboardLayout.tsx client/src/pages/PlanejamentoFinanceiro.tsx scripts/verify-financial-acceptance.ts server/db.ts server/db/financial-core.ts server/db/whatsapp.ts server/finance server/financial-automation.ts server/financial-automation.test.ts server/financial-core.ts server/n8n-agent.ts server/routers/financial-core.ts server/routers.ts server/routes/assistant-cron.ts server/whatsapp.ts shared/financial-core.ts shared/financial-core.test.ts drizzle/schema.ts n8n/financepro-agent.workflow.json n8n/financepro-automation.workflow.json && tsc --noEmit",
+    "lint": "prettier --check client/src/App.tsx client/src/components/DashboardLayout.tsx client/src/pages/PlanejamentoFinanceiro.tsx scripts/verify-financial-acceptance.ts server/db.ts server/db/financial-core.ts server/db/financial-operations.ts server/db/financial-operations.test.ts server/db/lifelong-plan.ts server/db/whatsapp.ts server/finance server/financial-automation.ts server/financial-automation.test.ts server/financial-core.ts server/n8n-agent.ts server/routers/financial-core.ts server/routers.ts server/routes/assistant-cron.ts server/whatsapp.ts shared/financial-core.ts shared/financial-core.test.ts drizzle/schema.ts n8n/financepro-agent.workflow.json n8n/financepro-automation.workflow.json && tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
     "test:integration:financial": "tsx scripts/verify-financial-acceptance.ts",

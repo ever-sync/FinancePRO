@@ -7,11 +7,13 @@ import {
   ArrowUpRight,
   Bot,
   BriefcaseBusiness,
+  CalendarClock,
   Car,
   CheckCircle2,
   CircleDollarSign,
   FileSpreadsheet,
   Goal,
+  LineChart,
   Loader2,
   PiggyBank,
   Plus,
@@ -20,6 +22,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  TimerReset,
   Undo2,
   Upload,
   WalletCards,
@@ -99,6 +102,9 @@ function decisionLabel(decision: string) {
     blocked_by_missing_data: "Faltam dados",
     fits_safely: "Carro cabe com segurança",
     fits_with_risk: "Carro cabe com risco",
+    NO_GO: "Bloqueado",
+    GO_CONDICIONAL: "Aprovado com recomposição",
+    GO: "Aprovado",
   };
   return labels[decision] ?? "Não recomendado";
 }
@@ -154,9 +160,8 @@ function EmptySetup({
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-zinc-600">
             O modelo Raphael cria contas PF/PJ separadas, reserva protegida,
-            orçamento, metas familiares, dívida Asaas manual, regras de
-            categorização e o plano de projetos 15/10/75. Tudo continua
-            editável.
+            agenda de contas a pagar e receber, orçamento, metas familiares,
+            saúde de crédito e o plano vitalício V3. Tudo continua editável.
           </p>
           <Button
             className="mt-7 rounded-full bg-zinc-900 px-6 hover:bg-zinc-800"
@@ -211,6 +216,8 @@ export default function PlanejamentoFinanceiro() {
       utils.financialCore.transactions.invalidate(),
       utils.financialCore.goals.invalidate(),
       utils.financialCore.projects.invalidate(),
+      utils.financialCore.financialItems.invalidate(),
+      utils.financialCore.lifelongPlan.invalidate(),
     ]);
   };
 
@@ -239,7 +246,7 @@ export default function PlanejamentoFinanceiro() {
           100
       )
     : 0;
-  const currentProfileIsTemplate = snapshot.profile.profileKey === "raphael-v1";
+  const currentProfileIsTemplate = snapshot.profile.profileKey === "raphael-v3";
 
   return (
     <div className="-mx-4 -my-4 min-h-full bg-[#f5f5f3] p-4 text-zinc-950 md:-mx-6 md:-my-6 md:p-7">
@@ -352,6 +359,9 @@ export default function PlanejamentoFinanceiro() {
             <TabsTrigger value="transactions" className="rounded-xl">
               Lançamentos
             </TabsTrigger>
+            <TabsTrigger value="agenda" className="rounded-xl">
+              Agenda financeira
+            </TabsTrigger>
             <TabsTrigger value="budget" className="rounded-xl">
               Orçamento
             </TabsTrigger>
@@ -363,6 +373,9 @@ export default function PlanejamentoFinanceiro() {
             </TabsTrigger>
             <TabsTrigger value="car" className="rounded-xl">
               Plano do carro
+            </TabsTrigger>
+            <TabsTrigger value="lifelong" className="rounded-xl">
+              Vida financeira
             </TabsTrigger>
             <TabsTrigger value="import" className="rounded-xl">
               Santander CSV
@@ -382,6 +395,9 @@ export default function PlanejamentoFinanceiro() {
           <TabsContent value="transactions">
             <TransactionsTab snapshot={snapshot} onChanged={refresh} />
           </TabsContent>
+          <TabsContent value="agenda">
+            <FinancialAgendaTab snapshot={snapshot} onChanged={refresh} />
+          </TabsContent>
           <TabsContent value="budget">
             <BudgetTab snapshot={snapshot} />
           </TabsContent>
@@ -393,6 +409,9 @@ export default function PlanejamentoFinanceiro() {
           </TabsContent>
           <TabsContent value="car">
             <CarTab />
+          </TabsContent>
+          <TabsContent value="lifelong">
+            <LifelongPlanTab snapshot={snapshot} onChanged={refresh} />
           </TabsContent>
           <TabsContent value="import">
             <SantanderImportTab snapshot={snapshot} onChanged={refresh} />
@@ -607,6 +626,7 @@ function AccountBalanceRow({
       accountId: account.id,
       balanceCents,
       balanceAsOf: new Date(),
+      requestId: requestId("saldo-conta"),
       ...(reducingProtected && confirmation === "CONFIRMAR REDUCAO DA RESERVA"
         ? {
             protectedReductionConfirmation:
@@ -1195,6 +1215,376 @@ function TransferCard({
   );
 }
 
+function FinancialAgendaTab({
+  snapshot,
+  onChanged,
+}: {
+  snapshot: ConfiguredSnapshot;
+  onChanged: () => Promise<void>;
+}) {
+  const availableAccounts = snapshot.accounts.filter(
+    account => account.active && account.accountType !== "credit_card"
+  );
+  const [form, setForm] = useState({
+    kind: "payable" as "payable" | "receivable",
+    ownerType: "personal" as "personal" | "business",
+    amount: "",
+    description: "",
+    dueDate: today,
+    expectedAccountId: String(availableAccounts[0]?.id ?? ""),
+    recurring: false,
+    recurrence: "monthly" as "monthly" | "business_day_rule",
+  });
+  const createItem = trpc.financialCore.createFinancialItem.useMutation({
+    onSuccess: async response => {
+      toast.success(
+        `${response.result.human_summary} ID ${response.result.entity_id}.`
+      );
+      setForm(current => ({ ...current, amount: "", description: "" }));
+      await onChanged();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const createRecurrence = trpc.financialCore.createRecurrence.useMutation({
+    onSuccess: async response => {
+      toast.success(
+        `${response.result.human_summary} ID ${response.result.entity_id}.`
+      );
+      setForm(current => ({ ...current, amount: "", description: "" }));
+      await onChanged();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const settle = trpc.financialCore.settleFinancialItem.useMutation({
+    onSuccess: async response => {
+      toast.success(
+        `${response.result.human_summary} Ação ${response.result.action_id}.`
+      );
+      await onChanged();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const cancel = trpc.financialCore.cancelFinancialItem.useMutation({
+    onSuccess: async response => {
+      toast.success(
+        `${response.result.human_summary} Ação ${response.result.action_id}.`
+      );
+      await onChanged();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const submit = () => {
+    const amountCents = parseMoneyToCents(form.amount);
+    if (!amountCents || !form.description.trim() || !form.dueDate) {
+      toast.error("Informe descrição, valor e vencimento.");
+      return;
+    }
+    const accountId = form.expectedAccountId
+      ? Number(form.expectedAccountId)
+      : null;
+    if (form.recurring) {
+      createRecurrence.mutate({
+        itemKind: form.kind,
+        ownerType: form.ownerType,
+        description: form.description,
+        frequency: form.recurrence,
+        interval: 1,
+        byMonthDay:
+          form.recurrence === "monthly" ? Number(form.dueDate.slice(-2)) : null,
+        businessDayOrdinal: form.recurrence === "business_day_rule" ? 5 : null,
+        startDate: form.dueDate,
+        amountMode: "fixed",
+        baseAmountCents: amountCents,
+        expectedAccountId: accountId,
+        requestId: requestId("agenda-recorrencia"),
+      });
+      return;
+    }
+    createItem.mutate({
+      kind: form.kind,
+      ownerType: form.ownerType,
+      amountCents,
+      description: form.description,
+      dueDate: form.dueDate,
+      expectedAccountId: accountId,
+      requestId: requestId("agenda-item"),
+    });
+  };
+  const settleItem = (
+    item: ConfiguredSnapshot["operations"]["openItems"][number]
+  ) => {
+    const account =
+      availableAccounts.find(
+        account => account.id === item.expectedAccountId
+      ) ??
+      availableAccounts.find(
+        account => account.ownerType === item.ownerType && !account.protected
+      );
+    if (!account) {
+      toast.error("Cadastre ou selecione uma conta financeira compatível.");
+      return;
+    }
+    settle.mutate({
+      itemId: item.id,
+      amountCents: item.openAmountCents,
+      settledAt: new Date(),
+      accountId: account.id,
+      incomeKind: "unknown",
+      requestId: requestId("agenda-baixa"),
+    });
+  };
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[390px_1fr]">
+      <Card className="h-fit rounded-3xl border-zinc-200">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CalendarClock className="size-5 text-orange-700" /> Novo
+            compromisso
+          </CardTitle>
+          <CardDescription>
+            Valores previstos alteram a projeção, nunca o saldo confirmado.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant={form.kind === "payable" ? "default" : "outline"}
+              onClick={() =>
+                setForm(current => ({ ...current, kind: "payable" }))
+              }
+            >
+              A pagar
+            </Button>
+            <Button
+              variant={form.kind === "receivable" ? "default" : "outline"}
+              onClick={() =>
+                setForm(current => ({ ...current, kind: "receivable" }))
+              }
+            >
+              A receber
+            </Button>
+          </div>
+          <Field label="Domínio">
+            <Select
+              value={form.ownerType}
+              onValueChange={ownerType =>
+                setForm(current => ({
+                  ...current,
+                  ownerType: ownerType as "personal" | "business",
+                  expectedAccountId: String(
+                    availableAccounts.find(
+                      account => account.ownerType === ownerType
+                    )?.id ?? ""
+                  ),
+                }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="personal">Pessoa física</SelectItem>
+                <SelectItem value="business">Pessoa jurídica</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="Descrição">
+            <Input
+              value={form.description}
+              placeholder="Ex.: aluguel"
+              onChange={event =>
+                setForm(current => ({
+                  ...current,
+                  description: event.target.value,
+                }))
+              }
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Valor">
+              <Input
+                inputMode="decimal"
+                value={form.amount}
+                placeholder="0,00"
+                onChange={event =>
+                  setForm(current => ({
+                    ...current,
+                    amount: event.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <Field label="Vencimento">
+              <Input
+                type="date"
+                value={form.dueDate}
+                onChange={event =>
+                  setForm(current => ({
+                    ...current,
+                    dueDate: event.target.value,
+                  }))
+                }
+              />
+            </Field>
+          </div>
+          <Field label="Conta esperada">
+            <Select
+              value={form.expectedAccountId}
+              onValueChange={expectedAccountId =>
+                setForm(current => ({ ...current, expectedAccountId }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableAccounts
+                  .filter(account => account.ownerType === form.ownerType)
+                  .map(account => (
+                    <SelectItem key={account.id} value={String(account.id)}>
+                      {account.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="flex items-center justify-between rounded-2xl border border-zinc-200 p-3">
+            <div>
+              <p className="text-sm font-medium">Repetir automaticamente</p>
+              <p className="text-xs text-zinc-500">Gera 90 dias de agenda.</p>
+            </div>
+            <Switch
+              checked={form.recurring}
+              onCheckedChange={recurring =>
+                setForm(current => ({ ...current, recurring }))
+              }
+            />
+          </div>
+          {form.recurring && (
+            <Field label="Regra">
+              <Select
+                value={form.recurrence}
+                onValueChange={recurrence =>
+                  setForm(current => ({
+                    ...current,
+                    recurrence: recurrence as "monthly" | "business_day_rule",
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="monthly">Mensal no mesmo dia</SelectItem>
+                  <SelectItem value="business_day_rule">5º dia útil</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+          <Button
+            className="w-full rounded-xl"
+            disabled={createItem.isPending || createRecurrence.isPending}
+            onClick={submit}
+          >
+            <Plus className="mr-2 size-4" /> Salvar na agenda
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0 rounded-3xl border-zinc-200">
+        <CardHeader>
+          <CardTitle>Contas abertas</CardTitle>
+          <CardDescription>
+            Saldo livre conservador:{" "}
+            {formatCents(snapshot.balances.conservativeFreeCents)}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>ID</TableHead>
+                <TableHead>Vencimento</TableHead>
+                <TableHead>Descrição</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Aberto</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {snapshot.operations.openItems.map(item => (
+                <TableRow key={item.id}>
+                  <TableCell className="font-mono text-xs">
+                    #{item.id}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-xs">
+                    {new Date(`${item.dueDate}T12:00:00`).toLocaleDateString(
+                      "pt-BR"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <p className="max-w-[360px] truncate text-sm font-medium">
+                      {item.description}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {item.kind === "payable" ? "A pagar" : "A receber"} •{" "}
+                      {item.ownerType === "business" ? "PJ" : "PF"}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{item.status}</Badge>
+                  </TableCell>
+                  <TableCell className="text-right font-semibold">
+                    {formatCents(item.openAmountCents)}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        disabled={settle.isPending}
+                        onClick={() => settleItem(item)}
+                      >
+                        <CheckCircle2 className="mr-1 size-3.5" /> Dar baixa
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        title="Cancelar ocorrência"
+                        disabled={cancel.isPending}
+                        onClick={() =>
+                          cancel.mutate({
+                            itemId: item.id,
+                            scope: "THIS_OCCURRENCE",
+                            reason: "Cancelado pelo painel",
+                            requestId: requestId("agenda-cancelar"),
+                          })
+                        }
+                      >
+                        <TimerReset className="size-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {snapshot.operations.openItems.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="py-10 text-center text-zinc-500"
+                  >
+                    Nenhuma conta aberta.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function BudgetTab({ snapshot }: { snapshot: ConfiguredSnapshot }) {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -1661,6 +2051,416 @@ function ProjectsTab({
   );
 }
 
+function LifelongPlanTab({
+  snapshot,
+  onChanged,
+}: {
+  snapshot: ConfiguredSnapshot;
+  onChanged: () => Promise<void>;
+}) {
+  const plan = snapshot.lifelongPlan;
+  const confirmPhase = trpc.financialCore.confirmFinancialPhaseV3.useMutation({
+    onSuccess: async () => {
+      toast.success("Nova fase financeira confirmada e auditada.");
+      await onChanged();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const incomeConfirmation =
+    trpc.financialCore.setIncome2027ConfirmationV3.useMutation({
+      onSuccess: async () => {
+        toast.success("Confirmação de renda de 2027 atualizada.");
+        await onChanged();
+      },
+      onError: error => toast.error(error.message),
+    });
+  const confirmAllocation =
+    trpc.financialCore.confirmIncomeAllocationV3.useMutation({
+      onSuccess: async () => {
+        toast.success(
+          "Alocação confirmada no plano; nenhuma transferência bancária foi executada."
+        );
+        await onChanged();
+      },
+      onError: error => toast.error(error.message),
+    });
+  const updateCreditTask =
+    trpc.financialCore.updateCreditCleanupTaskV3.useMutation({
+      onSuccess: async () => {
+        toast.success("Tarefa de crédito atualizada.");
+        await onChanged();
+      },
+      onError: error => toast.error(error.message),
+    });
+
+  if (!plan) {
+    return (
+      <Alert className="rounded-2xl">
+        <AlertTriangle className="size-4" />
+        <AlertTitle>Plano vitalício indisponível</AlertTitle>
+        <AlertDescription>
+          Reaplique o modelo Raphael V3 para criar fases, fundos e indicadores.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const phaseLabels: Record<string, string> = {
+    CLEANUP: "Limpeza e estrutura",
+    CAR_PREPARATION: "Preparação do carro",
+    CAR_PURCHASE_READY: "Compra do carro liberada",
+    POST_CAR_RESERVE: "Recomposição pós-carro",
+    WEALTH_WITH_CAR_DEBT: "Patrimônio com financiamento",
+    WEALTH_ACCUMULATION: "Acumulação patrimonial",
+    FINANCIAL_INDEPENDENCE: "Independência financeira",
+  };
+  const fiPercent = Math.min(100, plan.wealth.ratioBasisPoints / 100);
+  const pendingAllocations = plan.recentAllocationExecutions.filter(
+    execution => execution.status === "proposed"
+  );
+  const nonPortfolioNetWorthCents = plan.carPlan.assets
+    .filter(asset => asset.status !== "archived" && asset.status !== "sold")
+    .reduce(
+      (sum, asset) =>
+        sum + Math.max(0, asset.estimatedValueCents - asset.debtBalanceCents),
+      0
+    );
+  const investmentAccountBalanceCents = snapshot.accounts
+    .filter(account => account.accountType === "investment")
+    .reduce((sum, account) => sum + account.currentBalanceCents, 0);
+  const netWorthCents =
+    snapshot.balances.consolidatedCents -
+    investmentAccountBalanceCents +
+    Math.max(
+      investmentAccountBalanceCents,
+      plan.wealth.investableNetWorthCents
+    ) +
+    nonPortfolioNetWorthCents;
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setUTCFullYear(twelveMonthsAgo.getUTCFullYear() - 1);
+  const dividendsTwelveMonthsCents = plan.wealth.dividends
+    .filter(
+      dividend =>
+        dividend.status !== "expected" &&
+        new Date(`${dividend.paymentDate}T12:00:00.000Z`) >= twelveMonthsAgo
+    )
+    .reduce((sum, dividend) => sum + dividend.netCents, 0);
+  const minimumReserveMonthCents = snapshot.profile.emergencyFundReferenceCents;
+  const reserveMonths =
+    minimumReserveMonthCents > 0
+      ? plan.emergencyFund.currentCents / minimumReserveMonthCents
+      : 0;
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Fase atual"
+          value={phaseLabels[plan.currentPhase] ?? plan.currentPhase}
+          detail={
+            plan.phaseChangePending
+              ? `Próxima sugerida: ${phaseLabels[plan.suggestedPhase] ?? plan.suggestedPhase}`
+              : "Fase coerente com os dados atuais"
+          }
+          tone={plan.phaseChangePending ? "warning" : "positive"}
+        />
+        <MetricCard
+          label="Semáforo"
+          value={
+            plan.riskLevel === "red"
+              ? "Vermelho"
+              : plan.riskLevel === "yellow"
+                ? "Amarelo"
+                : "Verde"
+          }
+          detail={`${formatCents(plan.operations.overdueCents)} em atrasos operacionais`}
+          tone={plan.riskLevel === "green" ? "positive" : "warning"}
+        />
+        <MetricCard
+          label="Piso operacional"
+          value={formatCents(plan.operatingBuffer.currentCents)}
+          detail={`Meta ${formatCents(plan.operatingBuffer.targetCents)} • falta ${formatCents(plan.operatingBuffer.gapCents)}`}
+          tone={plan.operatingBuffer.gapCents > 0 ? "warning" : "positive"}
+        />
+        <MetricCard
+          label="Saldo livre conservador"
+          value={formatCents(plan.operations.conservativeFreeBalanceCents)}
+          detail="Saldo confirmado − contas abertas − piso"
+          tone="positive"
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Patrimônio líquido"
+          value={formatCents(netWorthCents)}
+          detail={`${plan.carPlan.assets.length} ativo(s) e ${plan.wealth.positions.length} posição(ões)`}
+        />
+        <MetricCard
+          label="Meses de reserva"
+          value={reserveMonths.toFixed(2)}
+          detail={`${formatCents(plan.emergencyFund.currentCents)} protegidos`}
+          tone={reserveMonths >= 3 ? "positive" : "warning"}
+        />
+        <MetricCard
+          label="Dividendos em 12 meses"
+          value={formatCents(dividendsTwelveMonthsCents)}
+          detail="Somente eventos recebidos confirmados"
+        />
+        <MetricCard
+          label="Política de investimentos"
+          value={plan.wealth.investmentPolicy?.status ?? "não definida"}
+          detail={
+            plan.wealth.investmentPolicy?.suitabilityConfirmedAt
+              ? "Suitability confirmado"
+              : "Suitability pendente"
+          }
+          tone={
+            plan.wealth.investmentPolicy?.status === "active"
+              ? "positive"
+              : "warning"
+          }
+        />
+      </div>
+
+      {plan.phaseChangePending && (
+        <Alert className="rounded-2xl border-blue-200 bg-blue-50">
+          <Sparkles className="size-4" />
+          <AlertTitle>Mudança de fase pronta para revisão</AlertTitle>
+          <AlertDescription className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <span>
+              O motor determinístico recomenda{" "}
+              {phaseLabels[plan.suggestedPhase]}. A mudança só acontece com sua
+              confirmação.
+            </span>
+            <Button
+              size="sm"
+              disabled={confirmPhase.isPending}
+              onClick={() =>
+                confirmPhase.mutate({
+                  phase: plan.suggestedPhase,
+                  reason: "Condições da fase validadas pelo painel V3",
+                  confirmation: "CONFIRMO MUDANCA DE FASE",
+                  requestId: requestId("fase-v3"),
+                })
+              }
+            >
+              Confirmar mudança
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-5 xl:grid-cols-3">
+        <Card className="rounded-3xl border-zinc-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Car className="size-5 text-orange-700" /> Janeiro/2027
+            </CardTitle>
+            <CardDescription>Fundos separados da reserva.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <FundProgress
+              label="Entrada em dinheiro"
+              current={plan.carPlan.carCashCents}
+              target={plan.carPlan.carCashTargetCents}
+            />
+            <FundProgress
+              label="Custos iniciais"
+              current={plan.carPlan.carCostsCents}
+              target={plan.carPlan.carCostsTargetCents}
+            />
+            <div className="rounded-2xl bg-zinc-50 p-4 text-sm">
+              <p className="font-medium">Portões documentais</p>
+              <p className="mt-2 text-zinc-600">
+                Crédito limpo: {plan.creditHealth.latest?.cleanMonths ?? 0}/3
+                meses
+              </p>
+              <p className="text-zinc-600">
+                Cotações completas:{" "}
+                {plan.carPlan.quotesComplete ? "sim" : "não"}
+              </p>
+              <p className="text-zinc-600">
+                Conciliação: {plan.carPlan.reconciledDays}/60 dias
+              </p>
+            </div>
+            <Button
+              variant={plan.income2027Confirmed ? "outline" : "default"}
+              className="w-full"
+              disabled={incomeConfirmation.isPending}
+              onClick={() =>
+                incomeConfirmation.mutate({
+                  confirmed: !plan.income2027Confirmed,
+                  requestId: requestId("renda-2027"),
+                })
+              }
+            >
+              {plan.income2027Confirmed
+                ? "Renda 2027 confirmada"
+                : "Confirmar renda de 2027"}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-zinc-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="size-5 text-blue-700" /> Saúde de crédito
+            </CardTitle>
+            <CardDescription>
+              SCR e pendências nunca são presumidos.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-zinc-50 p-3">
+                <p className="text-xs text-zinc-500">Em atraso</p>
+                <p className="mt-1 font-semibold">
+                  {formatCents(plan.creditHealth.latest?.overdueCents ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-zinc-50 p-3">
+                <p className="text-xs text-zinc-500">Crédito rotativo</p>
+                <p className="mt-1 font-semibold">
+                  {formatCents(
+                    plan.creditHealth.latest?.revolvingCreditCents ?? 0
+                  )}
+                </p>
+              </div>
+            </div>
+            {plan.creditHealth.unresolvedTasks.map(task => (
+              <div
+                key={task.id}
+                className="rounded-2xl border border-amber-200 bg-amber-50 p-4"
+              >
+                <p className="text-sm font-semibold">{task.institution}</p>
+                <p className="mt-1 text-xs leading-5 text-zinc-600">
+                  {task.title}
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-3"
+                  disabled={updateCreditTask.isPending}
+                  onClick={() =>
+                    updateCreditTask.mutate({
+                      taskId: task.id,
+                      status: "completed",
+                      requestId: requestId("credito-tarefa"),
+                    })
+                  }
+                >
+                  Marcar concluída
+                </Button>
+              </div>
+            ))}
+            {plan.creditHealth.unresolvedTasks.length === 0 && (
+              <p className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-800">
+                Nenhuma pendência de limpeza aberta.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-zinc-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <LineChart className="size-5 text-emerald-700" /> Independência
+              financeira
+            </CardTitle>
+            <CardDescription>
+              Meta em reais de hoje, taxa de 3,5%.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-semibold">
+              {formatCents(plan.wealth.investableNetWorthCents)}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Meta real {formatCents(plan.wealth.targetRealCents)}
+            </p>
+            <Progress value={fiPercent} className="mt-5" />
+            <div className="mt-4 space-y-2 text-sm text-zinc-600">
+              <p>Progresso: {fiPercent.toFixed(2)}%</p>
+              <p>
+                Renda sustentável atual:{" "}
+                {formatCents(plan.wealth.sustainableMonthlyCents)}/mês
+              </p>
+              <p>
+                Projeção:{" "}
+                {plan.wealth.projectedYearsAtRecentContribution ?? "—"} anos
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="rounded-3xl border-zinc-200">
+        <CardHeader>
+          <CardTitle>Alocações aguardando confirmação</CardTitle>
+          <CardDescription>
+            O agente calcula os destinos, mas não movimenta dinheiro no banco.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {pendingAllocations.map(execution => (
+            <div
+              key={execution.id}
+              className="rounded-2xl border border-zinc-200 p-4"
+            >
+              <p className="text-xs text-zinc-500">Alocação #{execution.id}</p>
+              <p className="mt-1 text-lg font-semibold">
+                {formatCents(execution.totalCents)}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                Fase {phaseLabels[execution.phase] ?? execution.phase}
+              </p>
+              <Button
+                size="sm"
+                className="mt-3"
+                disabled={confirmAllocation.isPending}
+                onClick={() =>
+                  confirmAllocation.mutate({
+                    executionId: execution.id,
+                    requestId: requestId("alocacao-confirmar"),
+                  })
+                }
+              >
+                Confirmar plano
+              </Button>
+            </div>
+          ))}
+          {pendingAllocations.length === 0 && (
+            <p className="text-sm text-zinc-500">Nenhuma alocação pendente.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function FundProgress({
+  label,
+  current,
+  target,
+}: {
+  label: string;
+  current: number;
+  target: number;
+}) {
+  const progress = target > 0 ? Math.min(100, (current / target) * 100) : 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="text-zinc-500">
+          {formatCents(current)} / {formatCents(target)}
+        </span>
+      </div>
+      <Progress value={progress} className="mt-2" />
+    </div>
+  );
+}
+
 function CarTab() {
   const [form, setForm] = useState({
     price: "",
@@ -1816,12 +2616,12 @@ function CarTab() {
                 </p>
                 <Badge
                   variant={
-                    simulation.data.decision === "fits_safely"
+                    simulation.data.v3Decision === "GO"
                       ? "default"
                       : "destructive"
                   }
                 >
-                  {decisionLabel(simulation.data.decision)}
+                  {decisionLabel(simulation.data.v3Decision)}
                 </Badge>
               </div>
               <Progress
@@ -1843,6 +2643,15 @@ function CarTab() {
                       : formatCents(simulation.data.totalFinancingCostCents)}
                   </strong>
                 </p>
+                {simulation.data.recompositionMonthlyCents != null && (
+                  <p className="text-sm">
+                    Recomposição mínima:{" "}
+                    <strong>
+                      {formatCents(simulation.data.recompositionMonthlyCents)}
+                      /mês
+                    </strong>
+                  </p>
+                )}
                 {simulation.data.blockers.map(blocker => (
                   <div
                     key={blocker}

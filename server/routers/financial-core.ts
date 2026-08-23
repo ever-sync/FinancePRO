@@ -2,6 +2,8 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as coreDb from "../db/financial-core";
+import * as operationsDb from "../db/financial-operations";
+import * as lifelongDb from "../db/lifelong-plan";
 import {
   bootstrapRaphaelFinancialProfile,
   getCanonicalBudgetStatus,
@@ -33,6 +35,30 @@ const isoDate = z
 const occurredAt = z.coerce.date();
 const requestId = z.string().trim().min(8).max(255);
 const actor = { type: "user" as const };
+const incomeKind = z.enum([
+  "salary_fixed",
+  "owner_draw",
+  "profit_distribution",
+  "project_payment",
+  "saas_recurring_revenue",
+  "asset_sale",
+  "refund",
+  "bonus",
+  "tax_refund",
+  "dividend",
+  "interest",
+  "gift",
+  "loan_proceeds",
+  "transfer_between_own_accounts",
+  "unknown",
+]);
+
+function writeContext(value: { requestId: string }) {
+  return {
+    actor,
+    idempotencyKey: `web:${value.requestId}`,
+  };
+}
 
 async function scopeFor(user: { id: number; tenantId: number }) {
   return coreDb.resolveFinancialScope(user.id, user.tenantId);
@@ -59,9 +85,492 @@ export const financialCoreRouter = router({
     })
   ),
 
+  lifelongPlan: protectedProcedure.query(async ({ ctx }) =>
+    lifelongDb.getLifelongPlanData(await scopeFor(ctx.user))
+  ),
+
   accounts: protectedProcedure.query(async ({ ctx }) =>
     coreDb.listFinancialAccounts(await scopeFor(ctx.user))
   ),
+
+  registrationContext: protectedProcedure.query(async ({ ctx }) =>
+    operationsDb.getRegistrationContextV3(await scopeFor(ctx.user))
+  ),
+
+  financialItems: protectedProcedure
+    .input(
+      z
+        .object({
+          kind: z.enum(["payable", "receivable"]).optional(),
+          status: z.string().trim().min(1).max(32).optional(),
+          startDate: isoDate.optional(),
+          endDate: isoDate.optional(),
+          limit: z.number().int().min(1).max(500).default(200),
+        })
+        .optional()
+    )
+    .query(async ({ ctx, input }) =>
+      operationsDb.listFinancialItemsV3(await scopeFor(ctx.user), input ?? {})
+    ),
+
+  createAccount: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(1).max(255),
+        code: z.string().trim().min(1).max(120).nullable().optional(),
+        ownerType: z.enum(["personal", "business"]),
+        accountType: z.enum([
+          "checking",
+          "savings",
+          "reserve",
+          "credit_card",
+          "cash",
+          "investment",
+          "goal_wallet",
+          "other",
+        ]),
+        institution: z.string().trim().max(255).nullable().optional(),
+        currency: z.string().trim().length(3).default("BRL"),
+        initialBalanceCents: z
+          .number()
+          .int()
+          .min(-Number.MAX_SAFE_INTEGER)
+          .max(Number.MAX_SAFE_INTEGER)
+          .nullable()
+          .optional(),
+        balanceAsOf: occurredAt.nullable().optional(),
+        includeInOperatingCash: z.boolean().optional(),
+        protected: z.boolean().optional(),
+        needsConfirmation: z.boolean().optional(),
+        closingDay: z.number().int().min(1).max(31).nullable().optional(),
+        dueDay: z.number().int().min(1).max(31).nullable().optional(),
+        creditLimitCents: cents.nullable().optional(),
+        paymentAccountId: positiveId.nullable().optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...account } = input;
+      try {
+        return await operationsDb.createFinancialAccountV3(
+          await scopeFor(ctx.user),
+          account,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  updateAccount: protectedProcedure
+    .input(
+      z
+        .object({
+          accountId: positiveId,
+          patch: z
+            .object({
+              name: z.string().trim().min(1).max(255).optional(),
+              code: z.string().trim().min(1).max(120).nullable().optional(),
+              institution: z.string().trim().max(255).nullable().optional(),
+              includeInOperatingCash: z.boolean().optional(),
+              protected: z.boolean().optional(),
+              needsConfirmation: z.boolean().optional(),
+              closingDay: z.number().int().min(1).max(31).nullable().optional(),
+              dueDay: z.number().int().min(1).max(31).nullable().optional(),
+              creditLimitCents: cents.nullable().optional(),
+              paymentAccountId: positiveId.nullable().optional(),
+            })
+            .strict()
+            .refine(value => Object.keys(value).length > 0, "Patch vazio"),
+          confirmation: z.literal("CONFIRMO ALTERACAO DE PROTECAO").optional(),
+          requestId,
+        })
+        .strict()
+        .superRefine((value, context) => {
+          if (
+            value.patch.protected === false &&
+            value.confirmation !== "CONFIRMO ALTERACAO DE PROTECAO"
+          )
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["confirmation"],
+              message: "Confirmacao explicita obrigatoria",
+            });
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await operationsDb.updateFinancialAccountV3(
+          await scopeFor(ctx.user),
+          { accountId: input.accountId, patch: input.patch },
+          writeContext({ requestId: input.requestId })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  archiveAccount: protectedProcedure
+    .input(
+      z.object({
+        accountId: positiveId,
+        reason: z.string().trim().min(1).max(1_000),
+        confirmation: z.literal("CONFIRMO ARQUIVAMENTO DA CONTA"),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await operationsDb.archiveFinancialAccountV3(
+          await scopeFor(ctx.user),
+          {
+            accountId: input.accountId,
+            reason: input.reason,
+            confirmation: input.confirmation,
+          },
+          writeContext({ requestId: input.requestId })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  createFinancialItem: protectedProcedure
+    .input(
+      z.object({
+        kind: z.enum(["payable", "receivable"]),
+        ownerType: z.enum(["personal", "business"]),
+        amountCents: positiveCents,
+        description: z.string().trim().min(1).max(500),
+        counterparty: z.string().trim().max(255).nullable().optional(),
+        categoryId: positiveId.nullable().optional(),
+        expectedAccountId: positiveId.nullable().optional(),
+        dueDate: isoDate,
+        competenceDate: isoDate.optional(),
+        status: z.string().trim().min(1).max(32).optional(),
+        draft: z.boolean().optional(),
+        estimated: z.boolean().optional(),
+        needsConfirmation: z.boolean().optional(),
+        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...item } = input;
+      try {
+        return await operationsDb.createFinancialItemV3(
+          await scopeFor(ctx.user),
+          { ...item, origin: "web" },
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  createRecurrence: protectedProcedure
+    .input(
+      z.object({
+        itemKind: z.enum(["payable", "receivable"]),
+        ownerType: z.enum(["personal", "business"]),
+        description: z.string().trim().min(1).max(500),
+        frequency: z.enum([
+          "daily",
+          "weekly",
+          "monthly",
+          "yearly",
+          "business_day_rule",
+        ]),
+        interval: z.number().int().min(1).max(365).default(1),
+        byWeekday: z
+          .array(z.number().int().min(0).max(6))
+          .nullable()
+          .optional(),
+        byMonthDay: z.number().int().min(1).max(31).nullable().optional(),
+        businessDayOrdinal: z
+          .number()
+          .int()
+          .min(1)
+          .max(31)
+          .nullable()
+          .optional(),
+        startDate: isoDate,
+        endDate: isoDate.nullable().optional(),
+        timezone: z.string().trim().min(1).max(80).default("America/Sao_Paulo"),
+        amountMode: z.enum(["fixed", "estimated", "variable"]).default("fixed"),
+        baseAmountCents: positiveCents,
+        expectedAccountId: positiveId.nullable().optional(),
+        categoryId: positiveId.nullable().optional(),
+        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+        generationWindowDays: z.number().int().min(1).max(370).default(90),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...recurrence } = input;
+      try {
+        return await operationsDb.createRecurrenceV3(
+          await scopeFor(ctx.user),
+          recurrence,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  updateRecurrenceV3: protectedProcedure
+    .input(
+      z.object({
+        recurrenceId: positiveId,
+        effectiveFrom: isoDate,
+        patch: z.object({
+          description: z.string().trim().min(1).max(500).optional(),
+          baseAmountCents: positiveCents.optional(),
+          frequency: z
+            .enum(["daily", "weekly", "monthly", "yearly", "business_day_rule"])
+            .optional(),
+          interval: z.number().int().min(1).max(365).optional(),
+          byWeekday: z
+            .array(z.number().int().min(0).max(6))
+            .nullable()
+            .optional(),
+          byMonthDay: z.number().int().min(1).max(31).nullable().optional(),
+          businessDayOrdinal: z
+            .number()
+            .int()
+            .min(1)
+            .max(31)
+            .nullable()
+            .optional(),
+          endDate: isoDate.nullable().optional(),
+          amountMode: z.enum(["fixed", "estimated", "variable"]).optional(),
+          expectedAccountId: positiveId.nullable().optional(),
+          categoryId: positiveId.nullable().optional(),
+          status: z.enum(["active", "paused", "cancelled"]).optional(),
+        }),
+        generationWindowDays: z.number().int().min(1).max(370).default(90),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...update } = input;
+      try {
+        return await operationsDb.updateRecurrenceRuleV3(
+          await scopeFor(ctx.user),
+          update,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  createInstallmentPlan: protectedProcedure
+    .input(
+      z.object({
+        description: z.string().trim().min(1).max(500),
+        planType: z
+          .enum(["purchase", "debt", "income", "card_purchase"])
+          .default("purchase"),
+        kind: z.enum(["payable", "receivable"]),
+        ownerType: z.enum(["personal", "business"]),
+        totalAmountCents: positiveCents,
+        installmentCount: z.number().int().min(1).max(240),
+        firstDueDate: isoDate,
+        accountId: positiveId.nullable().optional(),
+        creditCardId: positiveId.nullable().optional(),
+        categoryId: positiveId.nullable().optional(),
+        metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...plan } = input;
+      try {
+        return await operationsDb.createInstallmentPlanV3(
+          await scopeFor(ctx.user),
+          plan,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  createCardPurchase: protectedProcedure
+    .input(
+      z.object({
+        creditCardId: positiveId,
+        paymentAccountId: positiveId,
+        totalAmountCents: positiveCents,
+        description: z.string().trim().min(1).max(500),
+        occurredAt,
+        installmentCount: z.number().int().min(1).max(240),
+        firstDueDate: isoDate,
+        ownerType: z.enum(["personal", "business"]),
+        categoryId: positiveId.nullable().optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...purchase } = input;
+      try {
+        return await operationsDb.createCardPurchaseV3(
+          await scopeFor(ctx.user),
+          purchase,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  settleFinancialItem: protectedProcedure
+    .input(
+      z.object({
+        itemId: positiveId,
+        amountCents: positiveCents,
+        settledAt: occurredAt,
+        accountId: positiveId,
+        protectedWithdrawalConfirmation: z
+          .literal("CONFIRMAR USO DA RESERVA")
+          .optional(),
+        incomeKind: incomeKind.default("unknown"),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const {
+        requestId: request,
+        protectedWithdrawalConfirmation,
+        incomeKind: receivedIncomeKind,
+        ...settlement
+      } = input;
+      try {
+        const scope = await scopeFor(ctx.user);
+        const context = writeContext({ requestId: request });
+        const result = await operationsDb.settleFinancialItemV3(
+          scope,
+          {
+            ...settlement,
+            protectedWithdrawalConfirmed:
+              protectedWithdrawalConfirmation === "CONFIRMAR USO DA RESERVA",
+          },
+          context
+        );
+        const item =
+          "item" in result
+            ? result.item
+            : (
+                await operationsDb.listFinancialItemsV3(scope, { limit: 500 })
+              ).find(candidate => candidate.id === input.itemId);
+        const transactionId =
+          "transaction" in result
+            ? result.transaction.id
+            : Number(
+                (result.result as unknown as Record<string, unknown>)
+                  .transactionId
+              );
+        const allocation =
+          item?.kind === "receivable" &&
+          Number.isInteger(transactionId) &&
+          transactionId > 0
+            ? await lifelongDb.proposeIncomeAllocationV3(scope, {
+                transactionId,
+                incomeKind: receivedIncomeKind,
+                idempotencyKey: `${context.idempotencyKey}:allocation`,
+                actor,
+              })
+            : null;
+        return { ...result, allocation };
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  updateFinancialItem: protectedProcedure
+    .input(
+      z.object({
+        itemId: positiveId,
+        scope: z.enum([
+          "THIS_OCCURRENCE",
+          "THIS_AND_FUTURE",
+          "ALL_OCCURRENCES",
+        ]),
+        patch: z.object({
+          amountCents: positiveCents.optional(),
+          description: z.string().trim().min(1).max(500).optional(),
+          counterparty: z.string().trim().max(255).nullable().optional(),
+          categoryId: positiveId.nullable().optional(),
+          expectedAccountId: positiveId.nullable().optional(),
+          dueDate: isoDate.optional(),
+          competenceDate: isoDate.optional(),
+          estimated: z.boolean().optional(),
+          needsConfirmation: z.boolean().optional(),
+        }),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...update } = input;
+      try {
+        return await operationsDb.updateFinancialItemV3(
+          await scopeFor(ctx.user),
+          update,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  cancelFinancialItem: protectedProcedure
+    .input(
+      z.object({
+        itemId: positiveId,
+        scope: z.enum([
+          "THIS_OCCURRENCE",
+          "THIS_AND_FUTURE",
+          "ALL_OCCURRENCES",
+        ]),
+        reason: z.string().trim().min(1).max(500),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...cancel } = input;
+      try {
+        return await operationsDb.cancelFinancialItemV3(
+          await scopeFor(ctx.user),
+          cancel,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  undoFinancialAction: protectedProcedure
+    .input(
+      z.object({
+        actionId: positiveId.nullable().optional(),
+        reason: z.string().trim().min(1).max(500).optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { requestId: request, ...undo } = input;
+      try {
+        return await operationsDb.undoFinancialActionV3(
+          await scopeFor(ctx.user),
+          undo,
+          writeContext({ requestId: request })
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
 
   setAccountBalance: protectedProcedure
     .input(
@@ -76,6 +585,7 @@ export const financialCoreRouter = router({
         protectedReductionConfirmation: z
           .literal("CONFIRMAR REDUCAO DA RESERVA")
           .optional(),
+        requestId,
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -89,6 +599,7 @@ export const financialCoreRouter = router({
             protectedReductionConfirmed:
               input.protectedReductionConfirmation ===
               "CONFIRMAR REDUCAO DA RESERVA",
+            idempotencyKey: `web:${input.requestId}`,
             actor,
           }
         );
@@ -133,20 +644,31 @@ export const financialCoreRouter = router({
         status: z.enum(["confirmed", "expected", "paid", "received"]),
         counterparty: z.string().trim().max(255).nullable().optional(),
         documentNumber: z.string().trim().max(120).nullable().optional(),
+        incomeKind: incomeKind.default("unknown"),
         requestId,
       })
     )
     .mutation(async ({ ctx, input }) => {
       try {
-        return await coreDb.recordFinancialTransaction(
-          await scopeFor(ctx.user),
-          {
-            ...input,
-            source: "web",
-            idempotencyKey: `web:${input.requestId}`,
-            actor,
-          }
-        );
+        const scope = await scopeFor(ctx.user);
+        const { incomeKind: receivedIncomeKind, ...transactionInput } = input;
+        const result = await coreDb.recordFinancialTransaction(scope, {
+          ...transactionInput,
+          source: "web",
+          idempotencyKey: `web:${input.requestId}`,
+          actor,
+        });
+        const allocation =
+          input.type === "income" &&
+          ["confirmed", "received"].includes(result.transaction.status)
+            ? await lifelongDb.proposeIncomeAllocationV3(scope, {
+                transactionId: result.transaction.id,
+                incomeKind: receivedIncomeKind,
+                idempotencyKey: `web:${input.requestId}:allocation`,
+                actor,
+              })
+            : null;
+        return { ...result, allocation };
       } catch (error) {
         asBadRequest(error);
       }
@@ -537,6 +1059,23 @@ export const financialCoreRouter = router({
         overdraftUsedCents: cents.default(0),
         fixedCostsConfirmed: z.boolean().optional(),
         priorityAPlanComplete: z.boolean().optional(),
+        overdueDebtCents: cents.optional(),
+        creditIssueResolved: z.boolean().optional(),
+        cleanCreditMonths: z.number().int().min(0).max(600).optional(),
+        minimumCleanCreditMonths: z.number().int().min(1).max(24).optional(),
+        income2027Confirmed: z.boolean().optional(),
+        minimumReserveTargetCents: cents.optional(),
+        cashDownPaymentCents: cents.optional(),
+        cashDownPaymentTargetCents: cents.optional(),
+        acquisitionCostFundCents: cents.optional(),
+        acquisitionCostFundTargetCents: cents.optional(),
+        tradeInNetCents: cents.optional(),
+        tradeInTargetCents: cents.optional(),
+        financedAmountCents: cents.optional(),
+        financedAmountTargetMaxCents: cents.optional(),
+        quotesComplete: z.boolean().optional(),
+        reconciledDays: z.number().int().min(0).max(3650).optional(),
+        concurrentFormalProposals: z.number().int().min(0).max(20).optional(),
       })
     )
     .query(({ ctx, input }) =>
@@ -600,6 +1139,168 @@ export const financialCoreRouter = router({
           requestId: `web:${input.requestId}`,
           actor,
         });
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  proposeIncomeAllocationV3: protectedProcedure
+    .input(
+      z.object({
+        transactionId: positiveId,
+        incomeKind,
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await lifelongDb.proposeIncomeAllocationV3(
+          await scopeFor(ctx.user),
+          {
+            transactionId: input.transactionId,
+            incomeKind: input.incomeKind,
+            idempotencyKey: `web:${input.requestId}:allocation`,
+            actor,
+          }
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  confirmIncomeAllocationV3: protectedProcedure
+    .input(z.object({ executionId: positiveId, requestId }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await lifelongDb.confirmIncomeAllocationV3(
+          await scopeFor(ctx.user),
+          {
+            executionId: input.executionId,
+            ...writeContext({ requestId: input.requestId }),
+          }
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  confirmFinancialPhaseV3: protectedProcedure
+    .input(
+      z.object({
+        phase: z.enum([
+          "CLEANUP",
+          "CAR_PREPARATION",
+          "CAR_PURCHASE_READY",
+          "POST_CAR_RESERVE",
+          "WEALTH_WITH_CAR_DEBT",
+          "WEALTH_ACCUMULATION",
+          "FINANCIAL_INDEPENDENCE",
+        ]),
+        reason: z.string().trim().min(1).max(1_000),
+        confirmation: z.literal("CONFIRMO MUDANCA DE FASE"),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await lifelongDb.confirmFinancialPhaseV3(
+          await scopeFor(ctx.user),
+          {
+            phase: input.phase,
+            reason: input.reason,
+            idempotencyKey: `web:${input.requestId}:phase`,
+            actor,
+          }
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  setIncome2027ConfirmationV3: protectedProcedure
+    .input(z.object({ confirmed: z.boolean(), requestId }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await lifelongDb.setIncome2027ConfirmationV3(
+          await scopeFor(ctx.user),
+          {
+            confirmed: input.confirmed,
+            ...writeContext({ requestId: input.requestId }),
+          }
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  recordCreditHealthV3: protectedProcedure
+    .input(
+      z.object({
+        sourceMonth: z.string().regex(/^\d{4}-\d{2}$/, "Use AAAA-MM"),
+        currentDebtCents: cents,
+        overdueCents: cents,
+        unusedLimitsCents: cents,
+        overdraftUsedCents: cents,
+        revolvingCreditCents: cents,
+        cleanMonths: z.number().int().min(0).max(600),
+        status: z
+          .enum(["confirmed", "needs_confirmation"])
+          .default("confirmed"),
+        issues: z.unknown().optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await lifelongDb.recordCreditHealthSnapshotV3(
+          await scopeFor(ctx.user),
+          {
+            sourceMonth: input.sourceMonth,
+            currentDebtCents: input.currentDebtCents,
+            overdueCents: input.overdueCents,
+            unusedLimitsCents: input.unusedLimitsCents,
+            overdraftUsedCents: input.overdraftUsedCents,
+            revolvingCreditCents: input.revolvingCreditCents,
+            cleanMonths: input.cleanMonths,
+            status: input.status,
+            issues: input.issues,
+            ...writeContext({ requestId: input.requestId }),
+          }
+        );
+      } catch (error) {
+        asBadRequest(error);
+      }
+    }),
+
+  updateCreditCleanupTaskV3: protectedProcedure
+    .input(
+      z.object({
+        taskId: positiveId,
+        status: z.enum([
+          "needs_confirmation",
+          "open",
+          "in_progress",
+          "paid",
+          "completed",
+          "cancelled",
+        ]),
+        currentAmountCents: cents.nullable().optional(),
+        proof: z.unknown().optional(),
+        requestId,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await lifelongDb.updateCreditCleanupTaskV3(
+          await scopeFor(ctx.user),
+          {
+            taskId: input.taskId,
+            status: input.status,
+            currentAmountCents: input.currentAmountCents,
+            proof: input.proof,
+            ...writeContext({ requestId: input.requestId }),
+          }
+        );
       } catch (error) {
         asBadRequest(error);
       }

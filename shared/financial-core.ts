@@ -56,10 +56,28 @@ export type CarSimulationInput = {
   confirmedMonthlyIncomeCents: number;
   livingCostAfterCarCents: number;
   currentOperatingBalanceCents: number;
+  overdueDebtCents?: number;
+  creditIssueResolved?: boolean;
+  cleanCreditMonths?: number;
+  minimumCleanCreditMonths?: number;
+  income2027Confirmed?: boolean;
+  minimumReserveTargetCents?: number;
+  cashDownPaymentCents?: number;
+  cashDownPaymentTargetCents?: number;
+  acquisitionCostFundCents?: number;
+  acquisitionCostFundTargetCents?: number;
+  tradeInNetCents?: number;
+  tradeInTargetCents?: number;
+  financedAmountCents?: number;
+  financedAmountTargetMaxCents?: number;
+  quotesComplete?: boolean;
+  reconciledDays?: number;
+  concurrentFormalProposals?: number;
 };
 
 export type CarSimulationResult = {
   decision: "not_recommended" | "fits_with_risk" | "fits_safely";
+  v3Decision: "NO_GO" | "GO_CONDICIONAL" | "GO";
   readinessScore: number;
   blockers: string[];
   missingInputs: string[];
@@ -67,6 +85,8 @@ export type CarSimulationResult = {
   totalFinancingCostCents: number | null;
   monthlySurplusCents: number;
   reserveMonths: number;
+  recompositionMonthlyCents: number | null;
+  financedAmountCents: number | null;
   twelveMonthConservativeProjection: Array<{
     month: number;
     endingBalanceCents: number;
@@ -277,21 +297,80 @@ export function calculateCarReadiness(
     monthlyIpvaAndLicensing +
     (input.maintenanceMonthlyCents ?? 0);
 
+  const minimumReserveTargetCents =
+    input.minimumReserveTargetCents ?? 4_908_000;
+  const cashDownPaymentCents =
+    input.cashDownPaymentCents ?? input.downPaymentCents ?? 0;
+  const cashDownPaymentTargetCents =
+    input.cashDownPaymentTargetCents ?? 3_000_000;
+  const acquisitionCostFundCents = input.acquisitionCostFundCents ?? 0;
+  const acquisitionCostFundTargetCents =
+    input.acquisitionCostFundTargetCents ?? 300_000;
+  const tradeInNetCents = input.tradeInNetCents ?? 0;
+  const tradeInTargetCents = input.tradeInTargetCents ?? 2_000_000;
+  const financedAmountCents =
+    input.financedAmountCents ??
+    (input.vehiclePriceCents == null
+      ? null
+      : Math.max(
+          0,
+          input.vehiclePriceCents - cashDownPaymentCents - tradeInNetCents
+        ));
+  const financedAmountTargetMaxCents =
+    input.financedAmountTargetMaxCents ?? 8_000_000;
+  const overdueDebtCents =
+    input.overdueDebtCents ??
+    input.asaasDebtCents + (input.expensiveDebtCents ?? 0);
+  const creditIssueResolved =
+    input.creditIssueResolved ?? overdueDebtCents === 0;
+  const cleanCreditMonths = input.cleanCreditMonths ?? 0;
+  const minimumCleanCreditMonths = input.minimumCleanCreditMonths ?? 3;
+  const income2027Confirmed =
+    input.income2027Confirmed ?? input.futureIncomeConfirmed;
+  const quotesComplete = input.quotesComplete ?? missingInputs.length === 0;
+  const reconciledDays = input.reconciledDays ?? 0;
+  const concurrentFormalProposals = input.concurrentFormalProposals ?? 0;
+
   const blockers: string[] = [];
-  if (input.asaasDebtCents > 0 || (input.expensiveDebtCents ?? 0) > 0)
-    blockers.push("Dividas caras ainda nao foram zeradas.");
+  if (overdueDebtCents > 0)
+    blockers.push("Existe obrigacao vencida ou divida cara em aberto.");
+  if (!creditIssueResolved)
+    blockers.push(
+      "A pendencia de credito/SCR ainda nao possui prova de resolucao."
+    );
   if (input.overdraftUsedCents > 0)
     blockers.push("Existe uso de limite ou cheque especial.");
-  if (input.reserveCents < input.postCarReserveTargetCents)
-    blockers.push("A reserva pos-carro ainda nao atingiu a meta minima.");
+  if (cleanCreditMonths < minimumCleanCreditMonths)
+    blockers.push(
+      `Ainda faltam meses de historico limpo (${cleanCreditMonths} de ${minimumCleanCreditMonths}).`
+    );
+  if (input.reserveCents < minimumReserveTargetCents)
+    blockers.push("A reserva minima intocavel ainda nao foi formada.");
+  if (cashDownPaymentCents < cashDownPaymentTargetCents)
+    blockers.push("A entrada em dinheiro ainda nao atingiu R$ 30.000.");
+  if (acquisitionCostFundCents < acquisitionCostFundTargetCents)
+    blockers.push("O fundo de custos iniciais ainda nao atingiu R$ 3.000.");
+  if (tradeInNetCents < tradeInTargetCents)
+    blockers.push("O valor liquido da troca ainda nao atingiu R$ 20.000.");
+  if (
+    financedAmountCents != null &&
+    financedAmountCents > financedAmountTargetMaxCents
+  )
+    blockers.push("O valor financiado ultrapassa o alvo maximo de R$ 80.000.");
   if (!input.downPaymentSeparated)
     blockers.push("A entrada do carro ainda nao esta separada da reserva.");
-  if (!input.futureIncomeConfirmed)
-    blockers.push("A renda futura ainda nao esta confirmada.");
+  if (!income2027Confirmed)
+    blockers.push("A renda de 2027 ainda nao esta confirmada.");
   if (totalMonthlyCostCents > input.monthlyCarLimitCents)
     blockers.push("O custo mensal total do carro ultrapassa o teto.");
   if (installmentCents > input.installmentLimitCents)
     blockers.push("A parcela ultrapassa o teto definido.");
+  if (!quotesComplete)
+    blockers.push("CET, seguro e demais cotacoes ainda nao estao completos.");
+  if (reconciledDays < 60)
+    blockers.push("As contas ainda nao possuem 60 dias reconciliados.");
+  if (concurrentFormalProposals > 1)
+    blockers.push("Existe mais de uma proposta formal de credito simultanea.");
   if (!input.fixedCostsConfirmed)
     blockers.push("As contas fixas reais ainda precisam ser confirmadas.");
   if (!input.priorityAPlanComplete)
@@ -302,16 +381,19 @@ export function calculateCarReadiness(
     blockers.push(`Faltam dados da simulacao: ${missingInputs.join(", ")}.`);
 
   let readinessScore = 0;
-  if (input.asaasDebtCents === 0 && (input.expensiveDebtCents ?? 0) === 0)
-    readinessScore += 10;
-  if (input.overdraftUsedCents === 0) readinessScore += 10;
-  if (input.reserveCents >= 4_908_000) readinessScore += 15;
+  if (overdueDebtCents === 0 && creditIssueResolved) readinessScore += 20;
+  if (input.overdraftUsedCents === 0) readinessScore += 15;
+  if (income2027Confirmed) readinessScore += 15;
+  if (input.reserveCents >= minimumReserveTargetCents) readinessScore += 15;
   if (input.reserveCents >= input.postCarReserveTargetCents)
-    readinessScore += 20;
-  if (input.downPaymentSeparated) readinessScore += 15;
-  if (input.futureIncomeConfirmed) readinessScore += 15;
+    readinessScore += 10;
+  if (cashDownPaymentCents >= cashDownPaymentTargetCents) readinessScore += 10;
+  if (acquisitionCostFundCents >= acquisitionCostFundTargetCents)
+    readinessScore += 5;
+  if (tradeInNetCents >= tradeInTargetCents) readinessScore += 5;
   if (totalMonthlyCostCents <= input.monthlyCarLimitCents) readinessScore += 10;
-  if (missingInputs.length === 0) readinessScore += 5;
+  if (quotesComplete) readinessScore += 5;
+  readinessScore = Math.min(100, readinessScore);
 
   const monthlySurplusCents =
     input.confirmedMonthlyIncomeCents - input.livingCostAfterCarCents;
@@ -331,14 +413,28 @@ export function calculateCarReadiness(
     input.downPaymentCents != null && input.termMonths != null
       ? input.downPaymentCents + installmentCents * input.termMonths
       : null;
+  const v3Decision: CarSimulationResult["v3Decision"] =
+    blockers.length > 0
+      ? "NO_GO"
+      : input.reserveCents >= input.postCarReserveTargetCents
+        ? "GO"
+        : "GO_CONDICIONAL";
+  const recompositionMonthlyCents =
+    v3Decision === "GO_CONDICIONAL"
+      ? Math.max(
+          840_000,
+          Math.ceil((input.postCarReserveTargetCents - input.reserveCents) / 3)
+        )
+      : null;
 
   return {
     decision:
-      blockers.length > 0
+      v3Decision === "NO_GO"
         ? "not_recommended"
-        : monthlySurplusCents >= totalMonthlyCostCents
+        : v3Decision === "GO"
           ? "fits_safely"
           : "fits_with_risk",
+    v3Decision,
     readinessScore,
     blockers,
     missingInputs,
@@ -346,6 +442,8 @@ export function calculateCarReadiness(
     totalFinancingCostCents,
     monthlySurplusCents,
     reserveMonths,
+    recompositionMonthlyCents,
+    financedAmountCents,
     twelveMonthConservativeProjection,
   };
 }
@@ -488,4 +586,454 @@ export function savingsRatePercent(
     goalContributionsCents +
     confirmedInvestmentsCents;
   return Math.round((numerator / confirmedIncomeCents) * 10_000) / 100;
+}
+
+export const FINANCIAL_PHASES = [
+  "CLEANUP",
+  "CAR_PREPARATION",
+  "CAR_PURCHASE_READY",
+  "POST_CAR_RESERVE",
+  "WEALTH_WITH_CAR_DEBT",
+  "WEALTH_ACCUMULATION",
+  "FINANCIAL_INDEPENDENCE",
+] as const;
+
+export type FinancialPhase = (typeof FINANCIAL_PHASES)[number];
+
+export function determineFinancialPhase(input: {
+  overdueDebtCents: number;
+  overdraftUsedCents: number;
+  operatingBufferCents: number;
+  operatingBufferTargetCents: number;
+  emergencyFundCents: number;
+  minimumEmergencyFundCents: number;
+  postCarEmergencyFundCents: number;
+  carCashCents: number;
+  carCashTargetCents: number;
+  carCostsCents: number;
+  carCostsTargetCents: number;
+  cleanCreditMonths: number;
+  futureIncomeConfirmed: boolean;
+  vehiclePurchased: boolean;
+  carAllInMonthlyCents: number;
+  carMonthlyLimitCents: number;
+  carDebtCents: number;
+  financialIndependenceRatioBasisPoints: number;
+}): FinancialPhase {
+  const values = [
+    input.overdueDebtCents,
+    input.overdraftUsedCents,
+    input.operatingBufferCents,
+    input.operatingBufferTargetCents,
+    input.emergencyFundCents,
+    input.minimumEmergencyFundCents,
+    input.postCarEmergencyFundCents,
+    input.carCashCents,
+    input.carCashTargetCents,
+    input.carCostsCents,
+    input.carCostsTargetCents,
+    input.carAllInMonthlyCents,
+    input.carMonthlyLimitCents,
+    input.carDebtCents,
+  ];
+  values.forEach((value, index) =>
+    assertNonNegativeCents(value, `phaseValue${index}`)
+  );
+  if (
+    input.overdueDebtCents > 0 ||
+    input.overdraftUsedCents > 0 ||
+    input.operatingBufferCents < input.operatingBufferTargetCents
+  )
+    return "CLEANUP";
+  if (!input.vehiclePurchased) {
+    const ready =
+      input.emergencyFundCents >= input.minimumEmergencyFundCents &&
+      input.carCashCents >= input.carCashTargetCents &&
+      input.carCostsCents >= input.carCostsTargetCents &&
+      input.cleanCreditMonths >= 3 &&
+      input.futureIncomeConfirmed &&
+      input.carAllInMonthlyCents <= input.carMonthlyLimitCents;
+    return ready ? "CAR_PURCHASE_READY" : "CAR_PREPARATION";
+  }
+  if (input.emergencyFundCents < input.postCarEmergencyFundCents)
+    return "POST_CAR_RESERVE";
+  if (input.carDebtCents > 0) return "WEALTH_WITH_CAR_DEBT";
+  if (input.financialIndependenceRatioBasisPoints < 10_000)
+    return "WEALTH_ACCUMULATION";
+  return "FINANCIAL_INDEPENDENCE";
+}
+
+export type IncomeKind =
+  | "salary_fixed"
+  | "owner_draw"
+  | "profit_distribution"
+  | "project_payment"
+  | "saas_recurring_revenue"
+  | "asset_sale"
+  | "refund"
+  | "bonus"
+  | "tax_refund"
+  | "dividend"
+  | "interest"
+  | "gift"
+  | "loan_proceeds"
+  | "transfer_between_own_accounts"
+  | "unknown";
+
+export type AllocationDestination = {
+  destination:
+    | "overdue"
+    | "essential_bills"
+    | "variable_budget"
+    | "operating_buffer"
+    | "emergency_fund"
+    | "car_cash"
+    | "car_costs"
+    | "taxes"
+    | "delivery_costs"
+    | "investments"
+    | "car_amortization"
+    | "annual_funds"
+    | "business_growth"
+    | "quality_of_life"
+    | "unallocated";
+  amountCents: number;
+  priority: number;
+  reason: string;
+};
+
+function allocation(
+  destination: AllocationDestination["destination"],
+  amountCents: number,
+  priority: number,
+  reason: string
+): AllocationDestination | null {
+  return amountCents > 0
+    ? { destination, amountCents, priority, reason }
+    : null;
+}
+
+export function calculateV3IncomeAllocation(input: {
+  amountCents: number;
+  incomeKind: IncomeKind;
+  phase: FinancialPhase;
+  overdueCents?: number;
+  essentialGapCents?: number;
+  operatingBufferGapCents?: number;
+  emergencyGapCents?: number;
+  carCashGapCents?: number;
+  carCostsGapCents?: number;
+}): { allocations: AllocationDestination[]; unallocatedCents: number } {
+  assertNonNegativeCents(input.amountCents, "amountCents");
+  if (input.incomeKind === "transfer_between_own_accounts") {
+    return { allocations: [], unallocatedCents: input.amountCents };
+  }
+  if (input.incomeKind === "loan_proceeds") {
+    return {
+      allocations: [
+        {
+          destination: "unallocated",
+          amountCents: input.amountCents,
+          priority: 1,
+          reason: "Emprestimo e passivo, nao renda disponivel.",
+        },
+      ],
+      unallocatedCents: input.amountCents,
+    };
+  }
+
+  if (input.incomeKind === "project_payment") {
+    const split = calculateProjectSplit(input.amountCents);
+    const rows = [
+      allocation("taxes", split.taxesCents, 1, "Provisao tributaria de 15%."),
+      allocation(
+        "delivery_costs",
+        split.deliveryCostsCents,
+        2,
+        "Custos e ferramentas de entrega de 10%."
+      ),
+    ];
+    let remaining = split.goalsCents;
+    const orderedGaps: Array<
+      [AllocationDestination["destination"], number, string]
+    > = [
+      ["overdue", input.overdueCents ?? 0, "Quitar atraso antes das metas."],
+      [
+        "essential_bills",
+        input.essentialGapCents ?? 0,
+        "Cobrir essenciais ate a proxima renda.",
+      ],
+      [
+        "operating_buffer",
+        input.operatingBufferGapCents ?? 0,
+        "Recompor o piso operacional.",
+      ],
+      ["car_cash", input.carCashGapCents ?? 0, "Completar entrada do carro."],
+      ["car_costs", input.carCostsGapCents ?? 0, "Completar custos do carro."],
+      [
+        "emergency_fund",
+        input.emergencyGapCents ?? 0,
+        "Fortalecer a reserva protegida.",
+      ],
+    ];
+    orderedGaps.forEach(([destination, gap, reason], index) => {
+      const amount = Math.min(remaining, Math.max(0, gap));
+      const row = allocation(destination, amount, index + 3, reason);
+      if (row) rows.push(row);
+      remaining -= amount;
+    });
+    if (remaining > 0) {
+      const target =
+        input.phase === "WEALTH_WITH_CAR_DEBT"
+          ? "investments"
+          : input.phase === "WEALTH_ACCUMULATION" ||
+              input.phase === "FINANCIAL_INDEPENDENCE"
+            ? "investments"
+            : "emergency_fund";
+      rows.push({
+        destination: target,
+        amountCents: remaining,
+        priority: 20,
+        reason: "Excedente destinado pela fase financeira atual.",
+      });
+      remaining = 0;
+    }
+    return {
+      allocations: rows.filter(
+        (row): row is AllocationDestination => row != null
+      ),
+      unallocatedCents: remaining,
+    };
+  }
+
+  if (
+    input.incomeKind === "salary_fixed" &&
+    input.phase === "CAR_PREPARATION"
+  ) {
+    const exact =
+      input.amountCents === 2_000_000
+        ? [818_000, 760_000, 422_000]
+        : input.amountCents === 600_000
+          ? [300_000, 221_600, 78_400]
+          : [
+              Math.floor(input.amountCents * 0.43),
+              Math.floor(input.amountCents * 0.3775),
+              0,
+            ];
+    if (exact[2] === 0) exact[2] = input.amountCents - exact[0] - exact[1];
+    const livingDestination =
+      input.amountCents === 600_000 ? "variable_budget" : "essential_bills";
+    const rows: AllocationDestination[] = [
+      {
+        destination: livingDestination,
+        amountCents: exact[0],
+        priority: 1,
+        reason: "Custo de vida previsto para este recebimento.",
+      },
+      {
+        destination: "emergency_fund",
+        amountCents: exact[1],
+        priority: 2,
+        reason: "Aporte protegido da reserva.",
+      },
+      {
+        destination: "car_cash",
+        amountCents: exact[2],
+        priority: 3,
+        reason: "Fundo de entrada do carro.",
+      },
+    ];
+    const overdue = Math.min(input.overdueCents ?? 0, exact[2]);
+    if (overdue > 0) {
+      rows[2].amountCents -= overdue;
+      rows.unshift({
+        destination: "overdue",
+        amountCents: overdue,
+        priority: 0,
+        reason: "Atrasos vencem o aporte do carro.",
+      });
+    }
+    return {
+      allocations: rows.filter(row => row.amountCents > 0),
+      unallocatedCents: 0,
+    };
+  }
+
+  if (
+    input.phase === "CLEANUP" ||
+    input.phase === "CAR_PREPARATION" ||
+    input.phase === "CAR_PURCHASE_READY"
+  ) {
+    let remaining = input.amountCents;
+    const rows: AllocationDestination[] = [];
+    const gaps: Array<[AllocationDestination["destination"], number, string]> =
+      [
+        [
+          "overdue",
+          input.overdueCents ?? 0,
+          "Eliminar atrasos e credito caro.",
+        ],
+        [
+          "essential_bills",
+          input.essentialGapCents ?? 0,
+          "Cobrir contas essenciais ja cadastradas.",
+        ],
+        [
+          "operating_buffer",
+          input.operatingBufferGapCents ?? 0,
+          "Recompor o piso operacional de R$ 2.500.",
+        ],
+        [
+          "emergency_fund",
+          input.emergencyGapCents ?? 0,
+          "Completar a reserva protegida antes do carro.",
+        ],
+        [
+          "car_cash",
+          input.carCashGapCents ?? 0,
+          "Completar a entrada do carro.",
+        ],
+        [
+          "car_costs",
+          input.carCostsGapCents ?? 0,
+          "Separar documentacao, seguro e custos iniciais.",
+        ],
+      ];
+    gaps.forEach(([destination, gap, reason], index) => {
+      const amountCents = Math.min(remaining, Math.max(0, gap));
+      if (amountCents > 0) {
+        rows.push({ destination, amountCents, priority: index + 1, reason });
+        remaining -= amountCents;
+      }
+    });
+    if (remaining > 0) {
+      const destination =
+        input.phase === "CAR_PURCHASE_READY" ? "car_cash" : "emergency_fund";
+      rows.push({
+        destination,
+        amountCents: remaining,
+        priority: 20,
+        reason:
+          input.phase === "CAR_PURCHASE_READY"
+            ? "Margem adicional para reduzir o financiamento."
+            : "Excedente protegido ate a proxima revisao do plano.",
+      });
+      remaining = 0;
+    }
+    return { allocations: rows, unallocatedCents: remaining };
+  }
+
+  const splits =
+    input.phase === "POST_CAR_RESERVE"
+      ? ([70, 20, 10] as const)
+      : input.phase === "WEALTH_WITH_CAR_DEBT"
+        ? ([50, 30, 20] as const)
+        : ([70, 20, 10] as const);
+  const first = Math.floor((input.amountCents * splits[0]) / 100);
+  const second = Math.floor((input.amountCents * splits[1]) / 100);
+  const third = input.amountCents - first - second;
+  const destinations: AllocationDestination["destination"][] =
+    input.phase === "POST_CAR_RESERVE"
+      ? ["emergency_fund", "car_amortization", "business_growth"]
+      : input.phase === "WEALTH_WITH_CAR_DEBT"
+        ? ["investments", "car_amortization", "business_growth"]
+        : ["investments", "business_growth", "quality_of_life"];
+  return {
+    allocations: [first, second, third].map((amountCents, index) => ({
+      destination: destinations[index],
+      amountCents,
+      priority: index + 1,
+      reason: "Politica percentual da fase financeira atual.",
+    })),
+    unallocatedCents: 0,
+  };
+}
+
+export function calculateFinancialIndependence(input: {
+  monthlySpendingCents: number;
+  investableNetWorthCents: number;
+  withdrawalRateBasisPoints?: number;
+}) {
+  assertNonNegativeCents(input.monthlySpendingCents, "monthlySpendingCents");
+  assertNonNegativeCents(
+    input.investableNetWorthCents,
+    "investableNetWorthCents"
+  );
+  const rate = input.withdrawalRateBasisPoints ?? 350;
+  if (!Number.isInteger(rate) || rate <= 0 || rate > 2_000)
+    throw new Error("withdrawalRateBasisPoints invalido");
+  const annualSpendingCents = input.monthlySpendingCents * 12;
+  const targetRealCents = Math.ceil(
+    (annualSpendingCents * BASIS_POINTS_TOTAL) / rate
+  );
+  const sustainableAnnualCents = Math.floor(
+    (input.investableNetWorthCents * rate) / BASIS_POINTS_TOTAL
+  );
+  return {
+    annualSpendingCents,
+    targetRealCents,
+    sustainableMonthlyCents: Math.floor(sustainableAnnualCents / 12),
+    ratioBasisPoints:
+      targetRealCents === 0
+        ? 0
+        : Math.min(
+            BASIS_POINTS_TOTAL,
+            Math.floor(
+              (input.investableNetWorthCents * BASIS_POINTS_TOTAL) /
+                targetRealCents
+            )
+          ),
+  };
+}
+
+export function calculateYearsToFinancialTarget(input: {
+  targetCents: number;
+  currentCents: number;
+  monthlyContributionCents: number;
+  annualRealReturnBasisPoints?: number;
+}) {
+  [
+    input.targetCents,
+    input.currentCents,
+    input.monthlyContributionCents,
+  ].forEach((value, index) =>
+    assertNonNegativeCents(value, `projectionValue${index}`)
+  );
+  if (input.currentCents >= input.targetCents) return 0;
+  if (input.monthlyContributionCents === 0) return null;
+  const annualRate = (input.annualRealReturnBasisPoints ?? 500) / 10_000;
+  const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;
+  const numerator =
+    input.targetCents * monthlyRate + input.monthlyContributionCents;
+  const denominator =
+    input.currentCents * monthlyRate + input.monthlyContributionCents;
+  const months =
+    monthlyRate === 0
+      ? Math.ceil(
+          (input.targetCents - input.currentCents) /
+            input.monthlyContributionCents
+        )
+      : Math.ceil(
+          Math.log(numerator / denominator) / Math.log(1 + monthlyRate)
+        );
+  return Math.round((months / 12) * 10) / 10;
+}
+
+export function determineFinancialRiskLevel(input: {
+  overdueCents: number;
+  overdraftUsedCents: number;
+  reserveMonths: number;
+  variableBudgetUsedPercent: number;
+  incomeLost?: boolean;
+}): "green" | "yellow" | "red" {
+  if (
+    input.overdueCents > 0 ||
+    input.overdraftUsedCents > 0 ||
+    input.reserveMonths < 3 ||
+    input.incomeLost
+  )
+    return "red";
+  if (input.reserveMonths < 6 || input.variableBudgetUsedPercent > 90)
+    return "yellow";
+  return "green";
 }

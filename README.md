@@ -4,10 +4,13 @@ SaaS financeiro multi-tenant com painel web e analista financeiro pelo WhatsApp.
 
 ## O que está implementado
 
-- cockpit em `/planejamento` com resumo, projeções, orçamento, transações, reserva, dívidas, metas familiares, projetos, carro, importação Santander e auditoria;
-- perfil idempotente de Raphael, aplicado explicitamente pelo painel, com contas, categorias, recorrências, dívida Asaas manual, metas A/B/C e tarefas de confirmação;
+- cockpit em `/planejamento` com resumo, agenda operacional, visão vitalícia, projeções, orçamento, transações, reserva, dívidas, metas familiares, projetos, carro, importação Santander e auditoria;
+- perfil idempotente **Raphael V3**, aplicado explicitamente pelo painel, com contas PF/PJ, piso operacional, fundos do carro, categorias, dívida Asaas apenas manual, metas A/B/C, crédito, fases e tarefas de confirmação;
+- livro operacional de contas a pagar/receber com baixa parcial ou total, recorrência mensal/quinto dia útil, parcelamento, cartão, cancelamento por escopo, idempotência e desfazer auditado;
 - transações e transferências internas auditáveis, proteção da reserva e `desfazer` por reversão em até 15 minutos;
-- motor “posso comprar?”, simulador completo do carro e projeções conservadora/base/crescimento/agressiva;
+- motor determinístico de fases e alocação de renda, sem somar recebíveis esperados ao saldo confirmado;
+- motor “posso comprar?”, simulador V3 do carro com portões absolutos e projeções conservadora/base/crescimento/agressiva;
+- cadastro auditável de ativos, avaliações, troca, cotações de veículo/seguro/financiamento, saúde de crédito, carteira, dividendos e meta dinâmica de independência financeira;
 - projetos com pipeline, parcelas e split configurável, inicialmente 15% impostos, 10% custos e 75% metas;
 - importador Santander PJ em CSV Windows-1252/UTF-8, valores em centavos, revisão de ambiguidades e deduplicação por hash;
 - agenda com contas e recebimentos, orçamento, revisão semanal, pequenos gastos, pipeline comercial, fechamento mensal, horário silencioso, opt-in/opt-out e retry;
@@ -72,13 +75,14 @@ As migrações novas são:
 - `0019_financial_saas_core.sql`: tenants e núcleo financeiro canônico;
 - `0020_financial_notification_consent.sql`: opt-in de notificações;
 - `0021_whatsapp_outbox.sql`: fila persistente de saída do WhatsApp;
-- `0022_confused_thunderbolt_ross.sql`: idempotência de operações auditadas.
+- `0022_confused_thunderbolt_ross.sql`: idempotência de operações auditadas;
+- `0023_furry_living_tribunal.sql`: livro operacional completo e plano financeiro vitalício V3.
 
 O deploy Railway executa `corepack pnpm db:migrate` antes de iniciar. Valores monetários canônicos são `bigint` em centavos, lidos pelo ORM como inteiros seguros; não use `float` ou valores em reais nesses contratos.
 
 ## Perfil de Raphael e Santander
 
-Após entrar no app, abra **Planejamento IA** e selecione **Aplicar plano de Raphael**. A operação é idempotente e não sobrescreve saldos ou progresso já confirmados.
+Após entrar no app, abra **Planejamento IA** e selecione **Aplicar plano vitalício Raphael V3**. A operação é idempotente, não sobrescreve saldos ou progresso já confirmados e mantém valores ainda não validados como estimados, esperados ou pendentes de confirmação.
 
 Na aba **Santander PJ**:
 
@@ -115,9 +119,11 @@ Importe [n8n/financepro-agent.workflow.json](n8n/financepro-agent.workflow.json)
 
 No FinancePRO, configure `N8N_AGENT_WEBHOOK_URL` e `N8N_AGENT_SECRET`. O endpoint privado é `POST /api/n8n/finance/tool` e exige simultaneamente o segredo e `X-Agent-Session` assinado pelo FinancePRO.
 
-As ferramentas canônicas cobrem snapshot, fluxo, orçamento, transações, transferências, categorização, desfazer, alocação, recorrências, dívidas, tarefas, metas, projetos, compra, carro, lembretes e preferências de mensagens. Escritas explícitas de baixo risco são diretas e auditadas. Reserva e exclusões destrutivas exigem confirmação adicional.
+As ferramentas canônicas cobrem snapshot, contexto de cadastro, agenda, contas financeiras, contas a pagar/receber, recorrências, parcelas, cartão, baixas parciais, transferências internas, desfazer, alocação, crédito, fases, ativos, cotações do carro, carteira, dividendos, compra, lembretes e preferências. Escritas explícitas de baixo risco são idempotentes e auditadas. Reserva, cancelamentos amplos, arquivamento patrimonial, suitability e mudança de fase exigem confirmação adicional.
 
-Detalhes do canal: [docs/financial-ai-whatsapp.md](docs/financial-ai-whatsapp.md).
+O workflow do agente foi ampliado para o contrato V3. Em uma instalação n8n já existente, reimporte [n8n/financepro-agent.workflow.json](n8n/financepro-agent.workflow.json), preserve as credenciais, publique a nova versão e envie uma mensagem de teste.
+
+Detalhes do canal: [docs/financial-ai-whatsapp.md](docs/financial-ai-whatsapp.md). Mapeamento do plano mestre: [docs/plano-vitalicio-v3.md](docs/plano-vitalicio-v3.md).
 
 ## Scheduler
 

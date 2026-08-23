@@ -3,9 +3,14 @@ import {
   brazilianNationalHolidayDates,
   calculateCarReadiness,
   calculateEmergencyFundTarget,
+  calculateFinancialIndependence,
   calculateProjectSplit,
   calculatePurchaseDecision,
   calculateReserveMonths,
+  calculateV3IncomeAllocation,
+  calculateYearsToFinancialTarget,
+  determineFinancialPhase,
+  determineFinancialRiskLevel,
   getNthBusinessDay,
   parseBrazilianMoneyExpression,
   savingsRatePercent,
@@ -109,8 +114,8 @@ describe("financial core", () => {
 
   it("blocks the car while mandatory conditions are pending", () => {
     const result = calculateCarReadiness({
-      vehiclePriceCents: 9_000_000,
-      downPaymentCents: 2_000_000,
+      vehiclePriceCents: 13_000_000,
+      downPaymentCents: 3_000_000,
       installmentCents: 300_000,
       termMonths: 36,
       cetAnnualBasisPoints: 1800,
@@ -139,8 +144,8 @@ describe("financial core", () => {
 
   it("approves the car only with all gates satisfied", () => {
     const result = calculateCarReadiness({
-      vehiclePriceCents: 9_000_000,
-      downPaymentCents: 2_000_000,
+      vehiclePriceCents: 13_000_000,
+      downPaymentCents: 3_000_000,
       installmentCents: 280_000,
       termMonths: 36,
       cetAnnualBasisPoints: 1700,
@@ -161,6 +166,18 @@ describe("financial core", () => {
       confirmedMonthlyIncomeCents: 2_600_000,
       livingCostAfterCarCents: 1_538_000,
       currentOperatingBalanceCents: 500_000,
+      overdueDebtCents: 0,
+      creditIssueResolved: true,
+      cleanCreditMonths: 3,
+      income2027Confirmed: true,
+      minimumReserveTargetCents: 4_908_000,
+      cashDownPaymentCents: 3_000_000,
+      acquisitionCostFundCents: 300_000,
+      tradeInNetCents: 2_000_000,
+      financedAmountCents: 8_000_000,
+      quotesComplete: true,
+      reconciledDays: 60,
+      concurrentFormalProposals: 1,
     });
     expect(result.blockers).toEqual([]);
     expect(result.readinessScore).toBe(100);
@@ -192,5 +209,111 @@ describe("financial core", () => {
   it("calculates savings rate from confirmed values", () => {
     expect(savingsRatePercent(2_600_000, 981_600, 500_400, 0)).toBe(57);
     expect(savingsRatePercent(0, 0, 0, 0)).toBe(0);
+  });
+
+  it("allocates the two fixed income receipts exactly as the V3 plan", () => {
+    expect(
+      calculateV3IncomeAllocation({
+        amountCents: 2_000_000,
+        incomeKind: "salary_fixed",
+        phase: "CAR_PREPARATION",
+      }).allocations.map(row => [row.destination, row.amountCents])
+    ).toEqual([
+      ["essential_bills", 818_000],
+      ["emergency_fund", 760_000],
+      ["car_cash", 422_000],
+    ]);
+    expect(
+      calculateV3IncomeAllocation({
+        amountCents: 600_000,
+        incomeKind: "salary_fixed",
+        phase: "CAR_PREPARATION",
+      }).allocations.map(row => [row.destination, row.amountCents])
+    ).toEqual([
+      ["variable_budget", 300_000],
+      ["emergency_fund", 221_600],
+      ["car_cash", 78_400],
+    ]);
+  });
+
+  it("uses the cleanup waterfall before car or investments", () => {
+    const result = calculateV3IncomeAllocation({
+      amountCents: 1_000_000,
+      incomeKind: "bonus",
+      phase: "CLEANUP",
+      overdueCents: 70_000,
+      essentialGapCents: 400_000,
+      operatingBufferGapCents: 250_000,
+      emergencyGapCents: 1_000_000,
+    });
+    expect(result.allocations.slice(0, 4).map(row => row.destination)).toEqual([
+      "overdue",
+      "essential_bills",
+      "operating_buffer",
+      "emergency_fund",
+    ]);
+    expect(
+      result.allocations.reduce((sum, row) => sum + row.amountCents, 0)
+    ).toBe(1_000_000);
+  });
+
+  it("moves through the lifelong phases only when deterministic gates pass", () => {
+    const base = {
+      overdueDebtCents: 0,
+      overdraftUsedCents: 0,
+      operatingBufferCents: 250_000,
+      operatingBufferTargetCents: 250_000,
+      emergencyFundCents: 4_908_000,
+      minimumEmergencyFundCents: 4_908_000,
+      postCarEmergencyFundCents: 7_428_000,
+      carCashCents: 3_000_000,
+      carCashTargetCents: 3_000_000,
+      carCostsCents: 300_000,
+      carCostsTargetCents: 300_000,
+      cleanCreditMonths: 3,
+      futureIncomeConfirmed: true,
+      vehiclePurchased: false,
+      carAllInMonthlyCents: 500_000,
+      carMonthlyLimitCents: 500_000,
+      carDebtCents: 0,
+      financialIndependenceRatioBasisPoints: 0,
+    };
+    expect(determineFinancialPhase(base)).toBe("CAR_PURCHASE_READY");
+    expect(determineFinancialPhase({ ...base, overdueDebtCents: 1 })).toBe(
+      "CLEANUP"
+    );
+    expect(
+      determineFinancialPhase({
+        ...base,
+        vehiclePurchased: true,
+        emergencyFundCents: 7_428_000,
+      })
+    ).toBe("WEALTH_ACCUMULATION");
+  });
+
+  it("calculates the real financial independence target and risk light", () => {
+    const result = calculateFinancialIndependence({
+      monthlySpendingCents: 1_538_000,
+      investableNetWorthCents: 0,
+      withdrawalRateBasisPoints: 350,
+    });
+    expect(result.targetRealCents).toBe(527_314_286);
+    expect(result.ratioBasisPoints).toBe(0);
+    expect(
+      calculateYearsToFinancialTarget({
+        targetCents: 1_200_000,
+        currentCents: 0,
+        monthlyContributionCents: 100_000,
+        annualRealReturnBasisPoints: 0,
+      })
+    ).toBe(1);
+    expect(
+      determineFinancialRiskLevel({
+        overdueCents: 1,
+        overdraftUsedCents: 0,
+        reserveMonths: 6,
+        variableBudgetUsedPercent: 0,
+      })
+    ).toBe("red");
   });
 });
