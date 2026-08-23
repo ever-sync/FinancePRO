@@ -31,6 +31,9 @@ const WhatsAppConversas = lazy(() => import("./pages/WhatsAppConversas"));
 const WhatsAppAutomacao = lazy(() => import("./pages/WhatsAppAutomacao"));
 const WhatsAppPlanos = lazy(() => import("./pages/WhatsAppPlanos"));
 const WhatsAppAuditoria = lazy(() => import("./pages/WhatsAppAuditoria"));
+const PlanejamentoFinanceiro = lazy(
+  () => import("./pages/PlanejamentoFinanceiro")
+);
 
 function RouteFallback() {
   return (
@@ -62,6 +65,7 @@ function Router() {
           <Route path="/dividas" component={Dividas} />
           <Route path="/investimentos" component={Investimentos} />
           <Route path="/fundo-reserva" component={FundoReserva} />
+          <Route path="/planejamento" component={PlanejamentoFinanceiro} />
           <Route path="/importador" component={ImportadorFinanceiro} />
           <Route
             path="/integracoes-bancarias"

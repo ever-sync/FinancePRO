@@ -9,6 +9,7 @@ import * as financialAdvisor from "./financial-advisor";
 import * as financialImport from "./financial-import";
 import { COOKIE_NAME } from "../shared/const";
 import { getConfiguredAppOrigin } from "./_core/env";
+import { financialCoreRouter } from "./routers/financial-core";
 
 const monthSchema = z.number().int().min(1).max(12);
 const yearSchema = z.number().int().min(1900).max(2200);
@@ -53,6 +54,7 @@ const isoDateSchema = z
 
 export const appRouter = router({
   system: systemRouter,
+  financialCore: financialCoreRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: protectedProcedure.mutation(({ ctx }) => {

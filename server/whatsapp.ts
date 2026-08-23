@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as whatsappDb from "./db/whatsapp";
+import * as canonicalDb from "./db/financial-core";
 import * as financialAdvisor from "./financial-advisor";
 import {
   detectFinancialAssistantIntent,
@@ -33,6 +34,40 @@ type AnyRecord = Record<string, any>;
 type WhatsAppProvider = "uazapi" | "baileys";
 
 type AssistantIntent = FinancialAssistantIntent;
+
+function normalizePreferenceMessage(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isNotificationOptOutMessage(value: string) {
+  const normalized = normalizePreferenceMessage(value);
+  return [
+    "parar mensagens",
+    "pare as mensagens",
+    "pare mensagens",
+    "nao quero receber mensagens",
+    "cancelar notificacoes",
+    "desativar notificacoes",
+    "stop",
+  ].includes(normalized);
+}
+
+function isNotificationOptInMessage(value: string) {
+  const normalized = normalizePreferenceMessage(value);
+  return [
+    "voltar mensagens",
+    "reativar mensagens",
+    "ativar notificacoes",
+    "quero receber mensagens",
+    "retomar notificacoes",
+  ].includes(normalized);
+}
 
 type ExtractedInboundMessage = {
   instanceId: string;
@@ -801,6 +836,7 @@ async function sendOutgoingMessage(params: {
   detectedIntent?: string | null;
   requiresConfirmation?: boolean;
   metadata?: AnyRecord;
+  idempotencyKey?: string;
 }) {
   const {
     integration,
@@ -811,44 +847,128 @@ async function sendOutgoingMessage(params: {
     detectedIntent,
     requiresConfirmation,
     metadata,
+    idempotencyKey,
   } = params;
 
   if (!integration) {
     throw new Error("Integracao WhatsApp nao encontrada.");
   }
 
-  const response =
-    integration.provider === "baileys"
-      ? await getBaileysGatewayClient(integration).sendTextMessage(
-          phoneNumber,
-          text
-        )
-      : await getUazapiClient(integration).sendTextMessage(phoneNumber, text);
-  const responsePayload = response as AnyRecord | null;
-  const providerMessageId = String(
-    responsePayload?.id ||
-      responsePayload?.messageId ||
-      responsePayload?.messageid ||
-      responsePayload?.response?.id ||
-      randomUUID()
-  );
-
-  const message = await whatsappDb.createWhatsAppMessage({
-    userId: integration.userId,
+  const scope = await canonicalDb.resolveFinancialScope(integration.userId);
+  const queuedAt = new Date();
+  const queued = await whatsappDb.createWhatsAppOutboxItem({
+    ...scope,
     integrationId: integration.id,
     contactId,
     threadId,
-    providerMessageId,
-    direction: "outbound",
-    status: "sent",
+    phoneNumber,
     textContent: text,
     detectedIntent: detectedIntent ?? null,
     requiresConfirmation: requiresConfirmation ?? false,
-    rawPayload: JSON.stringify(metadata ?? responsePayload),
+    metadata: metadata ?? null,
+    idempotencyKey: idempotencyKey ?? `outbound:${randomUUID()}`,
+    status: "pending",
+    nextAttemptAt: queuedAt,
   });
+  if (queued.item.status === "sent" && queued.item.messageId) {
+    const existing = await whatsappDb.getWhatsAppMessageById(
+      integration.userId,
+      queued.item.messageId
+    );
+    if (existing) return existing;
+  }
+  const claimed = await whatsappDb.claimWhatsAppOutboxItem(
+    queued.item.id,
+    new Date()
+  );
+  if (!claimed) {
+    throw new Error("Mensagem ja esta em processamento na fila WhatsApp");
+  }
+  return dispatchClaimedWhatsAppOutboxItem(claimed, integration);
+}
 
-  await whatsappDb.touchWhatsAppOutbound(integration.id);
-  return message;
+async function dispatchClaimedWhatsAppOutboxItem(
+  item: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.claimWhatsAppOutboxItem>>
+  >,
+  knownIntegration?: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >
+) {
+  const integration =
+    knownIntegration ??
+    (await whatsappDb.getWhatsAppIntegrationById(item.integrationId));
+  if (!integration || !integration.enabled) {
+    const message = "Integracao WhatsApp indisponivel";
+    await whatsappDb.markWhatsAppOutboxFailed(item.id, item.attempts, message);
+    throw new Error(message);
+  }
+  try {
+    const response =
+      integration.provider === "baileys"
+        ? await getBaileysGatewayClient(integration).sendTextMessage(
+            item.phoneNumber,
+            item.textContent
+          )
+        : await getUazapiClient(integration).sendTextMessage(
+            item.phoneNumber,
+            item.textContent
+          );
+    const responsePayload = response as AnyRecord | null;
+    const providerMessageId = String(
+      responsePayload?.id ||
+        responsePayload?.messageId ||
+        responsePayload?.messageid ||
+        responsePayload?.response?.id ||
+        randomUUID()
+    );
+    const message = await whatsappDb.createWhatsAppMessage({
+      userId: integration.userId,
+      integrationId: integration.id,
+      contactId: item.contactId,
+      threadId: item.threadId,
+      providerMessageId,
+      direction: "outbound",
+      status: "sent",
+      textContent: item.textContent,
+      detectedIntent: item.detectedIntent,
+      requiresConfirmation: item.requiresConfirmation,
+      rawPayload: JSON.stringify({
+        metadata: item.metadata,
+        providerResponse: responsePayload,
+        outboxId: item.id,
+      }),
+    });
+    await whatsappDb.markWhatsAppOutboxSent(item.id, {
+      providerMessageId,
+      messageId: message.id,
+    });
+    await whatsappDb.touchWhatsAppOutbound(integration.id);
+    return message;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Falha no envio WhatsApp";
+    await whatsappDb.markWhatsAppOutboxFailed(item.id, item.attempts, message);
+    throw error;
+  }
+}
+
+export async function dispatchWhatsAppOutboxQueue(limit = 50) {
+  const now = new Date();
+  const due = await whatsappDb.listDueWhatsAppOutbox(now, limit);
+  let sent = 0;
+  let failed = 0;
+  for (const candidate of due) {
+    const claimed = await whatsappDb.claimWhatsAppOutboxItem(candidate.id, now);
+    if (!claimed) continue;
+    try {
+      await dispatchClaimedWhatsAppOutboxItem(claimed);
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { due: due.length, sent, failed };
 }
 
 async function createNotification(params: {
@@ -2084,6 +2204,39 @@ async function processInboundMessages(
       continue;
     }
 
+    const notificationPreference = isNotificationOptOutMessage(incoming.text)
+      ? false
+      : isNotificationOptInMessage(incoming.text)
+        ? true
+        : null;
+    if (notificationPreference != null) {
+      const financialScope = await canonicalDb.resolveFinancialScope(
+        integration.userId
+      );
+      await canonicalDb.setFinancialNotificationOptIn(
+        financialScope,
+        notificationPreference,
+        {
+          type: "assistant",
+          id: `whatsapp:${integration.id}:${thread.id}`,
+        }
+      );
+      await sendOutgoingMessage({
+        integration,
+        contactId: contact.id,
+        threadId: thread.id,
+        phoneNumber: contact.phoneNumber,
+        text: notificationPreference
+          ? "Mensagens proativas reativadas. Vou voltar a enviar lembretes e resumos respeitando o horario de silencio."
+          : "Mensagens proativas desativadas. Nao enviarei novas cobrancas ou lembretes; voce ainda pode falar comigo quando quiser.",
+        detectedIntent: notificationPreference
+          ? "notifications_opt_in"
+          : "notifications_opt_out",
+      });
+      processed += 1;
+      continue;
+    }
+
     const pendingRun = await whatsappDb.getLatestPendingAssistantRun(
       integration.userId,
       thread.id
@@ -2904,10 +3057,63 @@ export async function runEligibleAssistantAutomationsForUser(userId: number) {
   };
 }
 
+function isTimeInsideQuietHours(
+  hour: number,
+  minute: number,
+  quietStart: string,
+  quietEnd: string
+) {
+  const toMinutes = (value: string, fallback: number) => {
+    const match = /^(\d{2}):(\d{2})$/.exec(value);
+    if (!match) return fallback;
+    return Number(match[1]) * 60 + Number(match[2]);
+  };
+  const current = hour * 60 + minute;
+  const start = toMinutes(quietStart, 21 * 60);
+  const end = toMinutes(quietEnd, 8 * 60);
+  if (start === end) return false;
+  return start < end
+    ? current >= start && current < end
+    : current >= start || current < end;
+}
+
+async function canSendProactiveMessage(
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegration>>
+  >,
+  now = new Date()
+) {
+  const scope = await canonicalDb.resolveFinancialScope(integration.userId);
+  const profile = await canonicalDb.getFinancialProfile(scope);
+  if (!profile) return true;
+  if (!profile.notificationsOptIn) return false;
+  if (
+    profile.notificationsPausedUntil &&
+    profile.notificationsPausedUntil.getTime() > now.getTime()
+  ) {
+    return false;
+  }
+  const local = new Intl.DateTimeFormat("en-US", {
+    timeZone: profile.timezone || integration.timezone || DEFAULT_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const hour = Number(local.find(part => part.type === "hour")?.value ?? 0);
+  const minute = Number(local.find(part => part.type === "minute")?.value ?? 0);
+  return !isTimeInsideQuietHours(
+    hour,
+    minute,
+    profile.quietHoursStart,
+    profile.quietHoursEnd
+  );
+}
+
 export async function runFinancialDailyCron() {
   const integrations = await whatsappDb.listEnabledWhatsAppIntegrations();
   let processed = 0;
   for (const integration of integrations) {
+    if (!(await canSendProactiveMessage(integration))) continue;
     const now = getPartsInTimeZone(
       new Date(),
       integration.timezone || DEFAULT_TIMEZONE
@@ -2930,6 +3136,7 @@ export async function runFinancialMonthStartCron() {
   const integrations = await whatsappDb.listEnabledWhatsAppIntegrations();
   let processed = 0;
   for (const integration of integrations) {
+    if (!(await canSendProactiveMessage(integration))) continue;
     const now = getPartsInTimeZone(
       new Date(),
       integration.timezone || DEFAULT_TIMEZONE
@@ -2950,6 +3157,7 @@ export async function runFinancialMonthEndCron() {
   const integrations = await whatsappDb.listEnabledWhatsAppIntegrations();
   let processed = 0;
   for (const integration of integrations) {
+    if (!(await canSendProactiveMessage(integration))) continue;
     const now = getPartsInTimeZone(
       new Date(),
       integration.timezone || DEFAULT_TIMEZONE
@@ -2980,6 +3188,9 @@ export async function sendImmediateFinancialAlert(params: {
   const integration = await whatsappDb.getWhatsAppIntegration(params.userId);
   if (!integration || !integration.enabled)
     return { success: false, skipped: true };
+  if (!(await canSendProactiveMessage(integration))) {
+    return { success: false, skipped: true, reason: "notifications_paused" };
+  }
 
   const existing = await whatsappDb.getNotificationEventByDedupeKey(
     integration.id,
@@ -3018,4 +3229,78 @@ export async function sendImmediateFinancialAlert(params: {
     status: "enviado",
   });
   return { success: true };
+}
+
+export async function sendScheduledFinancialMessage(params: {
+  userId: number;
+  text: string;
+  templateKey: string;
+  idempotencyKey: string;
+}) {
+  const integration = await whatsappDb.getWhatsAppIntegration(params.userId);
+  if (!integration || !integration.enabled || !integration.authorizedPhone) {
+    return {
+      success: false as const,
+      skipped: true as const,
+      reason: "integration_inactive",
+    };
+  }
+  if (!(await canSendProactiveMessage(integration))) {
+    return {
+      success: false as const,
+      skipped: true as const,
+      reason: "notifications_paused",
+    };
+  }
+  const existing = await whatsappDb.getNotificationEventByDedupeKey(
+    integration.id,
+    params.idempotencyKey
+  );
+  if (existing) {
+    return {
+      success: true as const,
+      deduped: true as const,
+      messageId: existing.relatedMessageId,
+    };
+  }
+  const contact = await whatsappDb.upsertWhatsAppContact(params.userId, {
+    integrationId: integration.id,
+    phoneNumber: integration.authorizedPhone,
+    displayName: "Titular",
+    isAuthorized: true,
+  });
+  const thread = await whatsappDb.getOrCreateAssistantThread(
+    params.userId,
+    integration.id,
+    contact.id
+  );
+  const message = await sendOutgoingMessage({
+    integration,
+    contactId: contact.id,
+    threadId: thread.id,
+    phoneNumber: contact.phoneNumber,
+    text: params.text.slice(0, 3_900),
+    detectedIntent: params.templateKey,
+    metadata: {
+      source: "canonical_scheduler",
+      idempotencyKey: params.idempotencyKey,
+    },
+    idempotencyKey: `scheduled:${params.idempotencyKey}`,
+  });
+  await createNotification({
+    integrationId: integration.id,
+    userId: params.userId,
+    relatedMessageId: message.id,
+    type: params.templateKey,
+    scope: "canonical_automation",
+    title: "Assistente financeiro",
+    messageBody: params.text.slice(0, 1_000),
+    dedupeKey: params.idempotencyKey,
+    status: "enviado",
+  });
+  return {
+    success: true as const,
+    deduped: false as const,
+    messageId: message.id,
+  };
 }

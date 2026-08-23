@@ -1,129 +1,167 @@
-# Assistente financeiro via WhatsApp
+# Analista financeiro via WhatsApp
 
-O FinancePro usa uma integração Uazapi para conversar com o titular pelo WhatsApp e o n8n para orquestrar o agente. O backend continua sendo a única autoridade sobre identidade, dados e mudanças: o modelo lê somente o usuário vinculado à instância autorizada e toda mutação exige um código temporário.
+O FinancePRO recebe mensagens pelo gateway Baileys, resolve o titular pela integração autorizada e usa o n8n para interpretar a conversa. O backend continua sendo a autoridade sobre identidade, saldo, regras financeiras e escrita no banco.
 
-## Arquitetura
+## Fluxo
 
-1. A Uazapi envia a mensagem ao webhook protegido do FinancePRO.
-2. O FinancePRO valida instância, token, número autorizado e idempotência.
-3. O backend cria uma sessão assinada, curta e presa à integração/conversa e chama o webhook privado do n8n.
-4. O agente consulta o contexto ou os registros pela API de ferramentas do FinancePRO.
-5. Leituras retornam imediatamente. Criação, edição e exclusão geram um comando pendente.
-6. O titular responde `CONFIRMAR NNNNNN`; somente então a API executa a mudança em transação e grava o resultado na auditoria.
-7. Se o n8n estiver indisponível, o FinancePRO usa automaticamente o assistente interno existente.
+1. O gateway envia o evento ao webhook do FinancePRO com `Authorization: Bearer <WHATSAPP_WEBHOOK_SECRET>`.
+2. O backend valida segredo, instância, número autorizado e idempotência do evento.
+3. O FinancePRO cria ou reutiliza contato, conversa e mensagem recebida.
+4. Uma sessão curta e assinada, presa à integração e à conversa, acompanha a chamada ao n8n.
+5. O agente consulta o snapshot atual e chama ferramentas privadas com essa sessão.
+6. O backend valida o contrato, aplica `tenantId + userId`, grava a mutação e sua auditoria.
+7. A resposta entra na outbox persistente antes de ser enviada pelo gateway.
+8. Se o n8n falhar, o assistente interno continua disponível como fallback.
 
-## Pré-requisitos
+O modelo não recebe autorização para movimentar dinheiro e não pode fornecer um `userId` alternativo. Toda transferência é somente um par de registros internos no FinancePRO.
 
-- PostgreSQL com as migrações aplicadas;
-- projeto Supabase para autenticação;
-- instância Uazapi com URL pública HTTPS, `instanceId` e token;
-- endpoint de IA compatível com a configuração em `BUILT_IN_FORGE_API_*`;
-- n8n com o workflow [financepro-agent.workflow.json](../n8n/financepro-agent.workflow.json), uma credencial OpenAI e uma credencial Header Auth exclusivas;
-- domínio público HTTPS da aplicação.
+## Configuração do gateway Baileys
 
-Use [.env.example](../.env.example) como referência. Em Railway, `APP_URL` pode ser omitida quando `RAILWAY_PUBLIC_DOMAIN` estiver disponível. As chaves `VITE_SUPABASE_*` precisam estar presentes durante o build do frontend.
+Publique `services/baileys-gateway` como serviço separado. Variáveis obrigatórias:
 
-Gere segredos independentes, com pelo menos 32 caracteres:
-
-```bash
-openssl rand -hex 32
+```dotenv
+DATABASE_URL=postgresql://...
+AUTH_ENCRYPTION_KEY=<32 bytes em hex ou base64>
+GATEWAY_API_KEY=<segredo com pelo menos 32 bytes>
+FINANCEPRO_WEBHOOK_URL=https://app.example.com/api/whatsapp/baileys/webhook
+FINANCEPRO_WEBHOOK_SECRET=<mesmo WHATSAPP_WEBHOOK_SECRET do app>
+SESSION_ID=financepro
+LOG_LEVEL=info
 ```
 
-Configure valores diferentes em `CRON_SECRET`, `WHATSAPP_WEBHOOK_SECRET` e `N8N_AGENT_SECRET`.
+No serviço FinancePRO:
 
-No FinancePRO, configure também:
+```dotenv
+BAILEYS_GATEWAY_URL=https://gateway.example.com
+BAILEYS_GATEWAY_API_KEY=<mesmo GATEWAY_API_KEY>
+WHATSAPP_WEBHOOK_SECRET=<segredo diferente dos demais>
+```
+
+Depois:
+
+1. abra **WhatsApp > Integração**;
+2. escolha `Baileys`;
+3. informe URL do gateway, chave e número autorizado com DDI/DDD;
+4. salve a integração;
+5. clique em **Solicitar código** e vincule em _WhatsApp > Aparelhos conectados_;
+6. confira o status e envie uma mensagem de teste.
+
+O gateway guarda as credenciais de sessão criptografadas e persiste eventos destinados ao FinancePRO em uma outbox própria. O serviço não deve ser escalado para várias réplicas com o mesmo `SESSION_ID`.
+
+## Configuração do n8n
+
+Importe [financepro-agent.workflow.json](../n8n/financepro-agent.workflow.json) como inativo. Configure:
+
+- credencial do modelo de IA;
+- credencial Header Auth `X-Agent-Secret` com o mesmo `N8N_AGENT_SECRET` do FinancePRO;
+- webhook de produção do workflow;
+- URL privada do FinancePRO no nó de ferramentas, quando os serviços estiverem no mesmo projeto Railway.
+
+No FinancePRO:
 
 ```dotenv
 N8N_AGENT_WEBHOOK_URL=http://n8n-webhook.railway.internal:5678/webhook/financepro-agent
+N8N_AGENT_SECRET=<segredo com pelo menos 32 bytes>
 N8N_AGENT_TIMEOUT_MS=45000
 ```
 
-O workflow de produção chama o FinancePRO pela rede privada da Railway em `http://financepro.railway.internal:8080`. O segredo nunca deve ser colocado no JSON versionado do workflow; ele fica em credencial criptografada do n8n.
+Antes de ativar, valide o health da ferramenta com a credencial configurada. Nunca grave segredo diretamente no JSON versionado do workflow.
 
-## Configuração da integração
-
-1. Entre em **WhatsApp > Integração**.
-2. Informe o `instanceId`, a URL HTTPS da Uazapi, o token e o número autorizado com DDI/DDD.
-3. Salve e execute **Testar conexão**.
-4. O backend registra automaticamente o webhook público, incluindo o segredo necessário para validar as chamadas.
-
-A aplicação rejeita URLs locais/privadas para evitar SSRF. Para uma Uazapi local durante desenvolvimento, habilite explicitamente `ALLOW_PRIVATE_UAZAPI_URLS=true`; essa opção não deve ser usada em produção.
-
-## Endpoints protegidos
-
-### Webhook Uazapi
-
-`POST /api/whatsapp/uazapi/webhook`
-
-O segredo é configurado automaticamente na URL cadastrada na Uazapi. Integrações que suportem cabeçalho também podem enviar `Authorization: Bearer <segredo>` ou `X-Webhook-Secret`.
-
-Mensagens repetidas são ignoradas pelo identificador do provedor. Apenas o número salvo como autorizado pode conversar com o agente e provocar ações financeiras.
-
-### Automações
-
-- `POST /api/cron/financial-daily`
-- `POST /api/cron/financial-month-start`
-- `POST /api/cron/financial-month-end`
-
-Envie `Authorization: Bearer <CRON_SECRET>` ou `X-Cron-Secret`. Sem um segredo forte configurado, os endpoints falham fechados com HTTP 503.
-
-### Ferramentas do agente n8n
+## API privada do agente
 
 `POST /api/n8n/finance/tool`
 
-O endpoint exige simultaneamente:
+Cabeçalhos obrigatórios, exceto sessão para `health`:
 
-- `X-Agent-Secret`, configurado como credencial Header Auth do n8n;
-- `X-Agent-Session`, token assinado pelo FinancePRO e válido por poucos minutos.
+```http
+X-Agent-Secret: <N8N_AGENT_SECRET>
+X-Agent-Session: <token curto emitido pelo FinancePRO>
+Content-Type: application/json
+```
 
-As ações disponíveis são `health`, `get_context`, `list_records`, `propose_change`, `execute_change` e `cancel_change`. O escopo vem exclusivamente da sessão assinada; `userId`, `integrationId` ou `threadId` enviados pelo modelo não podem ampliar o acesso.
+Ferramentas canônicas:
 
-Entidades suportadas: receitas, custos fixos e variáveis PJ/PF, funcionários, fornecedores e compras, dívidas, investimentos, reservas, clientes e serviços.
+- consultas: `get_financial_snapshot`, `get_upcoming_cashflow`, `get_budget_status`, `list_financial_transactions`;
+- contas e movimentos: `set_financial_account_balance`, `record_financial_transaction`, `record_financial_transfer`, `undo_financial_transaction`, `categorize_financial_transaction`, `allocate_income`;
+- plano: `create_financial_goal`, `update_financial_goal_item`, `update_recurring_cashflow`, `update_financial_debt`, `update_financial_task`;
+- projetos: `create_financial_project`, `confirm_project_payment`;
+- decisão: `simulate_purchase`, `simulate_car`;
+- agenda: `create_reminder`, `pause_notifications`, `set_notification_preference`.
 
-## Confirmação de mudanças
+Os valores dessas ferramentas são centavos inteiros. Uma expressão ambígua como “5000 mil” retorna erro de ambiguidade para o agente pedir confirmação.
 
-- toda criação, edição, baixa ou exclusão é preparada em `agent_commands`;
-- o código tem seis dígitos, expira em 15 minutos e só pode ser usado uma vez;
-- a combinação `userId + requestId` impede propostas duplicadas;
-- execução e mudança financeira ocorrem na mesma transação do banco;
-- códigos inválidos, expirados, de outra conversa ou já usados são recusados;
-- registros de reserva e investimento são lançamentos manuais. O sistema não faz PIX, TED, boleto nem qualquer transferência bancária.
+## Confirmação e desfazer
+
+Escritas explícitas de baixo risco — lançamento, categoria, saldo, meta, projeto, tarefa e confirmação de pagamento — podem ser executadas diretamente e ficam auditadas. O agente deve informar o resultado e oferecer `desfazer` quando houver transação.
+
+O comando `undo_financial_transaction` é aceito por 15 minutos e cria uma transação de reversão; o histórico original não é apagado.
+
+Exigem confirmação adicional:
+
+- retirada ou redução de conta protegida;
+- exclusões e mudanças destrutivas do cadastro legado;
+- qualquer pedido cujo valor, conta ou intenção esteja ambíguo.
+
+As frases exigidas pela API para reserva não devem ser inferidas pelo agente. Mesmo após confirmação, nenhum PIX, TED ou pagamento externo é executado.
+
+## Opt-in, pausa e silêncio
+
+As frases “parar mensagens”, “não quero mais lembretes” e equivalentes registram opt-out antes de chamar a IA. “Voltar mensagens” ou equivalente reativa o opt-in. A conversa iniciada pelo usuário continua disponível mesmo com mensagens proativas desligadas.
+
+Por padrão, mensagens agendadas ficam em silêncio das 21h às 8h no timezone do perfil. Durante esse período elas são adiadas, não descartadas. `pause_notifications` cria uma pausa temporária; `set_notification_preference` controla o consentimento contínuo.
+
+## Scheduler e filas
+
+Chame a cada 15 minutos:
+
+```http
+POST /api/cron/financial-automation
+Authorization: Bearer <CRON_SECRET>
+```
+
+O endpoint:
+
+- agenda contas, recebimentos esperados e tarefas;
+- alerta envelopes em 50%, 75%, 90% e 100%;
+- produz revisão semanal e resumo de pequenos gastos;
+- cobra pipeline de projetos na segunda, quarta e sexta;
+- produz fechamento mensal;
+- despacha notificações vencidas;
+- drena a outbox do WhatsApp.
+
+`scheduled_notifications` e `whatsapp_outbox` possuem chaves idempotentes. Falhas usam backoff exponencial; após oito tentativas o item vai para `dead_letter`. O modelo de entrega é pelo menos uma vez, porque nenhum provedor externo consegue participar da mesma transação PostgreSQL.
+
+## Endpoints públicos protegidos
+
+- `POST /api/whatsapp/baileys/webhook`;
+- `POST /api/whatsapp/uazapi/webhook` para compatibilidade;
+- `POST /api/cron/financial-automation`;
+- `POST /api/cron/financial-daily`;
+- `POST /api/cron/financial-month-start`;
+- `POST /api/cron/financial-month-end`.
+
+Webhook aceita Bearer ou `X-Webhook-Secret`; cron aceita Bearer ou `X-Cron-Secret`. Com segredo ausente ou menor que 32 caracteres, os endpoints falham fechados.
+
+## Diagnóstico
+
+- HTTP 400 no pareamento: salve a integração antes, confira DDI/DDD, status do gateway e se a sessão já está vinculada;
+- HTTP 401 no webhook: confira se os dois serviços usam o mesmo `WHATSAPP_WEBHOOK_SECRET`;
+- HTTP 401 na ferramenta n8n: confira Header Auth e se `X-Agent-Session` chegou do webhook atual;
+- mensagem recebida sem resposta: confira execução do workflow, `N8N_AGENT_WEBHOOK_URL` e outbox;
+- mensagens proativas ausentes: confira opt-in, pausa, horário silencioso, cron e itens `dead_letter`;
+- saldo divergente: confirme data do saldo e importe/reconcilie o extrato antes de simular compras.
+
+Os endpoints `/health`, `/ready` e `/metrics` ajudam a separar falha de app, banco e autenticação.
 
 ## Segurança operacional
 
-- autenticação de usuário validada pelo Supabase;
-- isolamento de dados pelo `userId` autenticado;
-- webhook e cron protegidos por segredos com comparação em tempo constante;
+- segredos independentes para cron, webhook, gateway e n8n;
+- comparação de segredo em tempo constante;
 - rate limiting nos endpoints públicos;
-- URL externa da Uazapi validada antes de cada chamada;
-- mensagens recebidas idempotentes no banco;
-- segredos da Uazapi mascarados nas respostas do frontend;
-- ações financeiras sensíveis passam pelos fluxos de confirmação do agente.
-- sessão n8n assinada impede que prompt injection selecione outro usuário;
-- ferramentas não aceitam `userId` fornecido pelo modelo;
-- credenciais n8n são isoladas das demais automações da instância;
-- sucesso de execução é idempotente e auditável.
+- URLs externas validadas contra SSRF;
+- dados canônicos sempre filtrados por tenant e usuário;
+- payloads e tokens não são escritos em logs;
+- credenciais do gateway criptografadas;
+- mudanças financeiras e consentimentos auditados.
 
-## Migração necessária
-
-Antes de publicar esta versão, execute:
-
-```bash
-corepack pnpm db:migrate
-```
-
-As migrações relevantes são:
-
-- `0016_security_and_accuracy.sql`: remove eventuais duplicatas antigas e cria a restrição de idempotência do webhook;
-- `0017_adorable_king_cobra.sql`: cria os comandos auditáveis do agente e seus índices.
-
-## Publicação e rollback do workflow
-
-Importe o workflow primeiro como inativo, confirme as credenciais e publique somente após `/ready` responder com sucesso:
-
-```bash
-n8n import:workflow --input=financepro-agent.workflow.json --activeState=fromJson
-n8n publish:workflow --id=financepro-agent-v1
-```
-
-Para interromper apenas o n8n, despublique/desative o workflow. Para rollback imediato no FinancePRO, remova temporariamente `N8N_AGENT_WEBHOOK_URL`; o assistente interno continuará atendendo. Nunca remova `N8N_AGENT_SECRET` enquanto houver comandos pendentes, pois os códigos são derivados desse segredo.
+Em produção, mantenha `ALLOW_PRIVATE_UAZAPI_URLS=false` e `ALLOW_PRIVATE_BAILEYS_URLS=false`.

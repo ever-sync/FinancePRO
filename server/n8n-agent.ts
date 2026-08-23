@@ -5,6 +5,40 @@ import { isStrongSecret, secretsMatch } from "./_core/secrets";
 import * as agentDb from "./db/agent";
 import * as whatsappDb from "./db/whatsapp";
 import * as financialAdvisor from "./financial-advisor";
+import * as canonicalDb from "./db/financial-core";
+import {
+  getCanonicalBudgetStatus,
+  getCanonicalFinancialSnapshot,
+  listCanonicalCashflow,
+  simulateCanonicalCar,
+  simulateCanonicalPurchase,
+} from "./financial-core";
+import { parseBrazilianMoneyExpression } from "../shared/financial-core";
+
+const CANONICAL_AGENT_ACTIONS = [
+  "get_financial_snapshot",
+  "get_upcoming_cashflow",
+  "get_budget_status",
+  "list_financial_transactions",
+  "set_financial_account_balance",
+  "record_financial_transaction",
+  "record_financial_transfer",
+  "undo_financial_transaction",
+  "categorize_financial_transaction",
+  "allocate_income",
+  "create_financial_goal",
+  "update_financial_goal_item",
+  "update_recurring_cashflow",
+  "update_financial_debt",
+  "update_financial_task",
+  "create_financial_project",
+  "confirm_project_payment",
+  "simulate_purchase",
+  "simulate_car",
+  "create_reminder",
+  "pause_notifications",
+  "set_notification_preference",
+] as const;
 
 const entityTypeSchema = z.enum(agentDb.AGENT_ENTITY_TYPES);
 const operationSchema = z.enum(["create", "update", "delete"]);
@@ -411,16 +445,19 @@ const recordSchemas = {
   { create: z.ZodType; update: z.ZodType }
 >;
 
+const AGENT_TOOL_ACTIONS = [
+  "health",
+  "get_context",
+  "list_records",
+  "propose_change",
+  "execute_change",
+  "cancel_change",
+  ...CANONICAL_AGENT_ACTIONS,
+] as const;
+
 export const agentToolRequestSchema = z
   .object({
-    action: z.enum([
-      "health",
-      "get_context",
-      "list_records",
-      "propose_change",
-      "execute_change",
-      "cancel_change",
-    ]),
+    action: z.enum(AGENT_TOOL_ACTIONS),
     integrationId: positiveIdSchema.optional(),
     threadId: positiveIdSchema.nullable().optional(),
     entityType: entityTypeSchema.optional(),
@@ -540,15 +577,628 @@ export function isN8nAgentReady() {
   return isStrongSecret(ENV.n8nAgentSecret);
 }
 
+const canonicalCentsSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER);
+const canonicalPositiveCentsSchema = canonicalCentsSchema.refine(
+  value => value > 0,
+  "valor deve ser maior que zero"
+);
+const canonicalDateSchema = z
+  .string()
+  .trim()
+  .refine(value => !Number.isNaN(Date.parse(value)), "data invalida");
+const canonicalIsoDateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "use AAAA-MM-DD");
+
+function canonicalPayload(input: AgentToolRequest) {
+  return parsePayload(input.payload);
+}
+
+function resolveCanonicalAmount(payload: Record<string, unknown>) {
+  if (typeof payload.amountCents === "number") {
+    return canonicalPositiveCentsSchema.parse(payload.amountCents);
+  }
+  if (typeof payload.amountText === "string") {
+    const parsed = parseBrazilianMoneyExpression(payload.amountText);
+    if (parsed.kind === "value")
+      return canonicalPositiveCentsSchema.parse(parsed.amountCents);
+    if (parsed.kind === "ambiguous") {
+      const [first, second] = parsed.alternativesCents;
+      throw new AgentToolError(
+        409,
+        `Valor ambiguo. Confirme se quis dizer ${first} ou ${second} centavos.`,
+        "AMBIGUOUS_MONEY"
+      );
+    }
+  }
+  throw new AgentToolError(
+    400,
+    "Informe amountCents (inteiro) ou amountText",
+    "INVALID_AMOUNT"
+  );
+}
+
+function canonicalActor(integrationId: number, threadId?: number | null) {
+  return {
+    type: "assistant" as const,
+    id: `n8n:${integrationId}:${threadId ?? "no-thread"}`,
+  };
+}
+
+async function handleCanonicalAgentAction(
+  input: AgentToolRequest,
+  integration: NonNullable<
+    Awaited<ReturnType<typeof whatsappDb.getWhatsAppIntegrationById>>
+  >
+) {
+  const scope = await canonicalDb.resolveFinancialScope(integration.userId);
+  const actor = canonicalActor(integration.id, input.threadId);
+
+  if (input.action === "get_financial_snapshot") {
+    return {
+      ok: true,
+      snapshot: await getCanonicalFinancialSnapshot(integration.userId, {
+        expectedTenantId: scope.tenantId,
+      }),
+    };
+  }
+  if (input.action === "get_upcoming_cashflow") {
+    const parsed = z
+      .object({
+        startDate: canonicalIsoDateSchema,
+        endDate: canonicalIsoDateSchema,
+        scenario: z
+          .enum(["conservative", "base", "growth", "aggressive"])
+          .default("base"),
+      })
+      .strict()
+      .refine(value => value.startDate <= value.endDate, "periodo invalido")
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      cashflow: await listCanonicalCashflow(integration.userId, {
+        ...parsed,
+        expectedTenantId: scope.tenantId,
+      }),
+    };
+  }
+  if (input.action === "get_budget_status") {
+    const parsed = z
+      .object({
+        period: z.string().regex(/^\d{4}-\d{2}$/, "use AAAA-MM"),
+        categoryId: positiveIdSchema.nullable().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      budget: await getCanonicalBudgetStatus(integration.userId, {
+        ...parsed,
+        expectedTenantId: scope.tenantId,
+      }),
+    };
+  }
+  if (input.action === "list_financial_transactions") {
+    const payload = input.payload == null ? {} : canonicalPayload(input);
+    const parsed = z
+      .object({
+        limit: z.number().int().min(1).max(100).default(30),
+        offset: z.number().int().min(0).default(0),
+        needsReview: z.boolean().optional(),
+      })
+      .strict()
+      .parse(payload);
+    const records = await canonicalDb.listFinancialTransactions(scope, parsed);
+    return { ok: true, count: records.length, records };
+  }
+  if (input.action === "set_financial_account_balance") {
+    const parsed = z
+      .object({
+        accountId: positiveIdSchema,
+        balanceCents: z
+          .number()
+          .int()
+          .min(-Number.MAX_SAFE_INTEGER)
+          .max(Number.MAX_SAFE_INTEGER),
+        balanceAsOf: canonicalDateSchema.optional(),
+        protectedReductionConfirmation: z
+          .literal("CONFIRMO REDUCAO DA RESERVA")
+          .optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      account: await canonicalDb.setFinancialAccountBalance(scope, {
+        accountId: parsed.accountId,
+        balanceCents: parsed.balanceCents,
+        balanceAsOf: parsed.balanceAsOf
+          ? new Date(parsed.balanceAsOf)
+          : new Date(),
+        protectedReductionConfirmed:
+          parsed.protectedReductionConfirmation ===
+          "CONFIRMO REDUCAO DA RESERVA",
+        actor,
+      }),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "record_financial_transaction") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
+    const payload = canonicalPayload(input);
+    const parsed = z
+      .object({
+        accountId: positiveIdSchema,
+        type: z.enum(["income", "expense"]),
+        amountCents: canonicalPositiveCentsSchema.optional(),
+        amountText: z.string().trim().min(1).max(120).optional(),
+        occurredAt: canonicalDateSchema.optional(),
+        description: shortText,
+        categoryId: positiveIdSchema.nullable().optional(),
+        status: z
+          .enum(["confirmed", "expected", "paid", "received"])
+          .default("confirmed"),
+        counterparty: z.string().trim().max(255).nullable().optional(),
+        documentNumber: z.string().trim().max(120).nullable().optional(),
+      })
+      .strict()
+      .parse(payload);
+    const amountCents = resolveCanonicalAmount(parsed);
+    const result = await canonicalDb.recordFinancialTransaction(scope, {
+      accountId: parsed.accountId,
+      type: parsed.type,
+      amountCents,
+      occurredAt: parsed.occurredAt ? new Date(parsed.occurredAt) : new Date(),
+      description: parsed.description,
+      categoryId: parsed.categoryId,
+      status: parsed.status,
+      counterparty: parsed.counterparty,
+      documentNumber: parsed.documentNumber,
+      source: "whatsapp",
+      idempotencyKey: `n8n:${integration.id}:${requestId}`,
+      actor,
+    });
+    return {
+      ok: true,
+      ...result,
+      externalBankMovement: false,
+      undoAvailableUntil: new Date(Date.now() + 15 * 60_000).toISOString(),
+      message: result.alreadyProcessed
+        ? "Lancamento ja estava registrado."
+        : "Lancamento registrado no FinancePRO. Se precisar, diga 'desfazer' em ate 15 minutos.",
+    };
+  }
+  if (input.action === "record_financial_transfer") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
+    const payload = canonicalPayload(input);
+    const parsed = z
+      .object({
+        fromAccountId: positiveIdSchema,
+        toAccountId: positiveIdSchema,
+        amountCents: canonicalPositiveCentsSchema.optional(),
+        amountText: z.string().trim().min(1).max(120).optional(),
+        occurredAt: canonicalDateSchema.optional(),
+        description: shortText.default("Transferencia interna manual"),
+        protectedWithdrawalConfirmation: z
+          .literal("CONFIRMO RETIRADA DA RESERVA")
+          .optional(),
+      })
+      .strict()
+      .parse(payload);
+    const result = await canonicalDb.recordFinancialTransfer(scope, {
+      fromAccountId: parsed.fromAccountId,
+      toAccountId: parsed.toAccountId,
+      amountCents: resolveCanonicalAmount(parsed),
+      occurredAt: parsed.occurredAt ? new Date(parsed.occurredAt) : new Date(),
+      description: parsed.description,
+      idempotencyKey: `n8n:${integration.id}:${requestId}`,
+      source: "whatsapp",
+      actor,
+      protectedWithdrawalConfirmed:
+        parsed.protectedWithdrawalConfirmation ===
+        "CONFIRMO RETIRADA DA RESERVA",
+    });
+    return {
+      ok: true,
+      ...result,
+      externalBankMovement: false,
+      message:
+        "Transferencia registrada somente no FinancePRO; nenhum dinheiro foi movimentado no banco.",
+    };
+  }
+  if (input.action === "undo_financial_transaction") {
+    const parsed = z
+      .object({
+        transactionId: positiveIdSchema,
+        reason: z
+          .string()
+          .trim()
+          .min(1)
+          .max(500)
+          .default("Desfeito pelo usuario"),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await canonicalDb.reverseFinancialTransaction(scope, {
+        ...parsed,
+        actor,
+        undoWindowMinutes: 15,
+      })),
+    };
+  }
+  if (input.action === "categorize_financial_transaction") {
+    const parsed = z
+      .object({
+        transactionId: positiveIdSchema,
+        categoryId: positiveIdSchema,
+        createMerchantRule: z.boolean().default(true),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      transaction: await canonicalDb.categorizeFinancialTransaction(scope, {
+        ...parsed,
+        actor,
+      }),
+    };
+  }
+  if (input.action === "allocate_income") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
+    const parsed = z
+      .object({
+        transactionId: positiveIdSchema,
+        allocations: z
+          .array(
+            z
+              .object({
+                allocationType: z.string().trim().min(1).max(32),
+                amountCents: canonicalPositiveCentsSchema,
+                envelopeId: positiveIdSchema.nullable().optional(),
+                goalId: positiveIdSchema.nullable().optional(),
+              })
+              .strict()
+              .refine(
+                value => !(value.envelopeId && value.goalId),
+                "use envelopeId ou goalId, nunca ambos"
+              )
+          )
+          .min(1)
+          .max(50),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await canonicalDb.allocateConfirmedIncome(scope, {
+        ...parsed,
+        requestId: `n8n:${integration.id}:${requestId}`,
+        actor,
+      })),
+      externalBankMovement: false,
+      message:
+        "Receita separada no plano do FinancePRO; nenhuma transferencia bancaria foi executada.",
+    };
+  }
+  if (input.action === "create_financial_goal") {
+    const parsed = z
+      .object({
+        name: z.string().trim().min(1).max(255),
+        goalType: z.string().trim().min(1).max(40).default("custom"),
+        targetCents: canonicalPositiveCentsSchema,
+        fundedCents: canonicalCentsSchema.default(0),
+        targetDate: canonicalIsoDateSchema.nullable().optional(),
+        priority: z
+          .enum(["critical", "essential", "important", "optional"])
+          .default("important"),
+        protected: z.boolean().default(false),
+        status: z.string().trim().max(24).default("planned"),
+        notes: z.string().trim().max(2_000).nullable().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      goal: await canonicalDb.createFinancialGoal(scope, parsed, actor),
+    };
+  }
+  if (input.action === "update_recurring_cashflow") {
+    const parsed = z
+      .object({
+        cashflowId: positiveIdSchema,
+        amountCents: canonicalCentsSchema.optional(),
+        nextDueDate: canonicalIsoDateSchema.nullable().optional(),
+        status: z.string().trim().min(1).max(24).optional(),
+        estimated: z.boolean().optional(),
+        needsConfirmation: z.boolean().optional(),
+        active: z.boolean().optional(),
+      })
+      .strict()
+      .refine(value => Object.keys(value).length > 1, "informe o que atualizar")
+      .parse(canonicalPayload(input));
+    const { cashflowId, ...data } = parsed;
+    return {
+      ok: true,
+      cashflow: await canonicalDb.updateRecurringCashflow(
+        scope,
+        cashflowId,
+        data,
+        actor
+      ),
+    };
+  }
+  if (input.action === "update_financial_debt") {
+    const parsed = z
+      .object({
+        debtId: positiveIdSchema,
+        balanceCents: canonicalCentsSchema.optional(),
+        dueDate: canonicalIsoDateSchema.nullable().optional(),
+        minimumPaymentCents: canonicalCentsSchema.nullable().optional(),
+        priority: z.string().trim().min(1).max(24).optional(),
+        status: z.string().trim().min(1).max(24).optional(),
+        needsConfirmation: z.boolean().optional(),
+        notes: z.string().trim().max(2_000).nullable().optional(),
+      })
+      .strict()
+      .refine(value => Object.keys(value).length > 1, "informe o que atualizar")
+      .parse(canonicalPayload(input));
+    const { debtId, ...data } = parsed;
+    return {
+      ok: true,
+      debt: await canonicalDb.updateFinancialDebt(scope, debtId, data, actor),
+    };
+  }
+  if (input.action === "update_financial_task") {
+    const parsed = z
+      .object({
+        taskId: positiveIdSchema,
+        status: z
+          .enum(["open", "in_progress", "completed", "cancelled"])
+          .optional(),
+        dueAt: canonicalDateSchema.nullable().optional(),
+      })
+      .strict()
+      .refine(value => Object.keys(value).length > 1, "informe o que atualizar")
+      .parse(canonicalPayload(input));
+    const { taskId, dueAt, ...data } = parsed;
+    return {
+      ok: true,
+      task: await canonicalDb.updateFinancialTask(
+        scope,
+        taskId,
+        {
+          ...data,
+          ...(dueAt !== undefined
+            ? { dueAt: dueAt == null ? null : new Date(dueAt) }
+            : {}),
+        },
+        actor
+      ),
+    };
+  }
+  if (input.action === "update_financial_goal_item") {
+    const parsed = z
+      .object({
+        itemId: positiveIdSchema,
+        status: z
+          .enum(["planned", "funded", "purchased", "cancelled"])
+          .optional(),
+        actualCostCents: canonicalCentsSchema.nullable().optional(),
+        desiredDate: canonicalIsoDateSchema.nullable().optional(),
+        notes: z.string().trim().max(2_000).nullable().optional(),
+        priority: z.enum(["essential", "important", "optional"]).optional(),
+      })
+      .strict()
+      .refine(value => Object.keys(value).length > 1, "informe o que atualizar")
+      .parse(canonicalPayload(input));
+    const { itemId, ...data } = parsed;
+    return {
+      ok: true,
+      item: await canonicalDb.updateFinancialGoalItem(
+        scope,
+        itemId,
+        data,
+        actor
+      ),
+    };
+  }
+  if (input.action === "create_financial_project") {
+    const parsed = z
+      .object({
+        name: z.string().trim().min(1).max(255),
+        clientName: z.string().trim().max(255).nullable().optional(),
+        stage: z.string().trim().min(1).max(32).default("lead"),
+        grossValueCents: canonicalCentsSchema,
+        expectedCostCents: canonicalCentsSchema.nullable().optional(),
+        taxBasisPoints: z.number().int().min(0).max(10_000).default(1_500),
+        costBasisPoints: z.number().int().min(0).max(10_000).default(1_000),
+        probabilityPercent: z.number().int().min(0).max(100).default(0),
+        startedAt: canonicalIsoDateSchema.nullable().optional(),
+        expectedDeliveryAt: canonicalIsoDateSchema.nullable().optional(),
+        status: z.string().trim().min(1).max(24).default("active"),
+        notes: z.string().trim().max(2_000).nullable().optional(),
+        installments: z
+          .array(
+            z.object({
+              amountCents: canonicalPositiveCentsSchema,
+              expectedAt: canonicalIsoDateSchema.nullable().optional(),
+            })
+          )
+          .max(120)
+          .default([]),
+      })
+      .strict()
+      .refine(
+        value => value.taxBasisPoints + value.costBasisPoints <= 10_000,
+        "impostos e custos nao podem ultrapassar 100%"
+      )
+      .parse(canonicalPayload(input));
+    const { installments, ...project } = parsed;
+    return {
+      ok: true,
+      ...(await canonicalDb.createFinancialProject(
+        scope,
+        project,
+        installments,
+        actor
+      )),
+    };
+  }
+  if (input.action === "confirm_project_payment") {
+    const parsed = z
+      .object({
+        installmentId: positiveIdSchema,
+        accountId: positiveIdSchema,
+        receivedAt: canonicalDateSchema.optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await canonicalDb.confirmProjectInstallmentReceived(scope, {
+        installmentId: parsed.installmentId,
+        accountId: parsed.accountId,
+        receivedAt: parsed.receivedAt
+          ? new Date(parsed.receivedAt)
+          : new Date(),
+        actor,
+      })),
+      externalBankMovement: false,
+    };
+  }
+  if (input.action === "simulate_purchase") {
+    const payload = canonicalPayload(input);
+    const parsed = z
+      .object({
+        amountCents: canonicalPositiveCentsSchema.optional(),
+        amountText: z.string().trim().min(1).max(120).optional(),
+        desiredDate: canonicalIsoDateSchema,
+        nextIncomeDate: canonicalIsoDateSchema.nullable().optional(),
+      })
+      .strict()
+      .parse(payload);
+    return {
+      ok: true,
+      simulation: await simulateCanonicalPurchase(integration.userId, {
+        amountCents: resolveCanonicalAmount(parsed),
+        desiredDate: parsed.desiredDate,
+        nextIncomeDate: parsed.nextIncomeDate,
+        expectedTenantId: scope.tenantId,
+      }),
+    };
+  }
+  if (input.action === "simulate_car") {
+    const parsed = z
+      .object({
+        vehiclePriceCents: canonicalCentsSchema.nullable(),
+        downPaymentCents: canonicalCentsSchema.nullable(),
+        installmentCents: canonicalCentsSchema.nullable(),
+        termMonths: z.number().int().min(1).max(120).nullable(),
+        cetAnnualBasisPoints: z.number().int().min(0).max(100_000).nullable(),
+        insuranceMonthlyCents: canonicalCentsSchema.nullable(),
+        fuelMonthlyCents: canonicalCentsSchema.nullable(),
+        ipvaAnnualCents: canonicalCentsSchema.nullable(),
+        maintenanceMonthlyCents: canonicalCentsSchema.nullable(),
+        licensingAnnualCents: canonicalCentsSchema.default(0),
+        expensiveDebtCents: canonicalCentsSchema.default(0),
+        downPaymentSeparated: z.boolean(),
+        futureIncomeConfirmed: z.boolean(),
+        overdraftUsedCents: canonicalCentsSchema.default(0),
+        fixedCostsConfirmed: z.boolean().optional(),
+        priorityAPlanComplete: z.boolean().optional(),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      simulation: await simulateCanonicalCar(integration.userId, {
+        ...parsed,
+        expectedTenantId: scope.tenantId,
+      }),
+    };
+  }
+  if (input.action === "create_reminder") {
+    const requestId = requireValue(input.requestId, "requestId e obrigatorio");
+    const parsed = z
+      .object({
+        title: z.string().trim().min(1).max(500),
+        dueAt: canonicalDateSchema,
+        recurrenceRule: z.string().trim().max(255).nullable().optional(),
+        channel: z.literal("whatsapp").default("whatsapp"),
+      })
+      .strict()
+      .parse(canonicalPayload(input));
+    return {
+      ok: true,
+      ...(await canonicalDb.createFinancialReminder(
+        scope,
+        {
+          title: parsed.title,
+          dueAt: new Date(parsed.dueAt),
+          recurrenceRule: parsed.recurrenceRule,
+          idempotencyKey: `n8n:${integration.id}:${requestId}`,
+        },
+        actor
+      )),
+    };
+  }
+  if (input.action === "pause_notifications") {
+    const parsed = z
+      .object({ until: canonicalDateSchema.nullable() })
+      .strict()
+      .parse(canonicalPayload(input));
+    const profile = await canonicalDb.pauseFinancialNotifications(
+      scope,
+      parsed.until ? new Date(parsed.until) : null,
+      actor
+    );
+    return {
+      ok: true,
+      notificationsPausedUntil: profile.notificationsPausedUntil,
+      message: parsed.until
+        ? `Mensagens proativas pausadas ate ${parsed.until}.`
+        : "Pausa removida. As mensagens proativas seguem o seu opt-in.",
+    };
+  }
+  if (input.action === "set_notification_preference") {
+    const parsed = z
+      .object({ enabled: z.boolean() })
+      .strict()
+      .parse(canonicalPayload(input));
+    const profile = await canonicalDb.setFinancialNotificationOptIn(
+      scope,
+      parsed.enabled,
+      actor
+    );
+    return {
+      ok: true,
+      notificationsOptIn: profile.notificationsOptIn,
+      message: parsed.enabled
+        ? "Mensagens proativas reativadas."
+        : "Mensagens proativas pausadas. Voce ainda pode falar comigo quando quiser.",
+    };
+  }
+  throw new AgentToolError(400, "Acao financeira invalida", "INVALID_ACTION");
+}
+
 export async function handleAgentTool(input: AgentToolRequest) {
   if (input.action === "health") {
     return {
       ok: true,
       service: "financepro-agent-tools",
       ready: isN8nAgentReady(),
-      confirmationRequiredForMutations: true,
+      confirmationRequiredForDestructiveMutations: true,
+      lowRiskCanonicalWritesAreDirect: true,
       externalBankMovement: false,
       entityTypes: agentDb.AGENT_ENTITY_TYPES,
+      canonicalActions: CANONICAL_AGENT_ACTIONS,
     };
   }
 
@@ -559,28 +1209,46 @@ export async function handleAgentTool(input: AgentToolRequest) {
   const integration = await resolveScope(integrationId, input.threadId);
   await agentDb.expirePendingAgentCommands();
 
+  if (
+    CANONICAL_AGENT_ACTIONS.includes(
+      input.action as (typeof CANONICAL_AGENT_ACTIONS)[number]
+    )
+  ) {
+    return handleCanonicalAgentAction(input, integration);
+  }
+
   if (input.action === "get_context") {
-    const [snapshot, messages, pendingCommands] = await Promise.all([
-      financialAdvisor.getFinancialAdvisorSnapshot(integration.userId, {
-        timezone: integration.timezone,
-        integrationId: integration.id,
-        persist: false,
-      }),
-      input.threadId
-        ? whatsappDb.listWhatsAppMessages(integration.userId, input.threadId)
-        : Promise.resolve([]),
-      agentDb.listPendingAgentCommands(
-        integration.userId,
-        integration.id,
-        input.threadId,
-        10
-      ),
-    ]);
+    const [snapshot, canonicalSnapshot, messages, pendingCommands] =
+      await Promise.all([
+        financialAdvisor.getFinancialAdvisorSnapshot(integration.userId, {
+          timezone: integration.timezone,
+          integrationId: integration.id,
+          persist: false,
+        }),
+        getCanonicalFinancialSnapshot(integration.userId),
+        input.threadId
+          ? whatsappDb.listWhatsAppMessages(integration.userId, input.threadId)
+          : Promise.resolve([]),
+        agentDb.listPendingAgentCommands(
+          integration.userId,
+          integration.id,
+          input.threadId,
+          10
+        ),
+      ]);
     return {
       ok: true,
       generatedAt: new Date().toISOString(),
       timezone: integration.timezone,
       snapshot,
+      canonicalSnapshot,
+      canonicalToolActions: CANONICAL_AGENT_ACTIONS,
+      safetyPolicy: {
+        valuesAreIntegerCents: true,
+        externalBankMovement: false,
+        lowRiskExplicitWrites: "execute_directly_and_offer_undo",
+        destructiveOrProtectedActions: "require_explicit_confirmation",
+      },
       recentConversation: messages
         .slice(0, 12)
         .reverse()

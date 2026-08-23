@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, lte, or, sql } from "drizzle-orm";
 import {
   assistantRuns,
   assistantThreads,
@@ -8,6 +8,7 @@ import {
   whatsappContacts,
   whatsappIntegrations,
   whatsappMessages,
+  whatsappOutbox,
   type InsertAssistantRun,
   type InsertAssistantThread,
   type InsertFinancialPlan,
@@ -16,6 +17,7 @@ import {
   type InsertWhatsAppContact,
   type InsertWhatsAppIntegration,
   type InsertWhatsAppMessage,
+  type InsertWhatsAppOutboxItem,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 
@@ -334,6 +336,153 @@ export async function updateWhatsAppMessage(
     .update(whatsappMessages)
     .set(data)
     .where(eq(whatsappMessages.id, messageId));
+}
+
+export async function getWhatsAppMessageById(
+  userId: number,
+  messageId: number
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [message] = await db
+    .select()
+    .from(whatsappMessages)
+    .where(
+      and(
+        eq(whatsappMessages.id, messageId),
+        eq(whatsappMessages.userId, userId)
+      )
+    )
+    .limit(1);
+  return message;
+}
+
+export async function createWhatsAppOutboxItem(data: InsertWhatsAppOutboxItem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [created] = await db
+    .insert(whatsappOutbox)
+    .values(data)
+    .onConflictDoNothing()
+    .returning();
+  if (created) return { item: created, alreadyQueued: false };
+  const [existing] = await db
+    .select()
+    .from(whatsappOutbox)
+    .where(
+      and(
+        eq(whatsappOutbox.tenantId, data.tenantId),
+        eq(whatsappOutbox.userId, data.userId),
+        eq(whatsappOutbox.idempotencyKey, data.idempotencyKey)
+      )
+    )
+    .limit(1);
+  if (!existing) throw new Error("Falha de idempotencia da fila WhatsApp");
+  return { item: existing, alreadyQueued: true };
+}
+
+export async function getWhatsAppOutboxItem(outboxId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [item] = await db
+    .select()
+    .from(whatsappOutbox)
+    .where(eq(whatsappOutbox.id, outboxId))
+    .limit(1);
+  return item;
+}
+
+export async function listDueWhatsAppOutbox(now = new Date(), limit = 50) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db
+    .select()
+    .from(whatsappOutbox)
+    .where(
+      and(
+        or(
+          eq(whatsappOutbox.status, "pending"),
+          eq(whatsappOutbox.status, "failed"),
+          eq(whatsappOutbox.status, "processing")
+        ),
+        lte(whatsappOutbox.nextAttemptAt, now)
+      )
+    )
+    .orderBy(asc(whatsappOutbox.nextAttemptAt), asc(whatsappOutbox.id))
+    .limit(Math.max(1, Math.min(limit, 200)));
+}
+
+export async function claimWhatsAppOutboxItem(
+  outboxId: number,
+  now = new Date()
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [claimed] = await db
+    .update(whatsappOutbox)
+    .set({
+      status: "processing",
+      attempts: sql`${whatsappOutbox.attempts} + 1`,
+      nextAttemptAt: new Date(now.getTime() + 5 * 60_000),
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(whatsappOutbox.id, outboxId),
+        or(
+          eq(whatsappOutbox.status, "pending"),
+          eq(whatsappOutbox.status, "failed"),
+          eq(whatsappOutbox.status, "processing")
+        ),
+        lte(whatsappOutbox.nextAttemptAt, now)
+      )
+    )
+    .returning();
+  return claimed;
+}
+
+export async function markWhatsAppOutboxSent(
+  outboxId: number,
+  input: { providerMessageId: string; messageId: number }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [sent] = await db
+    .update(whatsappOutbox)
+    .set({
+      status: "sent",
+      providerMessageId: input.providerMessageId,
+      messageId: input.messageId,
+      lastError: null,
+      sentAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(whatsappOutbox.id, outboxId))
+    .returning();
+  return sent;
+}
+
+export async function markWhatsAppOutboxFailed(
+  outboxId: number,
+  attempts: number,
+  error: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const nextAttemptAt = new Date(
+    Date.now() + Math.min(24 * 60, 2 ** Math.max(1, attempts) * 2) * 60_000
+  );
+  const [failed] = await db
+    .update(whatsappOutbox)
+    .set({
+      status: attempts >= 8 ? "dead_letter" : "failed",
+      nextAttemptAt,
+      lastError: error.slice(0, 2_000),
+      updatedAt: new Date(),
+    })
+    .where(eq(whatsappOutbox.id, outboxId))
+    .returning();
+  return failed;
 }
 
 export async function listWhatsAppMessages(userId: number, threadId?: number) {

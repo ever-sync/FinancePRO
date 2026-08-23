@@ -6,8 +6,11 @@ import {
   text,
   timestamp,
   integer,
+  bigint,
   numeric,
   boolean,
+  date,
+  jsonb,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -109,9 +112,30 @@ export const agentCommandStatusEnum = pgEnum("agent_command_status", [
   "failed",
 ]);
 
+// ==================== TENANTS ====================
+export const tenants = pgTable("tenants", {
+  id: serial("id").primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  status: varchar("status", { length: 32 }).default("active").notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+
+export type Tenant = typeof tenants.$inferSelect;
+export type InsertTenant = typeof tenants.$inferInsert;
+
 // ==================== USERS ====================
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
+  tenantId: integer("tenantId")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "restrict" }),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -1053,3 +1077,999 @@ export const reserveFunds = pgTable("reserve_funds", {
 
 export type ReserveFund = typeof reserveFunds.$inferSelect;
 export type InsertReserveFund = typeof reserveFunds.$inferInsert;
+
+// ==================== CANONICAL FINANCIAL CORE ====================
+// All new financial behavior uses these tenant-scoped, integer-cent tables.
+// Legacy decimal tables above remain available while their screens are migrated.
+
+export const financialProfiles = pgTable(
+  "financial_profiles",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    profileKey: varchar("profileKey", { length: 80 })
+      .default("custom")
+      .notNull(),
+    displayName: varchar("displayName", { length: 255 }).notNull(),
+    locale: varchar("locale", { length: 16 }).default("pt-BR").notNull(),
+    currency: varchar("currency", { length: 3 }).default("BRL").notNull(),
+    timezone: varchar("timezone", { length: 80 })
+      .default("America/Sao_Paulo")
+      .notNull(),
+    planningHorizon: date("planningHorizon"),
+    tone: varchar("tone", { length: 160 })
+      .default("objetivo, humano e firme")
+      .notNull(),
+    riskPreference: varchar("riskPreference", { length: 160 })
+      .default("baixo risco e alta liquidez")
+      .notNull(),
+    operatingBufferCents: bigint("operatingBufferCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    monthlyVariableBudgetCents: bigint("monthlyVariableBudgetCents", {
+      mode: "number",
+    })
+      .default(0)
+      .notNull(),
+    emergencyFundReferenceCents: bigint("emergencyFundReferenceCents", {
+      mode: "number",
+    })
+      .default(0)
+      .notNull(),
+    emergencyFundTargetMonths: integer("emergencyFundTargetMonths")
+      .default(6)
+      .notNull(),
+    projectTaxBasisPoints: integer("projectTaxBasisPoints")
+      .default(1500)
+      .notNull(),
+    projectCostBasisPoints: integer("projectCostBasisPoints")
+      .default(1000)
+      .notNull(),
+    projectGoalBasisPoints: integer("projectGoalBasisPoints")
+      .default(7500)
+      .notNull(),
+    carMonthlyLimitCents: bigint("carMonthlyLimitCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    carInstallmentLimitCents: bigint("carInstallmentLimitCents", {
+      mode: "number",
+    })
+      .default(0)
+      .notNull(),
+    quietHoursStart: varchar("quietHoursStart", { length: 5 })
+      .default("21:00")
+      .notNull(),
+    quietHoursEnd: varchar("quietHoursEnd", { length: 5 })
+      .default("08:00")
+      .notNull(),
+    notificationsOptIn: boolean("notificationsOptIn").default(true).notNull(),
+    notificationsPausedUntil: timestamp("notificationsPausedUntil", {
+      withTimezone: true,
+    }),
+    onboardingState: jsonb("onboardingState"),
+    configVersion: integer("configVersion").default(1).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_profiles_tenant_user_idx").on(
+      table.tenantId,
+      table.userId
+    ),
+  ]
+);
+
+export const financialAccounts = pgTable(
+  "financial_accounts",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    ownerType: varchar("ownerType", { length: 24 }).notNull(),
+    accountType: varchar("accountType", { length: 32 }).notNull(),
+    institution: varchar("institution", { length: 255 }),
+    currency: varchar("currency", { length: 3 }).default("BRL").notNull(),
+    currentBalanceCents: bigint("currentBalanceCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    balanceAsOf: timestamp("balanceAsOf", { withTimezone: true }),
+    includeInOperatingCash: boolean("includeInOperatingCash")
+      .default(true)
+      .notNull(),
+    protected: boolean("protected").default(false).notNull(),
+    active: boolean("active").default(true).notNull(),
+    seedKey: varchar("seedKey", { length: 120 }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_accounts_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+    index("financial_accounts_owner_idx").on(
+      table.tenantId,
+      table.userId,
+      table.ownerType,
+      table.active
+    ),
+  ]
+);
+
+export const financialCategories = pgTable(
+  "financial_categories",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    key: varchar("key", { length: 100 }).notNull(),
+    name: varchar("name", { length: 160 }).notNull(),
+    group: varchar("group", { length: 40 }).notNull(),
+    ownerType: varchar("ownerType", { length: 24 }).notNull(),
+    essential: boolean("essential").default(false).notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_categories_tenant_key_idx").on(
+      table.tenantId,
+      table.userId,
+      table.key
+    ),
+  ]
+);
+
+export const financialTransactions = pgTable(
+  "financial_transactions",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: integer("accountId")
+      .notNull()
+      .references(() => financialAccounts.id, { onDelete: "restrict" }),
+    transferPairId: integer("transferPairId"),
+    reversalOfId: integer("reversalOfId"),
+    type: varchar("type", { length: 24 }).notNull(),
+    transferDirection: varchar("transferDirection", { length: 16 }),
+    status: varchar("status", { length: 24 }).notNull(),
+    amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+    occurredAt: timestamp("occurredAt", { withTimezone: true }).notNull(),
+    description: varchar("description", { length: 500 }).notNull(),
+    normalizedDescription: varchar("normalizedDescription", { length: 500 }),
+    counterparty: varchar("counterparty", { length: 255 }),
+    documentNumber: varchar("documentNumber", { length: 120 }),
+    balanceAfterCents: bigint("balanceAfterCents", { mode: "number" }),
+    categoryId: integer("categoryId").references(() => financialCategories.id, {
+      onDelete: "set null",
+    }),
+    source: varchar("source", { length: 24 }).notNull(),
+    externalId: varchar("externalId", { length: 255 }),
+    importId: integer("importId"),
+    confidence: integer("confidence"),
+    needsReview: boolean("needsReview").default(false).notNull(),
+    idempotencyKey: varchar("idempotencyKey", { length: 255 }).notNull(),
+    reconciledAt: timestamp("reconciledAt", { withTimezone: true }),
+    reversedAt: timestamp("reversedAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_transactions_idempotency_idx").on(
+      table.tenantId,
+      table.userId,
+      table.idempotencyKey
+    ),
+    index("financial_transactions_timeline_idx").on(
+      table.tenantId,
+      table.userId,
+      table.occurredAt
+    ),
+    index("financial_transactions_review_idx").on(
+      table.tenantId,
+      table.userId,
+      table.needsReview
+    ),
+  ]
+);
+
+export const financialTransactionRules = pgTable(
+  "financial_transaction_rules",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    pattern: varchar("pattern", { length: 255 }).notNull(),
+    matchType: varchar("matchType", { length: 24 })
+      .default("contains")
+      .notNull(),
+    categoryId: integer("categoryId").references(() => financialCategories.id, {
+      onDelete: "cascade",
+    }),
+    ownerType: varchar("ownerType", { length: 24 }),
+    priority: integer("priority").default(100).notNull(),
+    createdBy: varchar("createdBy", { length: 24 }).default("user").notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_transaction_rules_pattern_idx").on(
+      table.tenantId,
+      table.userId,
+      table.pattern,
+      table.ownerType
+    ),
+  ]
+);
+
+export const budgetPeriods = pgTable(
+  "budget_periods",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    periodStart: date("periodStart").notNull(),
+    periodEnd: date("periodEnd").notNull(),
+    status: varchar("status", { length: 24 }).default("active").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("budget_periods_tenant_period_idx").on(
+      table.tenantId,
+      table.userId,
+      table.periodStart,
+      table.periodEnd
+    ),
+  ]
+);
+
+export const budgetEnvelopes = pgTable(
+  "budget_envelopes",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    budgetPeriodId: integer("budgetPeriodId")
+      .notNull()
+      .references(() => budgetPeriods.id, { onDelete: "cascade" }),
+    categoryId: integer("categoryId").references(() => financialCategories.id, {
+      onDelete: "set null",
+    }),
+    name: varchar("name", { length: 160 }).notNull(),
+    plannedCents: bigint("plannedCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    spentCents: bigint("spentCents", { mode: "number" }).default(0).notNull(),
+    reservedCents: bigint("reservedCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    priority: varchar("priority", { length: 24 }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("budget_envelopes_period_name_idx").on(
+      table.budgetPeriodId,
+      table.name
+    ),
+  ]
+);
+
+export const recurringCashflows = pgTable(
+  "recurring_cashflows",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 24 }).notNull(),
+    ownerType: varchar("ownerType", { length: 24 }).notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+    recurrenceRule: varchar("recurrenceRule", { length: 255 }).notNull(),
+    nextDueDate: date("nextDueDate"),
+    accountId: integer("accountId").references(() => financialAccounts.id, {
+      onDelete: "set null",
+    }),
+    categoryId: integer("categoryId").references(() => financialCategories.id, {
+      onDelete: "set null",
+    }),
+    status: varchar("status", { length: 24 }).default("expected").notNull(),
+    estimated: boolean("estimated").default(false).notNull(),
+    needsConfirmation: boolean("needsConfirmation").default(false).notNull(),
+    active: boolean("active").default(true).notNull(),
+    seedKey: varchar("seedKey", { length: 120 }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("recurring_cashflows_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+    index("recurring_cashflows_due_idx").on(
+      table.tenantId,
+      table.userId,
+      table.nextDueDate
+    ),
+  ]
+);
+
+export const financialGoals = pgTable(
+  "financial_goals",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    goalType: varchar("goalType", { length: 40 }).notNull(),
+    targetCents: bigint("targetCents", { mode: "number" }).notNull(),
+    fundedCents: bigint("fundedCents", { mode: "number" }).default(0).notNull(),
+    targetDate: date("targetDate"),
+    priority: varchar("priority", { length: 24 }).notNull(),
+    protected: boolean("protected").default(false).notNull(),
+    status: varchar("status", { length: 24 }).default("planned").notNull(),
+    seedKey: varchar("seedKey", { length: 120 }),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_goals_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+    index("financial_goals_status_idx").on(
+      table.tenantId,
+      table.userId,
+      table.status
+    ),
+  ]
+);
+
+export const financialGoalItems = pgTable(
+  "financial_goal_items",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    goalId: integer("goalId")
+      .notNull()
+      .references(() => financialGoals.id, { onDelete: "cascade" }),
+    personOrGroup: varchar("personOrGroup", { length: 120 }).notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    estimatedCostCents: bigint("estimatedCostCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    actualCostCents: bigint("actualCostCents", { mode: "number" }),
+    priority: varchar("priority", { length: 24 }).notNull(),
+    status: varchar("status", { length: 24 }).default("planned").notNull(),
+    desiredDate: date("desiredDate"),
+    estimated: boolean("estimated").default(true).notNull(),
+    needsConfirmation: boolean("needsConfirmation").default(false).notNull(),
+    seedKey: varchar("seedKey", { length: 160 }),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_goal_items_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+    index("financial_goal_items_priority_idx").on(
+      table.tenantId,
+      table.userId,
+      table.priority,
+      table.status
+    ),
+  ]
+);
+
+export const financialDebts = pgTable(
+  "financial_debts",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    creditor: varchar("creditor", { length: 255 }).notNull(),
+    balanceCents: bigint("balanceCents", { mode: "number" }).notNull(),
+    interestRateBasisPoints: integer("interestRateBasisPoints"),
+    dueDate: date("dueDate"),
+    minimumPaymentCents: bigint("minimumPaymentCents", { mode: "number" }),
+    priority: varchar("priority", { length: 24 }).notNull(),
+    status: varchar("status", { length: 24 }).default("outstanding").notNull(),
+    needsConfirmation: boolean("needsConfirmation").default(false).notNull(),
+    seedKey: varchar("seedKey", { length: 120 }),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_debts_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+  ]
+);
+
+export const financialProjects = pgTable(
+  "financial_projects",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    clientName: varchar("clientName", { length: 255 }),
+    stage: varchar("stage", { length: 32 }).notNull(),
+    grossValueCents: bigint("grossValueCents", { mode: "number" })
+      .default(0)
+      .notNull(),
+    expectedCostCents: bigint("expectedCostCents", { mode: "number" }),
+    taxBasisPoints: integer("taxBasisPoints").default(1500).notNull(),
+    costBasisPoints: integer("costBasisPoints").default(1000).notNull(),
+    probabilityPercent: integer("probabilityPercent").default(0).notNull(),
+    startedAt: date("startedAt"),
+    expectedDeliveryAt: date("expectedDeliveryAt"),
+    status: varchar("status", { length: 24 }).default("active").notNull(),
+    seedKey: varchar("seedKey", { length: 120 }),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_projects_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+    index("financial_projects_stage_idx").on(
+      table.tenantId,
+      table.userId,
+      table.stage
+    ),
+  ]
+);
+
+export const projectInstallments = pgTable(
+  "project_installments",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => financialProjects.id, { onDelete: "cascade" }),
+    amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+    expectedAt: date("expectedAt"),
+    receivedAt: timestamp("receivedAt", { withTimezone: true }),
+    transactionId: integer("transactionId").references(
+      () => financialTransactions.id,
+      { onDelete: "set null" }
+    ),
+    status: varchar("status", { length: 24 }).default("expected").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    index("project_installments_due_idx").on(
+      table.tenantId,
+      table.userId,
+      table.expectedAt,
+      table.status
+    ),
+  ]
+);
+
+export const projectActivities = pgTable(
+  "project_activities",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: integer("projectId")
+      .notNull()
+      .references(() => financialProjects.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 40 }).notNull(),
+    occurredAt: timestamp("occurredAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    notes: text("notes"),
+    nextActionAt: timestamp("nextActionAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  table => [
+    index("project_activities_next_action_idx").on(
+      table.tenantId,
+      table.userId,
+      table.nextActionAt
+    ),
+  ]
+);
+
+export const incomeAllocations = pgTable(
+  "income_allocations",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    transactionId: integer("transactionId")
+      .notNull()
+      .references(() => financialTransactions.id, { onDelete: "cascade" }),
+    envelopeId: integer("envelopeId").references(() => budgetEnvelopes.id, {
+      onDelete: "set null",
+    }),
+    goalId: integer("goalId").references(() => financialGoals.id, {
+      onDelete: "set null",
+    }),
+    allocationType: varchar("allocationType", { length: 32 }).notNull(),
+    amountCents: bigint("amountCents", { mode: "number" }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  table => [
+    uniqueIndex("income_allocations_target_idx").on(
+      table.transactionId,
+      table.allocationType,
+      table.envelopeId,
+      table.goalId
+    ),
+  ]
+);
+
+export const scheduledNotifications = pgTable(
+  "scheduled_notifications",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    templateKey: varchar("templateKey", { length: 120 }).notNull(),
+    scheduledAt: timestamp("scheduledAt", { withTimezone: true }).notNull(),
+    idempotencyKey: varchar("idempotencyKey", { length: 255 }).notNull(),
+    status: varchar("status", { length: 24 }).default("scheduled").notNull(),
+    payload: jsonb("payload"),
+    attempts: integer("attempts").default(0).notNull(),
+    nextAttemptAt: timestamp("nextAttemptAt", { withTimezone: true }),
+    lastError: text("lastError"),
+    sentAt: timestamp("sentAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("scheduled_notifications_idempotency_idx").on(
+      table.tenantId,
+      table.userId,
+      table.idempotencyKey
+    ),
+    index("scheduled_notifications_dispatch_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.scheduledAt
+    ),
+  ]
+);
+
+export const whatsappOutbox = pgTable(
+  "whatsapp_outbox",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    integrationId: integer("integrationId")
+      .notNull()
+      .references(() => whatsappIntegrations.id, { onDelete: "cascade" }),
+    contactId: integer("contactId")
+      .notNull()
+      .references(() => whatsappContacts.id, { onDelete: "cascade" }),
+    threadId: integer("threadId")
+      .notNull()
+      .references(() => assistantThreads.id, { onDelete: "cascade" }),
+    phoneNumber: varchar("phoneNumber", { length: 32 }).notNull(),
+    textContent: text("textContent").notNull(),
+    detectedIntent: varchar("detectedIntent", { length: 80 }),
+    requiresConfirmation: boolean("requiresConfirmation")
+      .default(false)
+      .notNull(),
+    metadata: jsonb("metadata"),
+    idempotencyKey: varchar("idempotencyKey", { length: 255 }).notNull(),
+    status: varchar("status", { length: 24 }).default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    nextAttemptAt: timestamp("nextAttemptAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    providerMessageId: varchar("providerMessageId", { length: 255 }),
+    messageId: integer("messageId").references(() => whatsappMessages.id, {
+      onDelete: "set null",
+    }),
+    lastError: text("lastError"),
+    sentAt: timestamp("sentAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("whatsapp_outbox_idempotency_idx").on(
+      table.tenantId,
+      table.userId,
+      table.idempotencyKey
+    ),
+    index("whatsapp_outbox_dispatch_idx").on(table.status, table.nextAttemptAt),
+  ]
+);
+
+export const financialAuditEvents = pgTable(
+  "financial_audit_events",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    actorType: varchar("actorType", { length: 24 }).notNull(),
+    actorId: varchar("actorId", { length: 120 }),
+    action: varchar("action", { length: 80 }).notNull(),
+    entityType: varchar("entityType", { length: 80 }).notNull(),
+    entityId: varchar("entityId", { length: 120 }).notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    requestId: varchar("requestId", { length: 255 }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  table => [
+    index("financial_audit_events_entity_idx").on(
+      table.tenantId,
+      table.userId,
+      table.entityType,
+      table.entityId
+    ),
+    uniqueIndex("financial_audit_events_request_idx").on(
+      table.tenantId,
+      table.userId,
+      table.action,
+      table.requestId
+    ),
+  ]
+);
+
+export const statementImports = pgTable(
+  "statement_imports",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: integer("accountId")
+      .notNull()
+      .references(() => financialAccounts.id, { onDelete: "restrict" }),
+    fileName: varchar("fileName", { length: 255 }).notNull(),
+    fileHash: varchar("fileHash", { length: 64 }).notNull(),
+    format: varchar("format", { length: 32 }).notNull(),
+    encoding: varchar("encoding", { length: 32 }).notNull(),
+    status: varchar("status", { length: 24 }).default("pending").notNull(),
+    rowCount: integer("rowCount").default(0).notNull(),
+    importedCount: integer("importedCount").default(0).notNull(),
+    duplicateCount: integer("duplicateCount").default(0).notNull(),
+    errorCount: integer("errorCount").default(0).notNull(),
+    errorReport: jsonb("errorReport"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("statement_imports_file_idx").on(
+      table.tenantId,
+      table.accountId,
+      table.fileHash
+    ),
+  ]
+);
+
+export const businessCalendarHolidays = pgTable(
+  "business_calendar_holidays",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    scope: varchar("scope", { length: 24 }).default("custom").notNull(),
+    source: varchar("source", { length: 80 }).default("user").notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  table => [
+    uniqueIndex("business_calendar_holidays_date_idx").on(
+      table.tenantId,
+      table.userId,
+      table.date,
+      table.scope
+    ),
+  ]
+);
+
+export const financialTasks = pgTable(
+  "financial_tasks",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 500 }).notNull(),
+    priority: varchar("priority", { length: 24 }).notNull(),
+    status: varchar("status", { length: 24 }).default("open").notNull(),
+    dueAt: timestamp("dueAt", { withTimezone: true }),
+    seedKey: varchar("seedKey", { length: 160 }),
+    metadata: jsonb("metadata"),
+    completedAt: timestamp("completedAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  table => [
+    uniqueIndex("financial_tasks_tenant_seed_idx").on(
+      table.tenantId,
+      table.userId,
+      table.seedKey
+    ),
+  ]
+);
+
+export const privacyConsents = pgTable(
+  "privacy_consents",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: varchar("purpose", { length: 120 }).notNull(),
+    legalBasis: varchar("legalBasis", { length: 80 }).notNull(),
+    policyVersion: varchar("policyVersion", { length: 40 }).notNull(),
+    acceptedAt: timestamp("acceptedAt", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revokedAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  table => [
+    uniqueIndex("privacy_consents_version_idx").on(
+      table.tenantId,
+      table.userId,
+      table.purpose,
+      table.policyVersion
+    ),
+  ]
+);
+
+export const dataSubjectRequests = pgTable(
+  "data_subject_requests",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenantId")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: integer("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 32 }).notNull(),
+    status: varchar("status", { length: 24 }).default("requested").notNull(),
+    requestedAt: timestamp("requestedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    completedAt: timestamp("completedAt", { withTimezone: true }),
+    metadata: jsonb("metadata"),
+  },
+  table => [
+    index("data_subject_requests_status_idx").on(
+      table.tenantId,
+      table.userId,
+      table.status
+    ),
+  ]
+);
+
+export type FinancialProfile = typeof financialProfiles.$inferSelect;
+export type InsertFinancialProfile = typeof financialProfiles.$inferInsert;
+export type FinancialAccount = typeof financialAccounts.$inferSelect;
+export type InsertFinancialAccount = typeof financialAccounts.$inferInsert;
+export type FinancialCategory = typeof financialCategories.$inferSelect;
+export type InsertFinancialCategory = typeof financialCategories.$inferInsert;
+export type FinancialTransaction = typeof financialTransactions.$inferSelect;
+export type InsertFinancialTransaction =
+  typeof financialTransactions.$inferInsert;
+export type FinancialGoal = typeof financialGoals.$inferSelect;
+export type InsertFinancialGoal = typeof financialGoals.$inferInsert;
+export type FinancialGoalItem = typeof financialGoalItems.$inferSelect;
+export type InsertFinancialGoalItem = typeof financialGoalItems.$inferInsert;
+export type FinancialDebt = typeof financialDebts.$inferSelect;
+export type InsertFinancialDebt = typeof financialDebts.$inferInsert;
+export type FinancialProject = typeof financialProjects.$inferSelect;
+export type InsertFinancialProject = typeof financialProjects.$inferInsert;
+export type ProjectInstallment = typeof projectInstallments.$inferSelect;
+export type InsertProjectInstallment = typeof projectInstallments.$inferInsert;
+export type ScheduledNotification = typeof scheduledNotifications.$inferSelect;
+export type InsertScheduledNotification =
+  typeof scheduledNotifications.$inferInsert;
+export type WhatsAppOutboxItem = typeof whatsappOutbox.$inferSelect;
+export type InsertWhatsAppOutboxItem = typeof whatsappOutbox.$inferInsert;
+export type StatementImport = typeof statementImports.$inferSelect;
+export type InsertStatementImport = typeof statementImports.$inferInsert;

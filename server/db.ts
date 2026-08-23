@@ -5,6 +5,7 @@ import postgres from "postgres";
 import {
   InsertUser,
   users,
+  tenants,
   settings,
   InsertSettings,
   bankConnections,
@@ -45,18 +46,27 @@ import type {
 import { calculatePagination, resolvePagination } from "./db/utils/pagination";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _client: ReturnType<typeof postgres> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      const client = postgres(process.env.DATABASE_URL);
-      _db = drizzle(client);
+      _client = postgres(process.env.DATABASE_URL);
+      _db = drizzle(_client);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
+      _client = null;
       _db = null;
     }
   }
   return _db;
+}
+
+export async function closeDb() {
+  const client = _client;
+  _client = null;
+  _db = null;
+  if (client) await client.end({ timeout: 5 });
 }
 
 function normalizeInstallmentCount(value?: number | null) {
@@ -224,7 +234,11 @@ function getActivitySortKey(year: number, month: number, day: number) {
 }
 
 // ==================== USERS ====================
-export async function upsertUser(user: InsertUser): Promise<void> {
+type UpsertUserInput = Omit<InsertUser, "tenantId"> & {
+  tenantId?: number;
+};
+
+export async function upsertUser(user: UpsertUserInput): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
   if (!db) {
@@ -232,36 +246,65 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     return;
   }
   try {
-    const values: InsertUser = { openId: user.openId };
-    const updateSet: Record<string, unknown> = {};
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-    textFields.forEach(assignNullable);
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = "admin";
-      updateSet.role = "admin";
-    }
-    if (!values.lastSignedIn) values.lastSignedIn = new Date();
-    if (Object.keys(updateSet).length === 0)
-      updateSet.lastSignedIn = new Date();
-    await db
-      .insert(users)
-      .values(values)
-      .onConflictDoUpdate({ target: users.openId, set: updateSet });
+    await db.transaction(async tx => {
+      const [existingUser] = await tx
+        .select({ tenantId: users.tenantId })
+        .from(users)
+        .where(eq(users.openId, user.openId))
+        .limit(1);
+
+      let tenantId = user.tenantId ?? existingUser?.tenantId;
+      if (!tenantId) {
+        const [createdTenant] = await tx
+          .insert(tenants)
+          .values({
+            ownerOpenId: user.openId,
+            name: user.name?.trim() || "Minha conta",
+          })
+          .onConflictDoNothing()
+          .returning({ id: tenants.id });
+        if (createdTenant) {
+          tenantId = createdTenant.id;
+        } else {
+          const [existingTenant] = await tx
+            .select({ id: tenants.id })
+            .from(tenants)
+            .where(eq(tenants.ownerOpenId, user.openId))
+            .limit(1);
+          tenantId = existingTenant?.id;
+        }
+      }
+      if (!tenantId) throw new Error("Could not resolve user tenant");
+
+      const values: InsertUser = { openId: user.openId, tenantId };
+      const updateSet: Record<string, unknown> = { tenantId };
+      const textFields = ["name", "email", "loginMethod"] as const;
+      type TextField = (typeof textFields)[number];
+      const assignNullable = (field: TextField) => {
+        const value = user[field];
+        if (value === undefined) return;
+        const normalized = value ?? null;
+        values[field] = normalized;
+        updateSet[field] = normalized;
+      };
+      textFields.forEach(assignNullable);
+      if (user.lastSignedIn !== undefined) {
+        values.lastSignedIn = user.lastSignedIn;
+        updateSet.lastSignedIn = user.lastSignedIn;
+      }
+      if (user.role !== undefined) {
+        values.role = user.role;
+        updateSet.role = user.role;
+      } else if (user.openId === ENV.ownerOpenId) {
+        values.role = "admin";
+        updateSet.role = "admin";
+      }
+      if (!values.lastSignedIn) values.lastSignedIn = new Date();
+      await tx
+        .insert(users)
+        .values(values)
+        .onConflictDoUpdate({ target: users.openId, set: updateSet });
+    });
   } catch (error) {
     console.error("[Database] Failed to upsert user:", error);
     throw error;

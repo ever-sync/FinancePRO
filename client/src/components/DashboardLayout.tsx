@@ -36,6 +36,7 @@ import {
   Repeat,
   Settings,
   Sparkles,
+  Target,
   TrendingDown,
   TrendingUp,
   Truck,
@@ -168,6 +169,16 @@ const useSidebarSections = () => {
             icon: PiggyBank,
             label: getLabel("dashboard.reservedFund", "Fundo de reserva"),
             path: "/fundo-reserva",
+          },
+        ],
+      },
+      {
+        label: "Planejamento IA",
+        items: [
+          {
+            icon: Target,
+            label: "Cockpit financeiro",
+            path: "/planejamento",
           },
         ],
       },
